@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Нодовый калькулятор</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Боковая панель -->
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>🧮 Ноды</h2>
+            <span class="sidebar-version">v1.0</span>
+        </div>
+        
+        <div class="sidebar-search">
+            <input type="text" placeholder="🔍 Поиск нод..." id="searchNodes">
+        </div>
+
+        <!-- Прокручиваемая область со всеми разделами нод -->
+        <div class="sidebar-scroll">
+            <div class="sidebar-section">
+                <div class="section-title">📊 Входные данные</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="number" onclick="window.addNode('number', 300, 200)">
+                        <span class="node-icon">🔢</span>
+                        <span class="node-name">Число</span>
+                        <span class="node-badge">Ввод</span>
+                    </div>
+                    <div class="node-item" data-type="listInput" onclick="window.addNode('listInput', 300, 200)">
+                        <span class="node-icon">📝</span>
+                        <span class="node-name">Список (Имя-Аргумент)</span>
+                        <span class="node-badge">Ввод</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <div class="section-title">➕ Операции</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="add" onclick="window.addNode('add', 400, 300)">
+                        <span class="node-icon">➕</span>
+                        <span class="node-name">Сложение</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                    <div class="node-item" data-type="subtract" onclick="window.addNode('subtract', 400, 400)">
+                        <span class="node-icon">➖</span>
+                        <span class="node-name">Вычитание</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                    <div class="node-item" data-type="multiply" onclick="window.addNode('multiply', 400, 500)">
+                        <span class="node-icon">✖️</span>
+                        <span class="node-name">Умножение</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                    <div class="node-item" data-type="divide" onclick="window.addNode('divide', 400, 600)">
+                        <span class="node-icon">➗</span>
+                        <span class="node-name">Деление</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">🔧 Преобразование</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="scaleList" onclick="window.addNode('scaleList', 400, 300)">
+                        <span class="node-icon">✖️</span>
+                        <span class="node-name">Умножение списка</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <div class="section-title">📊 Визуализация</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="percentage" onclick="window.addNode('percentage', 400, 300, { customTitle: 'Проценты' })">
+                        <span class="node-icon">📊</span>
+                        <span class="node-name">Процентный график</span>
+                        <span class="node-badge">Viewer</span>
+                    </div>
+                    <div class="node-item" data-type="listViewer" onclick="window.addNode('listViewer', 400, 300)">
+                        <span class="node-icon">📋</span>
+                        <span class="node-name">Просмотр списка</span>
+                        <span class="node-badge">Viewer</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">📑 Между листами</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="layoutOutput" onclick="window.addNode('layoutOutput', 400, 300)">
+                        <span class="node-icon">📤</span>
+                        <span class="node-name">Выход листа</span>
+                        <span class="node-badge">Layout</span>
+                    </div>
+                    <div class="node-item" data-type="layoutInput" onclick="window.addNode('layoutInput', 400, 300)">
+                        <span class="node-icon">📥</span>
+                        <span class="node-name">Вход листа</span>
+                        <span class="node-badge">Layout</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">📐 Функции</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="function" onclick="window.addNode('function', 400, 300)">
+                        <span class="node-icon">📐</span>
+                        <span class="node-name">Функция</span>
+                        <span class="node-badge soon">Скоро</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Рабочая область -->
+    <div id="workspace">
+        <div class="nodes-container" id="nodesContainer">
+            <!-- Сюда будут добавляться ноды -->
+        </div>
+    </div>
+
+    <!-- Верхняя панель: действия | масштаб | статус -->
+    <div id="topbar">
+        <div class="topbar-actions">
+            <button onclick="window.clearWorkspace()" class="topbar-btn danger" title="Очистить текущий лист">🗑️<span class="btn-label">Очистить</span></button>
+            <button onclick="window.calculateAll()" class="topbar-btn primary" title="Пересчитать">🔄<span class="btn-label">Вычислить</span></button>
+            <button onclick="window.saveProject?.()" class="topbar-btn" title="Сохранить проект">💾<span class="btn-label">Сохранить</span></button>
+            <button onclick="window.loadProject?.()" class="topbar-btn" title="Загрузить проект">📂<span class="btn-label">Загрузить</span></button>
+        </div>
+
+        <div class="topbar-zoom">
+            <button onclick="window.zoomOut()" class="topbar-btn icon-only" title="Уменьшить масштаб">➖</button>
+            <span id="zoomLevel" class="zoom-level" title="Двойной клик - сбросить" ondblclick="window.zoomReset()">100%</span>
+            <button onclick="window.zoomIn()" class="topbar-btn icon-only" title="Увеличить масштаб">➕</button>
+            <button onclick="window.zoomReset()" class="topbar-btn icon-only" title="Сбросить масштаб">⟲</button>
+        </div>
+
+        <div class="topbar-status">
+            <span id="status">✅ Готово</span>
+            <span id="nodeCount">Нод: 0</span>
+            <span id="connectionCount">Соединений: 0</span>
+        </div>
+    </div>
+
+    <!-- Панель листов (Layouts) -->
+    <div id="layoutTabsBar">
+        <div id="layoutTabs" class="layout-tabs"></div>
+    </div>
+
+    <!-- Контекстное меню -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" id="contextMenuToggleCollapse" onclick="window.toggleNodeCollapse()">▾ Свернуть ноду</div>
+        <div class="context-menu-item" onclick="window.deleteNode()">🗑️ Удалить ноду</div>
+        <div class="context-menu-item" onclick="window.duplicateNode()">📋 Дублировать</div>
+        <div class="context-menu-item" onclick="window.clearConnections()">🔗 Очистить соединения</div>
+    </div>
+
+    <!-- Информация при перетаскивании -->
+    <div id="drag-info">🔗 Перетащите из сокета для создания соединения</div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
