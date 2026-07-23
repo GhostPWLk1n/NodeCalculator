@@ -10,7 +10,7 @@ SVG — smooth splines for connections
 CSS Variables — Material Dark Theme
 
 ## 🚀 Quick Start
-git clone https://github.com/yourname/nodecalculate.git
+git clone [https://github.com/yourname/nodecalculate.git](https://github.com/GhostPWLk1n/NodeCalculator.git)
 
 cd nodecalculate
 
