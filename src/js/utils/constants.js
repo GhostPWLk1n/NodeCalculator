@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    constants.js
+ * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 export const Constants = {
     NODE_TYPES: {
         NUMBER: 'number',
@@ -12,7 +24,21 @@ export const Constants = {
         add: 'Сложение',
         subtract: 'Вычитание',
         multiply: 'Умножение',
-        divide: 'Деление'
+        divide: 'Деление',
+        string: 'Строка',
+        table: 'Таблица',
+        percentConvert: 'Проценты от суммы',
+        percentage: 'Диаграмма',
+        gantt: 'Диаграмма Ганта'
+    },
+
+    // Форматы отображения числового значения. Источник данных может
+    // необязательно объявить свой формат через BaseNode.getValueFormat(),
+    // а TableNode позволяет переопределить его вручную на уровне колонки.
+    VALUE_FORMATS: {
+        NUMBER:   { id: 'number',   label: 'Число',    prefix: '',  suffix: '' },
+        CURRENCY: { id: 'currency', label: 'Деньги',   prefix: '',  suffix: ' ₽' },
+        PERCENT:  { id: 'percent',  label: 'Проценты', prefix: '',  suffix: '%' }
     },
     
     OPERATION_SYMBOLS: {

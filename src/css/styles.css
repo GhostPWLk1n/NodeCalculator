@@ -638,7 +638,7 @@ body {
 }
 
 .node.collapsed .node-content {
-    display: none;
+    display: none !important;
 }
 
 .node.collapsed {
@@ -865,6 +865,98 @@ body {
 }
 
 /* ============================================
+   КОМПАКТНАЯ СТРОКОВАЯ НОДА (StringNode)
+   ============================================ */
+
+.node.string-node-compact {
+    padding: 6px 10px !important;
+    min-width: auto !important;
+    min-height: auto !important;
+    width: auto !important;
+    border-radius: var(--md-radius) !important;
+}
+
+.node.string-node-compact .node-title {
+    margin-bottom: 4px !important;
+    padding-bottom: 4px !important;
+    font-size: 10px !important;
+}
+
+.node.string-node-compact.collapsed .node-title {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+.node.string-node-compact.collapsed .node-content {
+    display: none !important;
+}
+
+.node.string-node-compact:not(.collapsed) .node-content {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 6px !important;
+    padding: 2px 0 !important;
+}
+
+.node.string-node-compact .node-title .title-text {
+    font-size: 10px !important;
+}
+
+.node.string-node-compact .collapse-icon {
+    width: 17px;
+    height: 17px;
+    min-width: 17px;
+    font-size: 11px;
+}
+
+.node.string-node-compact .title-input-socket {
+    left: -13px;
+}
+
+.node.string-node-compact .title-output-socket {
+    right: -13px;
+}
+
+.string-node-socket-container {
+    display: flex;
+    align-items: center;
+    margin-left: 4px;
+}
+
+.node.string-node-compact .socket.output-socket {
+    width: 12px !important;
+    height: 12px !important;
+    margin-right: -14px !important;
+}
+
+/* Поле ввода текста - шире числового, текст выровнен по левому краю */
+.string-input-compact {
+    width: 150px !important;
+    padding: 4px 8px !important;
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--md-divider) !important;
+    border-radius: 4px !important;
+    color: var(--md-text) !important;
+    font-size: 12px !important;
+    outline: none !important;
+    transition: all 0.3s ease !important;
+    text-align: left !important;
+    font-family: inherit !important;
+    min-width: 60px !important;
+    height: 24px !important;
+}
+
+.string-input-compact:focus {
+    border-color: var(--md-primary) !important;
+    box-shadow: 0 0 0 2px rgba(144, 202, 249, 0.1) !important;
+}
+
+.string-input-compact:hover {
+    border-color: var(--md-text-secondary) !important;
+}
+
+/* ============================================
    СОДЕРЖИМОЕ НОДЫ
    ============================================ */
 
@@ -924,6 +1016,33 @@ body {
     height: 14px;
 }
 
+/* Круглые, синие - для строк (string) */
+.socket.socket-string,
+.socket.input-socket.socket-string,
+.socket.output-socket.socket-string {
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+}
+
+/* Ромб, оранжевый - для данных/таблиц (data) */
+.socket.socket-data,
+.socket.input-socket.socket-data,
+.socket.output-socket.socket-data {
+    border-radius: 2px;
+    width: 11px;
+    height: 11px;
+    transform: rotate(45deg);
+}
+
+.socket.socket-data:hover {
+    transform: rotate(45deg) scale(1.2);
+}
+
+.socket.socket-connected.socket-data:hover {
+    transform: rotate(45deg) scale(1.3) !important;
+}
+
 /* ============================================
    ТИПЫ СОКЕТОВ ПО ЦВЕТУ
    ============================================ */
@@ -970,6 +1089,28 @@ body {
     box-shadow: 0 0 16px rgba(79, 195, 247, 0.25) !important;
 }
 
+/* String - синий (круглый) */
+.socket.socket-string {
+    border-color: #64b5f6 !important;
+    border-radius: 50% !important;
+}
+
+.socket.socket-string:hover {
+    background: #64b5f6 !important;
+    box-shadow: 0 0 16px rgba(100, 181, 246, 0.25) !important;
+}
+
+/* Data - оранжевый (ромб) */
+.socket.socket-data {
+    border-color: #ff8a65 !important;
+    border-radius: 2px !important;
+}
+
+.socket.socket-data:hover {
+    background: #ff8a65 !important;
+    box-shadow: 0 0 16px rgba(255, 138, 101, 0.25) !important;
+}
+
 /* ============================================
    ЗАКРАШЕННЫЕ СОКЕТЫ (ПРИ СОЕДИНЕНИИ)
    ============================================ */
@@ -979,13 +1120,13 @@ body {
 }
 
 /* Float - серый закрашенный */
-.socket.socket-connected.input-socket:not(.socket-list) {
+.socket.socket-connected.input-socket:not(.socket-list):not(.socket-string):not(.socket-data) {
     background: var(--md-text-disabled) !important;
     border-color: var(--md-text-disabled) !important;
     box-shadow: 0 0 12px rgba(158, 158, 158, 0.3) !important;
 }
 
-.socket.socket-connected.output-socket:not(.socket-list):not(.socket-count) {
+.socket.socket-connected.output-socket:not(.socket-list):not(.socket-count):not(.socket-string):not(.socket-data) {
     background: var(--md-text-disabled) !important;
     border-color: var(--md-text-disabled) !important;
     box-shadow: 0 0 12px rgba(158, 158, 158, 0.3) !important;
@@ -1003,6 +1144,20 @@ body {
     background: #4fc3f7 !important;
     border-color: #4fc3f7 !important;
     box-shadow: 0 0 12px rgba(79, 195, 247, 0.3) !important;
+}
+
+/* String - синий закрашенный (круглый) */
+.socket.socket-connected.socket-string {
+    background: #64b5f6 !important;
+    border-color: #64b5f6 !important;
+    box-shadow: 0 0 12px rgba(100, 181, 246, 0.3) !important;
+}
+
+/* Data - оранжевый закрашенный (ромб) */
+.socket.socket-connected.socket-data {
+    background: #ff8a65 !important;
+    border-color: #ff8a65 !important;
+    box-shadow: 0 0 12px rgba(255, 138, 101, 0.3) !important;
 }
 
 /* ============================================
@@ -1466,8 +1621,8 @@ body {
 
 .node-resize-handle {
     position: absolute;
-    right: 2px;
-    bottom: 2px;
+    right: -1px;
+    bottom: -1px;
     width: 14px;
     height: 14px;
     cursor: ew-resize;
@@ -1476,6 +1631,14 @@ body {
     border-radius: 0 0 var(--md-radius-lg) 0;
     z-index: 5;
     transition: border-color 0.15s ease;
+}
+
+/* Ноды со свободным ресайзом (ширина+высота одной ручкой, см.
+   nodeManager.applyFreeResize и tableViewerNode.js) - диагональный
+   курсор вместо горизонтального, чтобы было видно, что тянется не
+   только ширина */
+.node-resize-handle.free-resize {
+    cursor: nwse-resize;
 }
 
 .node-resize-handle:hover {
@@ -1500,4 +1663,190 @@ body {
     padding: 1px 4px;
     width: 90px;
     outline: none;
+}
+
+/* ============================================
+   ВЫБОР НОДЫ / АКЦЕНТНЫЙ ЦВЕТ (InspectorManager)
+   ============================================ */
+
+/* Нода в фокусе (боковая панель открыта для неё) */
+.node.inspector-selected {
+    outline: 2px solid var(--md-primary);
+    outline-offset: 1px;
+}
+
+/* Акцентная полоска слева - задаётся из боковой панели (поле "Цвет
+   узла"). box-shadow, не border - не влияет на layout/размеры ноды. */
+.node.has-custom-color {
+    box-shadow: inset 4px 0 0 0 var(--node-accent, transparent);
+}
+
+.node.has-custom-color.inspector-selected {
+    box-shadow: inset 4px 0 0 0 var(--node-accent, transparent), 0 0 0 2px var(--md-primary);
+    outline: none;
+}
+
+/* ============================================
+   БОКОВАЯ ПАНЕЛЬ НАСТРОЕК НОДЫ (InspectorManager)
+   ============================================ */
+
+.inspector-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 280px;
+    height: 100vh;
+    background: var(--md-surface-variant);
+    border-left: 1px solid var(--md-divider);
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
+}
+
+.inspector-panel.open {
+    transform: translateX(0);
+}
+
+.inspector-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--md-divider);
+    flex-shrink: 0;
+}
+
+.inspector-title {
+    color: var(--md-text);
+    font-size: 14px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inspector-close {
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.inspector-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--md-text);
+}
+
+.inspector-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.inspector-empty {
+    color: var(--md-text-disabled);
+    font-size: 12px;
+    text-align: center;
+    padding: 24px 0;
+}
+
+.inspector-section-heading {
+    color: var(--md-accent);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-top: 8px;
+    margin-top: 4px;
+    border-top: 1px solid var(--md-divider);
+}
+
+.inspector-body > .inspector-section-heading:first-child {
+    padding-top: 0;
+    margin-top: 0;
+    border-top: none;
+}
+
+.inspector-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.inspector-field-label {
+    color: var(--md-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.inspector-field-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inspector-field-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--md-divider);
+    border-radius: 4px;
+    color: var(--md-text);
+    font-size: 13px;
+    padding: 6px 8px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.inspector-field-input:focus {
+    border-color: var(--md-primary);
+}
+
+select.inspector-field-input {
+    cursor: pointer;
+}
+
+.inspector-color-input {
+    flex: 1;
+    height: 32px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.inspector-reset-btn {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--md-divider);
+    border-radius: 4px;
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.inspector-reset-btn:hover {
+    color: var(--md-text);
+    border-color: var(--md-primary);
+}
+
+input[type="checkbox"].inspector-field-input {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--md-primary);
+    cursor: pointer;
 }

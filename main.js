@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Electron main-процесс: создание окна, меню, IPC-обработчики сохранения/загрузки .ncp и экспорта изображения
  * @author  Pavel Fomin
- * @version 1.0
+ * @version 1.4.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -127,9 +127,9 @@ function getMenuTemplate() {
 async function saveProject() {
     const result = await dialog.showSaveDialog(mainWindow, {
         title: 'Сохранить проект',
-        defaultPath: 'project.json',
+        defaultPath: 'project.ncp',
         filters: [
-            { name: 'JSON', extensions: ['json'] }
+            { name: 'NodeCalculate Project', extensions: ['ncp'] }
         ]
     });
 
@@ -154,7 +154,7 @@ async function loadProject() {
     const result = await dialog.showOpenDialog(mainWindow, {
         title: 'Загрузить проект',
         filters: [
-            { name: 'JSON', extensions: ['json'] }
+            { name: 'NodeCalculate Project', extensions: ['ncp'] }
         ],
         properties: ['openFile']
     });

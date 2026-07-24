@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    listInputNode.js
+ * @brief   Нода ручного ввода списка пар «имя — значение»
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
@@ -7,16 +19,33 @@ import { SocketFactory } from '../utils/socketFactory.js';
  * ListInputNode - ручной ввод списка пар "Имя - Аргумент".
  * Источник данных (как NumberNode, но сразу целый список), без входов.
  * Единственный выход - LIST сокет с готовым ListData.
+ *
+ * Оформление (формат значений, ширина полей имени/значения) - в боковой
+ * панели (getInspectorSchema()), не в теле ноды. Формат прокидывается в
+ * каждый элемент ListData и в саму ноду через getValueFormat() (см.
+ * baseNode.js) - потребители с форматом "Авто" (TableNode-столбец и
+ * т.п.) подхватывают его сами.
+ *
+ * Тело ноды не задаёт своего искусственного min-width - подстраивается
+ * под любую ширину ноды вплоть до общего минимума 200px (см.
+ * docs/NODE_API.md).
  */
 export class ListInputNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
         this.outputs = 1;
         this.inputs = 0;
-        this.width = config.width || 240;
+        this.width = config.width || 220;
         this.items = config.items && config.items.length
             ? config.items.map(item => ({ id: Helpers.generateId(), name: item.name, value: item.value }))
             : [{ id: Helpers.generateId(), name: 'Элемент 1', value: 0 }];
+
+        // Ширина полей имени/значения в строках ввода, px - null = авто
+        // (стандартное соотношение flex 1.4/1 из CSS). Настраивается из
+        // боковой панели - см. getInspectorSchema()/applyColumnWidths().
+        this.nameColumnWidth = config.nameColumnWidth ?? null;
+        this.valueColumnWidth = config.valueColumnWidth ?? null;
+
         this.listData = new ListData();
         this.updateListData();
     }
@@ -24,7 +53,10 @@ export class ListInputNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.minWidth = this.width + 'px';
+        content.style.cssText = `
+            width: 100%;
+            min-width: 150px;
+        `;
 
         const rowsContainer = document.createElement('div');
         rowsContainer.className = 'list-input-rows';
@@ -59,6 +91,10 @@ export class ListInputNode extends BaseNode {
             color: var(--md-text-secondary);
             font-size: 11px;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         outputRow.appendChild(label);
 
@@ -68,6 +104,7 @@ export class ListInputNode extends BaseNode {
             color: #4fc3f7;
             font-size: 12px;
             font-weight: 500;
+            flex-shrink: 0;
         `;
         countDisplay.textContent = `${this.items.length} эл.`;
         outputRow.appendChild(countDisplay);
@@ -99,6 +136,7 @@ export class ListInputNode extends BaseNode {
             nameInput.className = 'list-input-name';
             nameInput.value = item.name;
             nameInput.placeholder = 'Имя';
+            if (this.nameColumnWidth) nameInput.style.flex = `0 0 ${this.nameColumnWidth}px`;
             nameInput.addEventListener('mousedown', (e) => e.stopPropagation());
             nameInput.addEventListener('input', (e) => {
                 item.name = e.target.value;
@@ -111,6 +149,7 @@ export class ListInputNode extends BaseNode {
             valueInput.className = 'list-input-value';
             valueInput.value = item.value;
             valueInput.placeholder = '0';
+            if (this.valueColumnWidth) valueInput.style.flex = `0 0 ${this.valueColumnWidth}px`;
             valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
             valueInput.addEventListener('input', (e) => {
                 const val = parseFloat(e.target.value);
@@ -133,6 +172,20 @@ export class ListInputNode extends BaseNode {
             row.appendChild(deleteBtn);
 
             container.appendChild(row);
+        });
+    }
+
+    // Применяет текущую ширину полей имени/значения к УЖЕ отрисованным
+    // строкам без пересоздания DOM - вызывается из боковой панели, чтобы
+    // изменение ширины было видно сразу.
+    applyColumnWidths() {
+        const el = document.querySelector(`[data-node-id="${this.id}"]`);
+        if (!el) return;
+        el.querySelectorAll('.list-input-name').forEach(input => {
+            input.style.flex = this.nameColumnWidth ? `0 0 ${this.nameColumnWidth}px` : '';
+        });
+        el.querySelectorAll('.list-input-value').forEach(input => {
+            input.style.flex = this.valueColumnWidth ? `0 0 ${this.valueColumnWidth}px` : '';
         });
     }
 
@@ -161,15 +214,18 @@ export class ListInputNode extends BaseNode {
     }
 
     updateListData() {
+        const format = this.getValueFormat();
         this.listData = new ListData(
             this.items.map(item => ({
                 name: item.name || 'unknown',
-                value: typeof item.value === 'number' ? item.value : 0
+                value: typeof item.value === 'number' ? item.value : 0,
+                format
             })),
             {
                 title: this.customName || 'Список',
                 total: this.items.reduce((sum, item) => sum + (item.value || 0), 0),
-                isFullList: true
+                isFullList: true,
+                format
             }
         );
     }
@@ -184,5 +240,46 @@ export class ListInputNode extends BaseNode {
         if (countDisplay) {
             countDisplay.textContent = `${this.items.length} эл.`;
         }
+    }
+
+    // Боковая панель: формат значений (прокидывается в getValueFormat() и
+    // в каждый элемент ListData) + настраиваемая ширина полей имени/значения.
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+
+        fields.push({
+            key: 'valueFormat',
+            label: 'Формат значений',
+            type: 'select',
+            options: [
+                { value: '', label: 'Число' },
+                { value: 'currency', label: 'Деньги' },
+                { value: 'percent', label: 'Проценты' }
+            ],
+            get: () => this.valueFormat || '',
+            set: (v) => { this.valueFormat = v || null; this.updateListData(); }
+        });
+
+        fields.push({ type: 'section', label: 'Размер ячеек' });
+
+        fields.push({
+            key: 'nameColumnWidth',
+            label: 'Ширина поля имени, px (пусто = авто)',
+            type: 'number',
+            min: 40, step: 5,
+            get: () => this.nameColumnWidth,
+            set: (v) => { this.nameColumnWidth = v; this.applyColumnWidths(); }
+        });
+
+        fields.push({
+            key: 'valueColumnWidth',
+            label: 'Ширина поля значения, px (пусто = авто)',
+            type: 'number',
+            min: 30, step: 5,
+            get: () => this.valueColumnWidth,
+            set: (v) => { this.valueColumnWidth = v; this.applyColumnWidths(); }
+        });
+
+        return fields;
     }
 }

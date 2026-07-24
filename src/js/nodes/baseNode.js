@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    baseNode.js
+ * @brief   Базовый класс, от которого наследуются все ноды
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { Constants } from '../utils/constants.js';
 import { Helpers } from '../utils/helpers.js';
 
@@ -9,6 +21,12 @@ export class BaseNode {
         this.y = y;
         this.value = config.value !== undefined ? config.value : null;
         this.customName = config.customName || null;
+        // Цвет ноды (акцентная полоска) - null = цвет темы по умолчанию.
+        // Формат значения - null = 'number' (см. getValueFormat() ниже).
+        // Оба поля редактируются из боковой панели (InspectorManager),
+        // не из самой ноды - см. getInspectorSchema().
+        this.color = config.color || null;
+        this.valueFormat = config.valueFormat || null;
         this.inputs = 0;
         this.outputs = 0;
         this.maxInputs = Constants.DEFAULT_NODE_CONFIG?.maxInputs || 8;
@@ -19,6 +37,44 @@ export class BaseNode {
     getDisplayName() {
         const defaultName = Constants.TYPE_NAMES?.[this.type] || this.type;
         return this.customName || defaultName;
+    }
+
+    // Необязательный формат отображения значения ('number'|'currency'|'percent',
+    // см. Constants.VALUE_FORMATS). Ноды, которым это важно, выставляют
+    // this.valueFormat сами (например, из будущей панели настроек справа);
+    // остальные ничего не переопределяют и получают дефолт 'number'.
+    // Потребители (TableNode-колонка, PercentageNode) читают именно этот
+    // метод, а не поле напрямую - так источник можно доработать позже,
+    // ничего не меняя на стороне потребителей.
+    getValueFormat() {
+        return this.valueFormat || 'number';
+    }
+
+    // Список полей боковой панели (InspectorManager). Базовый набор -
+    // имя и цвет - доступен ЛЮБОЙ ноде без переопределения. Конкретные
+    // ноды дополняют список своими полями, вызывая
+    // super.getInspectorSchema() и добавляя к результату - см. пример
+    // в numberNode.js (поле "Формат значения").
+    //
+    // Формат одного поля: { key, label, type, get(), set(value), ... }
+    // type: 'text' | 'color' | 'select' (+options) | 'number' (+min/max/step) | 'checkbox'
+    getInspectorSchema() {
+        return [
+            {
+                key: 'customName',
+                label: 'Имя',
+                type: 'text',
+                get: () => this.customName || '',
+                set: (v) => { this.customName = (v && v.trim()) ? v.trim() : null; }
+            },
+            {
+                key: 'color',
+                label: 'Цвет узла',
+                type: 'color',
+                get: () => this.color,
+                set: (v) => { this.color = v || null; }
+            }
+        ];
     }
     
     render() {

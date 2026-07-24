@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    numberNode.js
+ * @brief   Компактная нода с ручным вводом числа и одним выходом
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
@@ -148,6 +160,27 @@ export class NumberNode extends BaseNode {
         // Обновляем listData при вычислении
         this.updateListData();
         return this.value;
+    }
+
+    // Дополняем базовую схему боковой панели (имя, цвет) полем формата
+    // значения - именно та "тонкая настройка", которую решили не
+    // выносить в саму ноду, а держать в боковой панели (см.
+    // docs/NODE_API.md, раздел про BaseNode.getValueFormat()).
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+        fields.push({
+            key: 'valueFormat',
+            label: 'Формат значения',
+            type: 'select',
+            options: [
+                { value: '', label: 'Число' },
+                { value: 'currency', label: 'Деньги' },
+                { value: 'percent', label: 'Проценты' }
+            ],
+            get: () => this.valueFormat || '',
+            set: (v) => { this.valueFormat = v || null; }
+        });
+        return fields;
     }
     
     updateDisplay(element) {

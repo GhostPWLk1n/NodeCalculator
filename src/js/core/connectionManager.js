@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    connectionManager.js
+ * @brief   Создание и разрыв соединений между сокетами нод
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { Helpers } from '../utils/helpers.js';
 
 export class ConnectionManager {
@@ -7,6 +19,9 @@ export class ConnectionManager {
         this.tempStart = null;
         this.isConnecting = false;
         this.connectionStart = null;
+        // Конкретное соединение, выбранное правым кликом по линии -
+        // используется контекстным меню (пункт "Удалить связь")
+        this.contextMenuTarget = null;
     }
     
     addConnection(sourceId, targetId, targetSocket, sourceSocket = 0) {
@@ -78,6 +93,30 @@ export class ConnectionManager {
     getConnections() {
         return this.connections;
     }
+
+    // Правый клик по конкретной линии соединения (см. renderer.js,
+    // createConnectionPath) - показываем то же меню, что и для ноды,
+    // но с единственным доступным пунктом "Удалить связь".
+    showConnectionContextMenu(x, y, conn) {
+        this.contextMenuTarget = conn;
+        // Режимы "выбрана нода" и "выбрана связь" взаимоисключающие
+        if (window.nodeManager) {
+            window.nodeManager.contextMenuTarget = null;
+        }
+
+        const menu = document.getElementById('contextMenu');
+        if (!menu) return;
+        menu.style.display = 'block';
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+
+        ['contextMenuToggleCollapse', 'contextMenuDeleteNode', 'contextMenuDuplicate'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        const deleteConnItem = document.getElementById('contextMenuDeleteConnection');
+        if (deleteConnItem) deleteConnItem.style.display = '';
+    }
     
     // ============================================
     // СОЗДАНИЕ НОВОГО СОЕДИНЕНИЯ (drag из сокета)
@@ -91,6 +130,7 @@ export class ConnectionManager {
         
         const socketIndex = parseInt(target.dataset.index || 0);
         const isList = target.dataset.isList === 'true';
+        const socketKind = Helpers.getSocketKind(target);
         
         const pos = window.renderer?.getSocketPosition(nodeId, 'output', socketIndex);
         if (!pos) return;
@@ -114,7 +154,8 @@ export class ConnectionManager {
             nodeId, 
             socketType,
             socketIndex: socketIndex,
-            isList: isList
+            isList: isList,
+            kind: socketKind
         };
         this.tempStart = { x: pos.x, y: pos.y };
         
@@ -159,13 +200,26 @@ export class ConnectionManager {
                 const sourceSocket = this.connectionStart.socketIndex || 0;
                 
                 if (sourceId !== targetId) {
-                    // Проверяем типы сокетов
-                    const sourceIsList = this.connectionStart.isList || false;
-                    const targetIsList = socket.dataset.isList === 'true';
-                    
-                    // Если типы не совпадают - предупреждаем
-                    if (sourceIsList && !targetIsList) {
-                        document.getElementById('status').textContent = '⚠️ Список можно подключать только к LIST сокету';
+                    // Проверяем совместимость типов сокетов: список только
+                    // со списком, строка только со строкой, данные только
+                    // с данными; обычное число/count - вместе (bucket 'plain').
+                    const rawSourceKind = this.connectionStart.kind || (this.connectionStart.isList ? 'list' : 'plain');
+                    const rawTargetKind = Helpers.getSocketKind(socket);
+                    // 'count' исторически совместим с обычным числом (это просто
+                    // отдельный выход-счётчик, input-сокетов типа count не бывает)
+                    const normalize = (k) => (k === 'count' ? 'plain' : k);
+                    const sourceKind = normalize(rawSourceKind);
+                    const targetKind = normalize(rawTargetKind);
+                    const kindLabels = {
+                        list: 'LIST (список)',
+                        string: 'String (строка)',
+                        data: 'Data (таблица)',
+                        plain: 'числовому'
+                    };
+
+                    if (sourceKind !== targetKind) {
+                        document.getElementById('status').textContent =
+                            `⚠️ Несовместимые сокеты: ${kindLabels[sourceKind] || sourceKind} нельзя подключить к ${kindLabels[targetKind] || targetKind}`;
                         setTimeout(() => {
                             document.getElementById('status').textContent = 'Готово';
                         }, 2000);
@@ -173,27 +227,22 @@ export class ConnectionManager {
                         return;
                     }
                     
-                    if (!sourceIsList && targetIsList) {
-                        document.getElementById('status').textContent = '⚠️ В LIST сокет можно подключать только список';
-                        setTimeout(() => {
-                            document.getElementById('status').textContent = 'Готово';
-                        }, 2000);
-                        this.cancelConnection();
-                        return;
-                    }
-                    
-                    // Проверяем, нет ли уже соединения на этот вход
+                    // Если вход уже занят - заменяем старую связь новой,
+                    // а не отказываем: перетаскивание нового соединения
+                    // на занятый сокет читается пользователем как "замени
+                    // старую связь на эту", а не как ошибку.
                     const existing = this.connections.find(c => 
                         c.targetNodeId === targetId && 
                         c.targetSocket === targetSocket
                     );
                     
-                    if (!existing) {
-                        this.addConnection(sourceId, targetId, targetSocket, sourceSocket);
-                        document.getElementById('status').textContent = '🔗 Соединение создано';
-                    } else {
-                        document.getElementById('status').textContent = '⚠️ Вход уже занят';
+                    if (existing) {
+                        this.removeConnection(existing.sourceNodeId, existing.targetNodeId, existing.targetSocket);
                     }
+                    this.addConnection(sourceId, targetId, targetSocket, sourceSocket);
+                    document.getElementById('status').textContent = existing
+                        ? '🔗 Связь заменена'
+                        : '🔗 Соединение создано';
                     
                     setTimeout(() => {
                         document.getElementById('status').textContent = 'Готово';

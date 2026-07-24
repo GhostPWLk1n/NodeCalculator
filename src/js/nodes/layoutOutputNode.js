@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    layoutOutputNode.js
+ * @brief   Нода-мост между листами проекта (выход)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 
@@ -13,7 +25,7 @@ export class LayoutOutputNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.minWidth = '170px';
+        content.style.cssText = 'width: 100%; min-width: 150px;';
 
         const row = document.createElement('div');
         row.className = 'node-input';
