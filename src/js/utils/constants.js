@@ -1,0 +1,98 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    constants.js
+ * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
+export const Constants = {
+    NODE_TYPES: {
+        NUMBER: 'number',
+        ADD: 'add',
+        SUBTRACT: 'subtract',
+        MULTIPLY: 'multiply',
+        DIVIDE: 'divide'
+    },
+    
+    TYPE_NAMES: {
+        number: 'Число',
+        add: 'Сложение',
+        subtract: 'Вычитание',
+        multiply: 'Умножение',
+        divide: 'Деление',
+        string: 'Строка',
+        table: 'Таблица',
+        percentConvert: 'Проценты от суммы',
+        percentage: 'Диаграмма',
+        gantt: 'Диаграмма Ганта',
+        dashboard: 'Дашборд'
+    },
+
+    // Форматы отображения числового значения. Источник данных может
+    // Все известные "роды" сокетов (data-kind), кроме самого 'any'.
+    // Сокет 'any' - прокси: считается совместимым с конкретным родом,
+    // если тот входит в этот список (сейчас это буквально все роды,
+    // поэтому 'any' ведёт себя как универсальный - но именно перебор
+    // по списку, а не безусловное "true", даёт задел на будущее: если
+    // когда-нибудь понадобится "any", который принимает не всё подряд,
+    // а конкретное подмножество - меняется только этот список).
+    SOCKET_KINDS: ['list', 'string', 'data', 'plain', 'count'],
+
+    // Система бейджей (см. baseNode.js getStaticBadges/addBadge/getActiveBadge) -
+    // короткая плашка над нодой: error/warning/beta/deprecated/info.
+    // Если у ноды несколько бейджей одновременно - показывается только
+    // один, самый важный (наибольшее число в BADGE_PRIORITY).
+    BADGE_PRIORITY: {
+        error: 4,
+        warning: 3,
+        beta: 2,
+        deprecated: 2,
+        info: 1
+    },
+
+    BADGE_SHORT_LABELS: {
+        error: '⚠ Ошибка',
+        warning: '⚠ Внимание',
+        beta: 'BETA',
+        deprecated: 'Устарело',
+        info: 'i'
+    },
+
+    // необязательно объявить свой формат через BaseNode.getValueFormat(),
+    // а TableNode позволяет переопределить его вручную на уровне колонки.
+    VALUE_FORMATS: {
+        NUMBER:   { id: 'number',   label: 'Число',    prefix: '',  suffix: '' },
+        CURRENCY: { id: 'currency', label: 'Деньги',   prefix: '',  suffix: ' ₽' },
+        PERCENT:  { id: 'percent',  label: 'Проценты', prefix: '',  suffix: '%' }
+    },
+    
+    OPERATION_SYMBOLS: {
+        add: '➕',
+        subtract: '➖',
+        multiply: '✖️',
+        divide: '➗'
+    },
+    
+    DEFAULT_NODE_CONFIG: {
+        maxInputs: 8,
+        minInputs: 2,
+        defaultX: 200,
+        defaultY: 200,
+        offsetX: 30,
+        offsetY: 30
+    },
+    
+    COLORS: {
+        primary: '#4a6fa5',
+        secondary: '#7ab7ff',
+        accent: '#ffd700',
+        danger: '#ff6b6b',
+        success: '#4caf50',
+        warning: '#ffb347'
+    }
+};
