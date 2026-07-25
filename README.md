@@ -36,17 +36,25 @@ src/js/
 │   ├── nodeManager.js       создание/рендер/удаление/drag/resize нод
 │   ├── connectionManager.js создание/разрыв соединений между сокетами
 │   ├── renderer.js          отрисовка SVG-линий, подсветка сокетов
+│   ├── boardManager.js      дешборды, оформление/печать
 │   └── layoutManager.js     листы (вкладки), сохранение/загрузка проекта
 ├── nodes/
-│   ├── baseNode.js           БАЗОВЫЙ КЛАСС — от него наследуются все ноды
-│   ├── numberNode.js          пример компактной ноды с одним выходом
-│   ├── operationNode.js       пример ноды с динамическим числом входов
-│   ├── percentageNode.js      пример ноды с визуализацией (SVG-диаграмма)
-│   ├── scaleListNode.js       пример ноды LIST → LIST
-│   ├── listViewerNode.js      пример ноды только для просмотра (без выхода)
-│   ├── listInputNode.js       пример ноды с ручным вводом коллекции
-│   ├── layoutInputNode.js     пример ноды-моста между листами (вход)
-│   └── layoutOutputNode.js    пример ноды-моста между листами (выход)
+│   ├── baseNode.js               БАЗОВЫЙ КЛАСС — от него наследуются все ноды
+│   ├── numberNode.js             Компактная нода с одним выходом (Число)
+│   ├── stringNode.js             Компактная нода с одним выходом (Строка)
+│   ├── listInputNode.js          Ручной ввод коллекции Имя-Аргумент
+│   ├── operationNode.js          Динамическое число входов (Сложение/Вычитание/Умножение/Деление)
+│   ├── scaleListNode.js          LIST → LIST (Умножение списка)
+│   ├── percentConvertNode.js     Проценты от суммы
+│   ├── ganttNode.js              Диаграмма Ганта
+│   ├── tableNode.js              Таблица с динамическими колонками
+│   ├── percentageNode.js         Визуализация (SVG-диаграмма)
+│   ├── listViewerNode.js         Только просмотр (без выхода) — Просмотр списка
+│   ├── tableViewerNode.js        Только просмотр (без выхода) — Просмотр таблицы
+│   ├── layoutInputNode.js        Мост между листами (вход)
+│   ├── layoutOutputNode.js       Мост между листами (выход)
+│   ├── dashboardNode.js          Дашборд (Board)
+│   └── exampleNode.js            ШАБЛОН — для создания новых узлов
 └── utils/
     ├── constants.js       имена типов, цвета, дефолтные конфиги
     ├── dataTypes.js       ListData — единый формат "списка" данных
@@ -191,51 +199,61 @@ resize (`nodeManager.startResize`), позиционирование линий 
 
 ---
 
-## 5. Сокеты — единственный правильный способ
+# Socket API — создание и типизация сокетов
 
-Всегда создавайте сокеты через `SocketFactory.createSocket()`, а не руками.
-Это гарантирует одинаковую форму, цвет и обработчик старта соединения у всех нод.
+## 1. Единая фабрика сокетов
+
+Все сокеты создаются через `SocketFactory.createSocket()`. Это гарантирует:
+
+- Единую форму, цвет и размер
+- Автоматическую установку `data-kind` для проверки совместимости
+- Единый обработчик `mousedown` для старта соединения
 
 ```js
 import { SocketFactory } from '../utils/socketFactory.js';
 
 const socket = SocketFactory.createSocket({
     nodeId: this.id,
-    socketType: 'input',   // 'input' | 'output'
-    index: 0,               // порядковый номер сокета среди сокетов ЭТОГО типа у ЭТОЙ ноды
-    isList: false,          // true → квадратный синий LIST-сокет
-    outputType: null,       // 'count' → зелёный кружок; иначе игнорируется
+    socketType: 'input',    // 'input' | 'output'
+    index: 0,               // порядковый номер среди сокетов этого типа
+    isList: false,          // LIST → квадратный, синий
+    isString: false,        // String → круглый, синий (#64b5f6)
+    isData: false,          // Data → ромб, оранжевый (#ff8a65)
+    isAny: false,           // Any → круг, фиолетовый, пунктир (совместим с любым)
+    outputType: null,       // 'count' → зелёный кружок
     title: 'Входное число'  // подсказка при наведении
 });
 
-someRow.appendChild(socket);
+row.appendChild(socket);
 ```
 
-### Правила индексов
+---
 
-- `index` уникален в пределах `(nodeId, socketType)` — у одной ноды может
-  быть `input`-сокет `index=0` и `output`-сокет `index=0` одновременно, это
-  разные сокеты.
-- Индексы входов должны совпадать с позициями в `this.inputSockets` — по
-  этому массиву определяется, какие входы существуют.
+## 2. Род сокета (kind)
 
-### Форма и цвет сокета (задаются классами, не инлайн-стилями)
+Каждый сокет получает атрибут `data-kind`, по которому `connectionManager` проверяет совместимость типов при соединении.
 
-| Тип данных | `isList` | `outputType` | Форма | Цвет |
-|---|---|---|---|---|
-| Число (float) | `false` | `null`/`'result'` | круг | серый |
-| Количество (int) | `false` | `'count'` | круг | зелёный (`--md-secondary`) |
-| Список (LIST) | `true` | — | квадрат | голубой (`#4fc3f7`) |
+| Род (kind) | Класс CSS | Форма | Цвет | Совместимость |
+|------------|-----------|-------|------|---------------|
+| `plain` | `.socket-number` | круг | серый | только с `plain` |
+| `count` | `.socket-count` | круг | зелёный (`--md-secondary`) | только с `count` |
+| `list` | `.socket-list` | квадрат | синий (`#4fc3f7`) | только с `list` |
+| `string` | `.socket-string` | круг | синий (`#64b5f6`) | только с `string` |
+| `data` | `.socket-data` | ромб | оранжевый (`#ff8a65`) | только с `data` |
+| `any` | `.socket-any` | круг | фиолетовый (`#ab47bc`), пунктир | совместим с ЛЮБЫМ родом |
 
-Совместимость типов проверяет `connectionManager.finishConnection()`:
-LIST-сокет можно соединить только с LIST-сокетом, обычный — только с обычным.
+---
 
-### Расположение сокета в разметке
+## 3. Правила индексов
 
-Сокеты "торчат наружу" за счёт `margin-left/right: calc(-1 * var(--socket-protrude))`
-у `.input-socket`/`.output-socket` — это чистый CSS, ничего вручную
-позиционировать не нужно. Просто кладите сокет первым/последним элементом в
-свою flex-строку:
+- `index` уникален для пары `(nodeId, socketType)` — можно иметь `input` с `index=0` и `output` с `index=0` одновременно
+- Индексы входов должны совпадать с позициями в `this.inputSockets` (для нод с динамическими входами)
+
+---
+
+## 4. Расположение в разметке
+
+Сокеты "торчат наружу" за счёт CSS-переменной `--socket-protrude`. Просто размещайте сокет первым/последним элементом в flex-строке:
 
 ```js
 const row = document.createElement('div');
@@ -245,51 +263,77 @@ row.appendChild(label);
 content.appendChild(row);
 ```
 
-Обработчик клика по сокету регистрировать вручную не нужно —
-`SocketFactory.createSocket()` уже вешает `mousedown` →
-`connectionManager.startConnection()`.
-
-### Прокси-сокеты заголовка (для свёрнутой ноды)
-
-`BaseNode.createTitle()` сам добавляет `.title-input-socket` /
-`.title-output-socket`, если `this.inputs > 0` / `this.outputs > 0`
-соответственно. Просто выставьте `this.inputs`/`this.outputs` в конструкторе
-— остальное уже работает.
+**Важно:** обработчик `mousedown` для старта соединения добавляется автоматически — ничего регистрировать вручную не нужно.
 
 ---
 
-## 6. Формат данных: ListData
+## 5. Прокси-сокеты заголовка (для свёрнутой ноды)
 
-Единый формат, которым ноды обмениваются между собой — `src/js/utils/dataTypes.js`:
+`BaseNode.createTitle()` автоматически добавляет `.title-input-socket` / `.title-output-socket`, если `this.inputs > 0` / `this.outputs > 0`.
+
+Просто укажите `this.inputs` и `this.outputs` в конструкторе ноды — остальное работает само.
 
 ```js
-new ListData(
-    [{ name: 'Зарплата', value: 1000 }, { name: 'Бонус', value: 250 }],
-    { title: 'Доходы' /* любые доп. метаданные */ }
-)
+constructor() {
+    super();
+    this.inputs = 1;   // будет создан прокси-вход
+    this.outputs = 1;  // будет создан прокси-выход
+}
 ```
 
-Готовые геттеры: `.total`, `.names`, `.values`, `.percentages`. Используйте
-`ListData`, если ваша нода выдаёт список (LIST-выход) или умеет показать
-список из входа. Для простого числового выхода `ListData` не обязателен,
-но принято хранить и `resultListData` — "число с именем" для нод, которым
-важна подпись.
+---
 
-### Три "слоя" выходных данных, которые использует движок
+## 6. Проверка совместимости типов
 
-- `this.value` — сырое число (или `null`/строка ошибки). Читается напрямую,
-  когда нужен просто числовой результат.
-- `this.resultListData` — `ListData` с одним элементом
-  `{ name: <имя ноды>, value: <число> }`. Читается, когда следующей ноде
-  важна подпись (легенда диаграммы, таблица).
-- `this.listData` — `ListData` с полным списком элементов, если нода их
-  производит/хранит.
+`connectionManager.finishConnection()` использует `Helpers.getSocketKind()` для определения рода сокета:
 
-Ноды-потребители (см. `PercentageNode.calculate()`) сами решают, какой из
-трёх слоёв им нужен. Если ваша нода производит данные — заполняйте минимум
-`this.value` и, по возможности, `this.resultListData`, чтобы её можно было
-подключить куда угодно без специальной поддержки на другой стороне.
+- Если есть `data-kind` — берётся он
+- Если нет — определяется по `classList` / `data-isList` (обратная совместимость)
 
+Соединение разрешено, если:
+- Рода совпадают
+- ИЛИ один из сокетов имеет род `any`
+
+---
+
+## 7. Пример: создание ноды с разными типами сокетов
+
+```js
+// Вход: принимает список
+const inputSocket = SocketFactory.createSocket({
+    nodeId: this.id,
+    socketType: 'input',
+    index: 0,
+    isList: true,
+    title: 'Входной список'
+});
+
+// Выход: выдаёт число с зелёным счётчиком
+const outputSocket = SocketFactory.createSocket({
+    nodeId: this.id,
+    socketType: 'output',
+    index: 0,
+    outputType: 'count',
+    title: 'Количество элементов'
+});
+
+// Выход: выдаёт данные (ромб)
+const dataOutput = SocketFactory.createSocket({
+    nodeId: this.id,
+    socketType: 'output',
+    index: 1,
+    isData: true,
+    title: 'Таблица данных'
+});
+```
+
+---
+
+## 8. Совместимость со старыми нодами
+
+Ноды, создающие сокеты вручную без `SocketFactory`, продолжают работать — `Helpers.getSocketKind()` при отсутствии `data-kind` сам определит тип по `classList` и `data-isList`.
+
+**Рекомендуется** переводить все ноды на `SocketFactory` для единообразия.
 ---
 
 ## 7. Метод calculate(nodeManager)
