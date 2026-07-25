@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    scaleListNode.js
+ * @brief   Нода умножения списка на число (LIST → LIST)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
@@ -23,7 +35,7 @@ export class ScaleListNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.minWidth = (this.width || 220) + 'px';
+        content.style.cssText = 'width: 100%; min-width: 150px;';
         
         // Входные сокеты
         const inputsContainer = document.createElement('div');
@@ -60,6 +72,10 @@ export class ScaleListNode extends BaseNode {
             font-size: 11px;
             font-weight: 400;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         numberRow.appendChild(numberLabel);
         
@@ -102,6 +118,10 @@ export class ScaleListNode extends BaseNode {
             font-size: 11px;
             font-weight: 400;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         listRow.appendChild(listLabel);
         
@@ -146,7 +166,10 @@ export class ScaleListNode extends BaseNode {
             font-size: 11px;
             font-weight: 400;
             flex: 1;
-            min-width: 40px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         resultRow.appendChild(resultLabel);
         
@@ -191,6 +214,10 @@ export class ScaleListNode extends BaseNode {
             font-size: 11px;
             font-weight: 400;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         listResultRow.appendChild(listResultLabel);
         
@@ -233,6 +260,10 @@ export class ScaleListNode extends BaseNode {
             font-size: 11px;
             font-weight: 400;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
         countRow.appendChild(countLabel);
         

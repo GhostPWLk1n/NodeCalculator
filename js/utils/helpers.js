@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    helpers.js
+ * @brief   Форматирование чисел/значений, generateId, определение типа сокета
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { Constants } from './constants.js';
 
 export const Helpers = {
@@ -23,12 +35,51 @@ export const Helpers = {
     },
 
     /**
+     * Форматирует число со пробелами-разделителями тысяч (1000 -> "1 000")
+     * и заданным числом знаков после запятой. В отличие от formatNumber()
+     * возвращает СТРОКУ, а не число - formatNumber() используется и там,
+     * где число нужно как число (например, значение редактируемого
+     * input), группировка пробелами там была бы не к месту.
+     *
+     * @param {number} value
+     * @param {number|null} decimals - null/undefined = авто (до 4 знаков,
+     *        хвостовые нули обрезаются, как раньше вело себя formatNumber)
+     */
+    formatGrouped(value, decimals) {
+        if (typeof value !== 'number' || isNaN(value)) {
+            return value === undefined || value === null ? '—' : String(value);
+        }
+
+        let numStr;
+        if (decimals === null || decimals === undefined) {
+            numStr = Number(value.toFixed(4)).toString();
+        } else {
+            const d = Math.max(0, Math.min(10, decimals));
+            numStr = value.toFixed(d);
+        }
+
+        const negative = numStr.startsWith('-');
+        if (negative) numStr = numStr.slice(1);
+
+        const [intPart, fracPart] = numStr.split('.');
+        const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+        return (negative ? '-' : '') + grouped + (fracPart !== undefined ? '.' + fracPart : '');
+    },
+
+    /**
      * Форматирует число согласно выбранному формату значения
      * (Constants.VALUE_FORMATS). Единая точка форматирования - чтобы
      * PercentageNode, TableNode и другие потребители показывали
-     * деньги/проценты одинаково.
+     * деньги/проценты одинаково. Использует formatGrouped() - деньги и
+     * числа выводятся с пробелами-разделителями тысяч (1 000, не 1000).
+     *
+     * @param {number} value
+     * @param {string} formatId - 'number' | 'currency' | 'percent'
+     * @param {number|null} [decimals] - число знаков после запятой
+     *        (null/не задано = авто)
      */
-    formatByType(value, formatId) {
+    formatByType(value, formatId, decimals = null) {
         // Нечисловое значение (например, текстовый столбец с именами строк) -
         // форматы денег/процентов к нему неприменимы, показываем как есть
         if (typeof value !== 'number') {
@@ -36,7 +87,7 @@ export const Helpers = {
         }
         const key = (formatId || 'number').toUpperCase();
         const fmt = Constants.VALUE_FORMATS?.[key] || Constants.VALUE_FORMATS?.NUMBER;
-        const num = Helpers.formatNumber(value);
+        const num = Helpers.formatGrouped(value, decimals);
         if (!fmt) return String(num);
         return `${fmt.prefix || ''}${num}${fmt.suffix || ''}`;
     },

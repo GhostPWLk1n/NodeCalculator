@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    listViewerNode.js
+ * @brief   Нода только для просмотра списка (LIST), без выхода
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
@@ -31,7 +43,7 @@ export class ListViewerNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.minWidth = this.width + 'px';
+        content.style.cssText = 'width: 100%; min-width: 150px;';
 
         const topRow = document.createElement('div');
         topRow.style.cssText = `

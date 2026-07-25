@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    stringNode.js
+ * @brief   Компактная нода ввода текста (по образцу NumberNode)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 

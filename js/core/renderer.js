@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    renderer.js
+ * @brief   Отрисовка SVG-линий соединений и подсветка сокетов
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { Helpers } from '../utils/helpers.js';
 
 export class Renderer {
@@ -123,7 +135,23 @@ export class Renderer {
         }
     }
 
-    createConnectionPath(x1, y1, x2, y2, meta = {}) {
+    // Возвращает пару элементов: hitArea (невидимая, широкая - только для
+    // попадания курсором/правым кликом) и path (видимая тонкая линия).
+    // Разделение нужно, потому что попасть правой кнопкой мыши точно по
+    // 2.5px линии неудобно - hitArea шире и прозрачна, реальный клик
+    // ловит именно она; path остаётся чисто декоративной (pointer-events:none).
+    createConnectionPath(x1, y1, x2, y2, meta = {}, conn = null) {
+        const d = this.buildPathD(x1, y1, x2, y2);
+
+        const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitArea.setAttribute('class', 'connection-hitarea');
+        hitArea.setAttribute('fill', 'none');
+        hitArea.setAttribute('stroke', 'transparent');
+        hitArea.setAttribute('stroke-width', '14');
+        hitArea.setAttribute('d', d);
+        hitArea.style.pointerEvents = 'stroke';
+        hitArea.style.cursor = 'context-menu';
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('class', 'connection-path');
         path.setAttribute('fill', 'none');
@@ -131,8 +159,37 @@ export class Renderer {
         path.setAttribute('stroke-width', '2.5');
         path.setAttribute('stroke-linecap', 'round');
         path.setAttribute('opacity', '0.85');
-        path.setAttribute('d', this.buildPathD(x1, y1, x2, y2));
-        return path;
+        path.setAttribute('d', d);
+        path.style.pointerEvents = 'none';
+
+        if (conn) {
+            [hitArea, path].forEach(el => {
+                el.dataset.sourceNodeId = conn.sourceNodeId;
+                el.dataset.targetNodeId = conn.targetNodeId;
+                el.dataset.targetSocket = conn.targetSocket ?? 0;
+                el.dataset.sourceSocket = conn.sourceSocket ?? 0;
+            });
+
+            hitArea.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.connectionManager) {
+                    window.connectionManager.showConnectionContextMenu(e.clientX, e.clientY, conn);
+                }
+            });
+
+            // Лёгкая подсветка при наведении - видно, какую именно связь удалишь
+            hitArea.addEventListener('mouseenter', () => {
+                path.setAttribute('stroke-width', '4');
+                path.setAttribute('opacity', '1');
+            });
+            hitArea.addEventListener('mouseleave', () => {
+                path.setAttribute('stroke-width', '2.5');
+                path.setAttribute('opacity', '0.85');
+            });
+        }
+
+        return { hitArea, path };
     }
 
     // Временная линия (тянется за курсором при создании соединения)
@@ -181,6 +238,7 @@ export class Renderer {
 
         // Убираем только "постоянные" линии, временную (при перетаскивании) не трогаем
         svg.querySelectorAll('path.connection-path:not(.temp-path)').forEach(p => p.remove());
+        svg.querySelectorAll('path.connection-hitarea').forEach(p => p.remove());
         this.connectionLines = [];
 
         connections.forEach(conn => {
@@ -191,7 +249,8 @@ export class Renderer {
             const endPos = this.getSocketPosition(conn.targetNodeId, 'input', targetIndex);
             if (!startPos || !endPos) return;
 
-            const path = this.createConnectionPath(startPos.x, startPos.y, endPos.x, endPos.y, startPos);
+            const { hitArea, path } = this.createConnectionPath(startPos.x, startPos.y, endPos.x, endPos.y, startPos, conn);
+            svg.appendChild(hitArea);
             svg.appendChild(path);
             this.connectionLines.push(path);
 

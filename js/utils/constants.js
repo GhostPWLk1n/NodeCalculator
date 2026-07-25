@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    constants.js
+ * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 export const Constants = {
     NODE_TYPES: {
         NUMBER: 'number',
@@ -14,7 +26,10 @@ export const Constants = {
         multiply: 'Умножение',
         divide: 'Деление',
         string: 'Строка',
-        table: 'Таблица'
+        table: 'Таблица',
+        percentConvert: 'Проценты от суммы',
+        percentage: 'Диаграмма',
+        gantt: 'Диаграмма Ганта'
     },
 
     // Форматы отображения числового значения. Источник данных может

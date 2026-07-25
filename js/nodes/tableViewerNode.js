@@ -1,36 +1,66 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    tableViewerNode.js
+ * @brief   Нода просмотра таблицы (Data), без выходов
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 
-const ROW_HEIGHT = 22;      // px, примерная высота строки таблицы
-const HEADER_HEIGHT = 26;   // px, примерная высота заголовка
-const MAX_VISIBLE_ROWS = 8; // после скольки строк включается скролл (пока не задано вручную)
-const MIN_WRAP_HEIGHT = 40; // px, чтобы пустая/маленькая таблица не схлопывалась в ничто
+const ROW_HEIGHT = 22;         // px, оценка высоты строки тела (фолбэк до первого измерения)
+const MAX_VISIBLE_ROWS = 8;    // после скольки строк тело включает внутренний скролл
+const MIN_WRAP_HEIGHT = 40;    // px, чтобы пустая/маленькая таблица не схлопывалась в ничто
+const DEFAULT_COL_WIDTH = 90;  // px, ширина столбца без ручной настройки (col.width)
 
 const EYE_OPEN = '●';   // номера строк показаны
 const EYE_CLOSED = '‿'; // номера строк замаскированы
 
 /**
  * TableViewerNode - только просмотр: один вход Data, без выходов.
- * Показывает таблицу (шапка = заголовки столбцов, строки = значения
- * с учётом формата колонки - число/деньги/проценты/текст).
  *
- * Область таблицы можно свободно растягивать и по ширине, и по высоте -
- * нативный resize (CSS resize: both) прямо на обёртке таблицы, отдельно
- * от общей ручки изменения ширины ноды. Пока пользователь не растягивал
- * область вручную, высота подстраивается под фактическое число строк;
- * как только область растянута вручную - автоподбор высоты больше не
- * вмешивается.
+ * АРХИТЕКТУРА БЕЗ position:sticky. Раньше шапка и строка "Итого" были
+ * sticky-ячейками внутри одной прокручиваемой `<table>` - это упиралось в
+ * известную особенность рендеринга Chromium (прокручиваемый контент мог
+ * "просвечивать" сквозь sticky-ячейки, а высота окна прокрутки считалась
+ * неточно, потому что нужно было заранее прикидывать высоту шапки/итога).
+ *
+ * Вместо этого шапка, тело и итог - три ФИЗИЧЕСКИ РАЗДЕЛЬНЫХ блока в
+ * обычном потоке документа:
+ *   [headerRow]   - обычный поток, НЕ прокручивается сам по себе
+ *   [bodyScroll]  - собственный вертикальный скролл (overflow-y:auto)
+ *   [footerRow]   - обычный поток, НЕ прокручивается сам по себе
+ * Все три - flex-строки с ОДИНАКОВЫМИ явными пиксельными ширинами ячеек
+ * (numColWidth для номеров строк, col.width/DEFAULT_COL_WIDTH для
+ * остальных) - поэтому столбцы всегда совпадают между шапкой/телом/
+ * итогом без какой-либо ручной синхронизации через JS.
+ *
+ * Горизонтальный скролл - на внешней обёртке (.table-viewer-wrap):
+ * bodyScroll разрешает своему содержимому вылезать по ширине
+ * (overflow-x не ограничен), это "вылезание" ловит внешняя обёртка -
+ * так шапка/тело/итог скроллятся по горизонтали синхронно, одним и тем
+ * же нативным скроллом, без сложных обработчиков синхронизации.
+ *
+ * Высота bodyScroll выставлена через flex (flex:1, min-height:0) с
+ * потолком max-height, посчитанным по РЕАЛЬНО измеренной высоте первой
+ * строки - шапка и итог в этот расчёт вообще не входят, потому что
+ * физически лежат ВНЕ прокручиваемой области. Это и убирает саму
+ * причину бага "на строку заголовков ниже / на строку итогов короче",
+ * а не просто маскирует симптом.
  *
  * Столбец номеров строк - фиксированной ширины, подобранной под самое
- * крупное число в текущих данных (как в Excel: ширина растёт вместе
- * с количеством цифр, а не "гуляет" от рендера к рендеру).
+ * крупное число в текущих данных (как в Excel).
  *
  * Клик по стрелке рядом с заголовком столбца сортирует строки по этому
  * столбцу: по возрастанию → по убыванию → как есть (три состояния по кругу).
- * Сортировка - чисто визуальная (меняет порядок отображения строк),
- * исходные данные в TableNode не трогает.
+ * Сортировка - чисто визуальная, исходные данные в TableNode не трогает.
  *
  * Номера строк можно замаскировать кнопкой-"глазиком" - сам столбец
  * и кнопка при этом остаются на месте, скрываются только цифры.
@@ -45,10 +75,12 @@ export class TableViewerNode extends BaseNode {
         this.tableData = new TableData();
         this.sourceName = null;
         this.showRowNumbers = config.showRowNumbers !== undefined ? config.showRowNumbers : true;
-        // Сортировка: индекс столбца в tableData.columns + направление.
-        // null/null = "как есть" (исходный порядок строк)
         this.sortColumnIndex = config.sortColumnIndex ?? null;
         this.sortDirection = config.sortDirection ?? null; // 'asc' | 'desc' | null
+        // Высота видимой области таблицы, если пользователь тянул общую
+        // ручку ресайза ноды по вертикали (см. beginFreeResize/applyFreeResize
+        // ниже) - null = высота подбирается автоматически по числу строк.
+        this.wrapHeight = config.wrapHeight ?? null;
     }
 
     getDisplayName() {
@@ -63,7 +95,7 @@ export class TableViewerNode extends BaseNode {
         content.style.cssText = `
             gap: 6px;
             width: 100%;
-            min-width: 240px;
+            min-width: 150px;
         `;
 
         const topRow = document.createElement('div');
@@ -97,40 +129,66 @@ export class TableViewerNode extends BaseNode {
 
         content.appendChild(topRow);
 
-        const tableWrap = document.createElement('div');
-        tableWrap.className = 'table-viewer-wrap';
-        tableWrap.style.cssText = `
+        const wrap = document.createElement('div');
+        wrap.className = 'table-viewer-wrap';
+        wrap.style.cssText = `
+            display: flex;
+            flex-direction: column;
             overflow: auto;
-            max-width: 100%;
             min-width: 120px;
             min-height: ${MIN_WRAP_HEIGHT}px;
-            resize: both;
         `;
-        // Свой resize-хэндл (нативный, CSS resize) должен управлять
-        // только размером этой обёртки, а не перетаскиванием всей ноды -
-        // без остановки всплытия mousedown ушёл бы в обработчик
-        // nodeManager (он двигает ноду по нажатию на любое "пустое" место).
-        tableWrap.addEventListener('mousedown', (e) => e.stopPropagation());
+        // Ресайз только через общую ручку ноды (правый нижний угол,
+        // см. nodeManager.startResize/applyFreeResize ниже) - раньше
+        // здесь ещё был свой нативный resize:both, который по сути
+        // дублировал ту же самую ручку у ноды. mousedown всё равно
+        // останавливаем - иначе клик/скролл по таблице сдвигал бы ноду.
+        wrap.addEventListener('mousedown', (e) => e.stopPropagation());
 
-        this.renderTable(tableWrap);
-        content.appendChild(tableWrap);
+        if (this.wrapHeight) {
+            wrap.style.height = this.wrapHeight + 'px';
+        }
+
+        this.renderTable(wrap);
+        content.appendChild(wrap);
 
         return content;
     }
 
-    // Высота области прокрутки зависит от фактического числа строк -
-    // до MAX_VISIBLE_ROWS помещается целиком без скролла, дальше
-    // появляется вертикальный скролл. НЕ применяется, если пользователь
-    // уже растягивал область вручную (см. hasManualSize в renderTable).
-    applyWrapHeight(wrap) {
-        const rowCount = this.tableData.rowCount;
-        if (rowCount === 0) {
-            wrap.style.maxHeight = MIN_WRAP_HEIGHT + 'px';
-            return;
-        }
-        const visibleRows = Math.min(rowCount, MAX_VISIBLE_ROWS);
-        const height = HEADER_HEIGHT + visibleRows * ROW_HEIGHT + 4;
-        wrap.style.maxHeight = Math.max(height, MIN_WRAP_HEIGHT) + 'px';
+    // === Свободный ресайз через общую ручку ноды (nodeManager.js) ===
+    // Реализация этих двух методов - это и есть "разрешение" для
+    // nodeManager тянуть высоту той же самой ручкой, что обычно тянет
+    // только ширину (см. docs/NODE_API.md). Сама нода решает, куда
+    // девать дополнительную высоту - здесь это .table-viewer-wrap.
+
+    beginFreeResize(el) {
+        const wrap = el.querySelector('.table-viewer-wrap');
+        this._resizeStartWrapHeight = wrap ? wrap.offsetHeight : MIN_WRAP_HEIGHT;
+    }
+
+    applyFreeResize(el, deltaY) {
+        const wrap = el.querySelector('.table-viewer-wrap');
+        if (!wrap) return;
+        const newHeight = Math.max(MIN_WRAP_HEIGHT, (this._resizeStartWrapHeight || MIN_WRAP_HEIGHT) + deltaY);
+        // maxHeight убираем явно - иначе он мог бы конфликтовать со
+        // старым автоподсчитанным значением и подрезать наш height
+        wrap.style.maxHeight = 'none';
+        wrap.style.height = newHeight + 'px';
+        this.wrapHeight = newHeight;
+    }
+
+    // Ширина каждого столбца - явная и одинаковая для шапки/тела/итога.
+    // Для столбцов без ручной настройки (col.width) берём эвристику по
+    // длине заголовка вместо единого DEFAULT_COL_WIDTH - чуть более
+    // адекватный дефолт, но всё ещё детерминированный (без измерения
+    // реального DOM), так что три независимых блока гарантированно
+    // совпадают по ширине столбцов без JS-синхронизации.
+    getColumnWidths() {
+        return this.tableData.columns.map(col => {
+            if (col.width) return col.width;
+            const guess = (col.header?.length || 6) * 7 + 24;
+            return Math.max(50, Math.min(140, guess));
+        });
     }
 
     // Порядок отображения строк с учётом текущей сортировки. Возвращает
@@ -157,81 +215,40 @@ export class TableViewerNode extends BaseNode {
         return order;
     }
 
-    renderTable(wrap) {
-        // Индекс сортировки мог "протухнуть", если у источника изменился
-        // набор столбцов (например, TableNode отфильтровал неподключённый
-        // столбец) - тогда просто сбрасываем сортировку, а не падаем.
-        if (this.sortColumnIndex !== null && this.sortColumnIndex >= this.tableData.columns.length) {
-            this.sortColumnIndex = null;
-            this.sortDirection = null;
-        }
-
-        // Нативный resize (CSS resize:both) проставляет inline width/height
-        // сам, когда пользователь тащит уголок обёртки. Наши вычисления
-        // (applyWrapHeight) не должны затирать это ручное решение при
-        // каждом пересчёте - иначе перетягивание сбрасывалось бы обратно
-        // при любом обновлении данных.
-        const hasManualSize = !!(wrap.style.width || wrap.style.height);
-
-        wrap.innerHTML = '';
-
-        if (hasManualSize) {
-            wrap.style.maxHeight = 'none';
-        } else {
-            this.applyWrapHeight(wrap);
-        }
-
-        if (this.tableData.columns.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'table-viewer-empty';
-            empty.style.cssText = `
-                color: var(--md-text-disabled);
-                font-size: 11px;
-                text-align: center;
-                padding: 10px 0;
-            `;
-            empty.textContent = 'Нет данных';
-            wrap.appendChild(empty);
-            return;
-        }
-
-        const table = document.createElement('table');
-        table.className = 'table-viewer-table';
-        table.style.cssText = `
-            border-collapse: collapse;
-            width: 100%;
-            font-size: 11px;
+    // Одна ячейка (используется и в шапке, и в теле, и в итоге) -
+    // фиксированная ширина, общая логика обрезания текста/выравнивания.
+    buildCell(width, textAlign, extraStyle = '') {
+        const cell = document.createElement('div');
+        cell.style.cssText = `
+            box-sizing: border-box;
+            width: ${width}px;
+            min-width: ${width}px;
+            max-width: ${width}px;
+            flex-shrink: 0;
+            text-align: ${textAlign};
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            ${extraStyle}
         `;
+        return cell;
+    }
 
-        const rowCount = this.tableData.rowCount;
-        const rowOrder = this.getRowOrder();
-
-        // Фиксированная ширина столбца номеров - под самое крупное число
-        // в текущих данных (как в Excel), одинаковая у шапки и у всех строк
-        const digits = String(Math.max(rowCount, 1)).length;
-        const numColWidth = Math.max(22, digits * 7 + 14);
-
-        // === ШАПКА ===
-        const thead = document.createElement('thead');
-        const headRow = document.createElement('tr');
-
-        // Первая ячейка шапки - кнопка-глазик. Столбец с номерами и сама
-        // кнопка ВСЕГДА на месте - переключатель маскирует только цифры
-        // под ним, а не убирает ячейку (иначе вместе со столбцом
-        // пропадала бы и сама кнопка).
-        const eyeTh = document.createElement('th');
-        eyeTh.style.cssText = `
-            width: ${numColWidth}px;
-            min-width: ${numColWidth}px;
-            max-width: ${numColWidth}px;
-            padding: 4px 6px;
-            border-bottom: 1px solid var(--md-divider);
-            position: sticky;
-            top: 0;
-            left: 0;
+    buildHeaderRow(numColWidth, colWidths) {
+        const headerRow = document.createElement('div');
+        headerRow.className = 'table-viewer-header-row';
+        headerRow.style.cssText = `
+            display: inline-flex;
+            align-self: flex-start;
+            flex-shrink: 0;
             background: var(--md-surface-variant);
-            z-index: 2;
+            border-bottom: 1px solid var(--md-divider);
         `;
+
+        // Первая ячейка - кнопка-глазик. Столбец с номерами и сама кнопка
+        // ВСЕГДА на месте - переключатель маскирует только цифры под ним,
+        // а не убирает ячейку целиком.
+        const eyeCell = this.buildCell(numColWidth, 'right', 'padding: 4px 6px;');
         const eyeBtn = document.createElement('button');
         eyeBtn.className = 'table-viewer-eye-btn';
         eyeBtn.textContent = this.showRowNumbers ? EYE_OPEN : EYE_CLOSED;
@@ -249,47 +266,33 @@ export class TableViewerNode extends BaseNode {
         eyeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.showRowNumbers = !this.showRowNumbers;
-            this.renderTable(wrap);
+            const wrap = eyeBtn.closest ? eyeBtn.closest('.table-viewer-wrap') : null;
+            this._rerenderWrap(wrap);
         });
-        eyeTh.appendChild(eyeBtn);
-        headRow.appendChild(eyeTh);
+        eyeCell.appendChild(eyeBtn);
+        headerRow.appendChild(eyeCell);
 
         this.tableData.columns.forEach((col, colIdx) => {
             const isText = col.format === 'text';
             const isSortActive = this.sortColumnIndex === colIdx;
 
-            const th = document.createElement('th');
-            th.title = col.header;
-            th.style.cssText = `
-                text-align: ${isText ? 'left' : 'right'};
+            const th = this.buildCell(colWidths[colIdx], isText ? 'left' : 'right', `
                 padding: 4px 8px 4px 4px;
                 color: var(--md-text-secondary);
                 font-weight: 500;
-                border-bottom: 1px solid var(--md-divider);
-                white-space: nowrap;
-                overflow: hidden;
-                position: sticky;
-                top: 0;
-                background: var(--md-surface-variant);
-                z-index: 1;
+                font-size: 11px;
                 cursor: pointer;
-                ${col.width ? `width:${col.width}px; max-width:${col.width}px;` : 'max-width: 90px;'}
-            `;
-            // Обёртка ВНУТРИ th, не сам th - если сделать flex сам th,
-            // браузер выкинет ячейку из табличного алгоритма раскладки
-            // колонок, и шапка перестанет совпадать по ширине со строками
-            const headerWrap = document.createElement('div');
-            headerWrap.style.cssText = `
                 display: flex;
                 align-items: center;
                 justify-content: ${isText ? 'flex-start' : 'flex-end'};
                 gap: 4px;
-                overflow: hidden;
-            `;
+            `);
+            th.title = col.header;
+
             const headerText = document.createElement('span');
             headerText.textContent = col.header;
             headerText.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-            headerWrap.appendChild(headerText);
+            th.appendChild(headerText);
 
             const sortIcon = document.createElement('span');
             sortIcon.className = 'table-viewer-sort-icon';
@@ -300,15 +303,11 @@ export class TableViewerNode extends BaseNode {
                 opacity: ${isSortActive ? '1' : '0.35'};
                 color: ${isSortActive ? 'var(--md-primary)' : 'inherit'};
             `;
-            headerWrap.appendChild(sortIcon);
-
-            th.appendChild(headerWrap);
+            th.appendChild(sortIcon);
 
             th.addEventListener('mousedown', (e) => e.stopPropagation());
             th.addEventListener('click', (e) => {
                 e.stopPropagation();
-                // Три состояния по кругу: как есть -> по возрастанию ->
-                // по убыванию -> снова как есть
                 if (this.sortColumnIndex !== colIdx) {
                     this.sortColumnIndex = colIdx;
                     this.sortDirection = 'asc';
@@ -318,87 +317,199 @@ export class TableViewerNode extends BaseNode {
                     this.sortColumnIndex = null;
                     this.sortDirection = null;
                 }
-                this.renderTable(wrap);
+                const wrap = th.closest ? th.closest('.table-viewer-wrap') : null;
+                this._rerenderWrap(wrap);
             });
 
-            headRow.appendChild(th);
+            headerRow.appendChild(th);
         });
-        thead.appendChild(headRow);
-        table.appendChild(thead);
 
-        // === ТЕЛО ===
-        const tbody = document.createElement('tbody');
+        return headerRow;
+    }
+
+    buildDataRow(srcRowIndex, displayIndex, numColWidth, colWidths) {
+        const row = document.createElement('div');
+        row.className = 'table-viewer-data-row';
+        row.style.cssText = 'display:inline-flex; align-self:flex-start;';
+
+        const numCell = this.buildCell(numColWidth, 'right', `
+            padding: 3px 6px;
+            color: var(--md-text-disabled);
+            font-variant-numeric: tabular-nums;
+            visibility: ${this.showRowNumbers ? 'visible' : 'hidden'};
+        `);
+        numCell.className = 'table-viewer-row-num';
+        numCell.textContent = String(displayIndex + 1);
+        row.appendChild(numCell);
+
+        this.tableData.columns.forEach((col, colIdx) => {
+            const isText = col.format === 'text';
+            const v = col.values[srcRowIndex];
+            const hasValue = v !== undefined && v !== null && v !== '';
+            const isStripe = displayIndex % 2 === 0;
+
+            const cell = this.buildCell(colWidths[colIdx], isText ? 'left' : 'right', `
+                position: relative;
+                padding: 3px 10px 3px 4px;
+                color: var(--md-text);
+                font-size: 11px;
+                ${isText ? '' : 'font-variant-numeric: tabular-nums;'}
+                ${isStripe ? 'background: rgba(255,255,255,0.02);' : ''}
+            `);
+
+            if (hasValue && col.format === 'percent') {
+                const pct = Math.max(0, Math.min(100, v));
+                const bar = document.createElement('div');
+                bar.className = 'table-viewer-cell-bar';
+                bar.style.cssText = `
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    bottom: 0;
+                    width: ${pct}%;
+                    background: rgba(100, 181, 246, 0.22);
+                    z-index: 0;
+                `;
+                cell.appendChild(bar);
+            }
+
+            const textSpan = document.createElement('span');
+            textSpan.style.cssText = 'position: relative; z-index: 1;';
+            textSpan.textContent = hasValue ? Helpers.formatByType(v, col.format, col.decimals) : '—';
+            cell.appendChild(textSpan);
+
+            row.appendChild(cell);
+        });
+
+        return row;
+    }
+
+    buildFooterRow(numColWidth, colWidths) {
+        const footerRow = document.createElement('div');
+        footerRow.className = 'table-viewer-footer-row';
+        footerRow.style.cssText = `
+            display: inline-flex;
+            align-self: flex-start;
+            flex-shrink: 0;
+            background: var(--md-surface-variant);
+            border-top: 1px solid var(--md-divider);
+        `;
+
+        const labelCell = this.buildCell(numColWidth, 'right', `
+            padding: 4px 6px;
+            color: var(--md-text-secondary);
+            font-weight: 500;
+            font-size: 11px;
+        `);
+        labelCell.className = 'table-viewer-row-num';
+        labelCell.textContent = 'Σ';
+        labelCell.title = 'Итого';
+        footerRow.appendChild(labelCell);
+
+        this.tableData.columns.forEach((col, colIdx) => {
+            const isText = col.format === 'text';
+            const agg = this.tableData.aggregate(col);
+
+            const cell = this.buildCell(colWidths[colIdx], isText ? 'left' : 'right', `
+                padding: 4px 10px 4px 4px;
+                color: var(--md-text);
+                font-weight: 500;
+                font-size: 11px;
+                ${isText ? '' : 'font-variant-numeric: tabular-nums;'}
+            `);
+            cell.textContent = agg === null ? '' : Helpers.formatByType(agg, col.format, col.decimals);
+            footerRow.appendChild(cell);
+        });
+
+        return footerRow;
+    }
+
+    // Небольшой помощник: если по какой-то причине не удалось достать wrap
+    // через closest() (например, в упрощённом тестовом DOM), просто
+    // находим его через родительский узел содержимого ноды.
+    _rerenderWrap(wrap) {
+        if (!wrap) {
+            const el = document.querySelector(`[data-node-id="${this.id}"]`);
+            wrap = el ? el.querySelector('.table-viewer-wrap') : null;
+        }
+        if (wrap) this.renderTable(wrap);
+    }
+
+    renderTable(wrap) {
+        // Индекс сортировки мог "протухнуть", если у источника изменился
+        // набор столбцов - тогда просто сбрасываем сортировку.
+        if (this.sortColumnIndex !== null && this.sortColumnIndex >= this.tableData.columns.length) {
+            this.sortColumnIndex = null;
+            this.sortDirection = null;
+        }
+
+        wrap.innerHTML = '';
+
+        if (this.tableData.columns.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'table-viewer-empty';
+            empty.style.cssText = `
+                color: var(--md-text-disabled);
+                font-size: 11px;
+                text-align: center;
+                padding: 10px 0;
+            `;
+            empty.textContent = 'Нет данных';
+            wrap.appendChild(empty);
+            return;
+        }
+
+        const rowCount = this.tableData.rowCount;
+        const rowOrder = this.getRowOrder();
+
+        // Фиксированная ширина столбца номеров - под самое крупное число
+        // в текущих данных (как в Excel)
+        const digits = String(Math.max(rowCount, 1)).length;
+        const numColWidth = Math.max(22, digits * 7 + 14);
+        const colWidths = this.getColumnWidths();
+
+        // === ШАПКА - обычный поток, ВНЕ прокручиваемой области ===
+        const headerRow = this.buildHeaderRow(numColWidth, colWidths);
+        wrap.appendChild(headerRow);
+
+        // === ТЕЛО - единственная часть с собственным вертикальным скроллом ===
+        const bodyScroll = document.createElement('div');
+        bodyScroll.className = 'table-viewer-body-scroll';
+        bodyScroll.style.cssText = `
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+        `;
+
+        const bodyInner = document.createElement('div');
+        bodyInner.className = 'table-viewer-body-inner';
+        bodyInner.style.cssText = 'display:flex; flex-direction:column;';
 
         rowOrder.forEach((srcRowIndex, displayIndex) => {
-            const tr = document.createElement('tr');
-
-            const numTd = document.createElement('td');
-            numTd.className = 'table-viewer-row-num';
-            numTd.textContent = String(displayIndex + 1);
-            numTd.style.cssText = `
-                width: ${numColWidth}px;
-                min-width: ${numColWidth}px;
-                max-width: ${numColWidth}px;
-                text-align: right;
-                padding: 3px 6px;
-                color: var(--md-text-disabled);
-                font-variant-numeric: tabular-nums;
-                position: sticky;
-                left: 0;
-                background: var(--md-surface-variant);
-                visibility: ${this.showRowNumbers ? 'visible' : 'hidden'};
-            `;
-            tr.appendChild(numTd);
-
-            this.tableData.columns.forEach(col => {
-                const isText = col.format === 'text';
-                const td = document.createElement('td');
-                const v = col.values[srcRowIndex];
-                const hasValue = v !== undefined && v !== null && v !== '';
-                const isStripe = displayIndex % 2 === 0;
-
-                td.style.cssText = `
-                    position: relative;
-                    text-align: ${isText ? 'left' : 'right'};
-                    padding: 3px 10px 3px 4px;
-                    color: var(--md-text);
-                    ${isText ? '' : 'font-variant-numeric: tabular-nums;'}
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                    ${col.width ? `max-width:${col.width}px;` : ''}
-                    ${isStripe ? 'background: rgba(255,255,255,0.02);' : ''}
-                `;
-
-                // Для процентного формата - линейная графа (заливка) под
-                // текстом значения, пропорциональная величине (0-100%)
-                if (hasValue && col.format === 'percent') {
-                    const pct = Math.max(0, Math.min(100, v));
-                    const bar = document.createElement('div');
-                    bar.className = 'table-viewer-cell-bar';
-                    bar.style.cssText = `
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        bottom: 0;
-                        width: ${pct}%;
-                        background: rgba(100, 181, 246, 0.22);
-                        z-index: 0;
-                    `;
-                    td.appendChild(bar);
-                }
-
-                const textSpan = document.createElement('span');
-                textSpan.style.cssText = 'position: relative; z-index: 1;';
-                textSpan.textContent = hasValue ? Helpers.formatByType(v, col.format) : '—';
-                td.appendChild(textSpan);
-
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
+            bodyInner.appendChild(this.buildDataRow(srcRowIndex, displayIndex, numColWidth, colWidths));
         });
-        table.appendChild(tbody);
-        wrap.appendChild(table);
+        bodyScroll.appendChild(bodyInner);
+        wrap.appendChild(bodyScroll);
+
+        // === ИТОГО - обычный поток, ВНЕ прокручиваемой области, только
+        // если хотя бы один столбец просит итог ===
+        const hasTotals = this.tableData.columns.some(c => c.totalType);
+        if (hasTotals) {
+            wrap.appendChild(this.buildFooterRow(numColWidth, colWidths));
+        }
+
+        // Высота ТОЛЬКО тела - шапка и итог физически вне этой области,
+        // поэтому их размер вообще не участвует в расчёте (в отличие от
+        // старой sticky-версии, где это и было источником ошибки).
+        // Не трогаем, если пользователь уже растягивал wrap вручную
+        // (нативный resize проставляет inline height/width сам).
+        const hasManualSize = !!(wrap.style.width || wrap.style.height);
+        if (!hasManualSize) {
+            const firstRow = bodyInner.firstChild;
+            const rowH = firstRow?.offsetHeight || ROW_HEIGHT;
+            const visibleRows = Math.min(rowCount, MAX_VISIBLE_ROWS);
+            bodyScroll.style.maxHeight = Math.max(visibleRows * rowH, ROW_HEIGHT) + 'px';
+        }
     }
 
     calculate(nodeManager) {
@@ -439,7 +550,6 @@ export class TableViewerNode extends BaseNode {
             this.renderTable(wrap);
         }
 
-        // Заголовок ноды обновляется на лету, если пользователь его не переименовывал
         const titleText = element.querySelector('.title-text');
         if (titleText && !this.customName) {
             titleText.textContent = this.getDisplayName();

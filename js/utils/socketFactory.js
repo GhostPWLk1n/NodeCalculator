@@ -1,4 +1,16 @@
 /**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    socketFactory.js
+ * @brief   Единая точка создания DOM-элемента сокета
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
+/**
  * SocketFactory - единая точка создания DOM-элементов сокетов.
  *
  * Раньше каждая нода вручную создавала div.socket, проставляла классы,

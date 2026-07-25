@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    operationNode.js
+ * @brief   Операционные ноды (сложение, вычитание, умножение, деление)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Constants } from '../utils/constants.js';
 import { Helpers } from '../utils/helpers.js';

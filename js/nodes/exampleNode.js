@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    exampleNode.js
+ * @brief   Эталонный пример реализации ноды по docs/NODE_API.md
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 // ============================================
 // ПРИМЕР НОДЫ — эталонная реализация по docs/NODE_API.md
 // ============================================
@@ -39,7 +51,7 @@ export class ExampleNode extends BaseNode {
         content.className = 'node-content';
         content.style.cssText = `
             gap: 8px;
-            min-width: 200px;
+            min-width: 150px;
         `;
 
         // === СТРОКА ВХОДА ===

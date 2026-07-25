@@ -1633,6 +1633,14 @@ body {
     transition: border-color 0.15s ease;
 }
 
+/* Ноды со свободным ресайзом (ширина+высота одной ручкой, см.
+   nodeManager.applyFreeResize и tableViewerNode.js) - диагональный
+   курсор вместо горизонтального, чтобы было видно, что тянется не
+   только ширина */
+.node-resize-handle.free-resize {
+    cursor: nwse-resize;
+}
+
 .node-resize-handle:hover {
     border-color: var(--md-primary);
 }
@@ -1655,4 +1663,190 @@ body {
     padding: 1px 4px;
     width: 90px;
     outline: none;
+}
+
+/* ============================================
+   ВЫБОР НОДЫ / АКЦЕНТНЫЙ ЦВЕТ (InspectorManager)
+   ============================================ */
+
+/* Нода в фокусе (боковая панель открыта для неё) */
+.node.inspector-selected {
+    outline: 2px solid var(--md-primary);
+    outline-offset: 1px;
+}
+
+/* Акцентная полоска слева - задаётся из боковой панели (поле "Цвет
+   узла"). box-shadow, не border - не влияет на layout/размеры ноды. */
+.node.has-custom-color {
+    box-shadow: inset 4px 0 0 0 var(--node-accent, transparent);
+}
+
+.node.has-custom-color.inspector-selected {
+    box-shadow: inset 4px 0 0 0 var(--node-accent, transparent), 0 0 0 2px var(--md-primary);
+    outline: none;
+}
+
+/* ============================================
+   БОКОВАЯ ПАНЕЛЬ НАСТРОЕК НОДЫ (InspectorManager)
+   ============================================ */
+
+.inspector-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 280px;
+    height: 100vh;
+    background: var(--md-surface-variant);
+    border-left: 1px solid var(--md-divider);
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
+}
+
+.inspector-panel.open {
+    transform: translateX(0);
+}
+
+.inspector-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--md-divider);
+    flex-shrink: 0;
+}
+
+.inspector-title {
+    color: var(--md-text);
+    font-size: 14px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inspector-close {
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.inspector-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--md-text);
+}
+
+.inspector-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.inspector-empty {
+    color: var(--md-text-disabled);
+    font-size: 12px;
+    text-align: center;
+    padding: 24px 0;
+}
+
+.inspector-section-heading {
+    color: var(--md-accent);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-top: 8px;
+    margin-top: 4px;
+    border-top: 1px solid var(--md-divider);
+}
+
+.inspector-body > .inspector-section-heading:first-child {
+    padding-top: 0;
+    margin-top: 0;
+    border-top: none;
+}
+
+.inspector-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.inspector-field-label {
+    color: var(--md-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.inspector-field-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inspector-field-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--md-divider);
+    border-radius: 4px;
+    color: var(--md-text);
+    font-size: 13px;
+    padding: 6px 8px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.inspector-field-input:focus {
+    border-color: var(--md-primary);
+}
+
+select.inspector-field-input {
+    cursor: pointer;
+}
+
+.inspector-color-input {
+    flex: 1;
+    height: 32px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.inspector-reset-btn {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--md-divider);
+    border-radius: 4px;
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.inspector-reset-btn:hover {
+    color: var(--md-text);
+    border-color: var(--md-primary);
+}
+
+input[type="checkbox"].inspector-field-input {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--md-primary);
+    cursor: pointer;
 }

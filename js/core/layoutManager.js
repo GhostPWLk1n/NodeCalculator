@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    layoutManager.js
+ * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 export class LayoutManager {
     constructor(nodeManager, connectionManager, renderer) {
         this.nodeManager = nodeManager;
@@ -82,6 +94,13 @@ export class LayoutManager {
         if (!layout) return;
 
         this.saveActiveState();
+
+        // Ноды старого листа сейчас будут пересозданы с нуля - выбранная
+        // (боковая панель) нода из прошлого листа больше не актуальна
+        this.nodeManager.selectedNode = null;
+        if (window.inspectorManager) {
+            window.inspectorManager.close();
+        }
 
         this.activeLayoutId = id;
         this.nodeManager.nodes = layout.nodes;
@@ -190,10 +209,15 @@ export class LayoutManager {
                     items: n.type === 'listInput' && n.items
                         ? n.items.map(i => ({ name: i.name, value: i.value }))
                         : undefined,
+                    nameColumnWidth: n.type === 'listInput' ? n.nameColumnWidth : undefined,
+                    valueColumnWidth: n.type === 'listInput' ? n.valueColumnWidth : undefined,
                     // Формат отображения значения (см. BaseNode.getValueFormat) -
                     // необязателен, выставляется явно только теми нодами,
                     // которым это важно
                     valueFormat: n.valueFormat,
+                    // Акцентный цвет ноды (боковая панель, InspectorManager) -
+                    // необязателен, null = цвет темы по умолчанию
+                    color: n.color,
                     // TableNode: столбцы (пары LIST+String индексов сокетов
                     // и переопределение формата) + счётчик для новых индексов
                     columns: n.type === 'table' && n.columns
@@ -202,7 +226,20 @@ export class LayoutManager {
                     _nextIndex: n.type === 'table' ? n._nextIndex : undefined,
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
-                    sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined
+                    sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
+                    wrapHeight: n.type === 'tableViewer' ? n.wrapHeight : undefined,
+                    // GanttNode: календарь плана
+                    startDate: n.type === 'gantt' ? n.startDate : undefined,
+                    periodPreset: n.type === 'gantt' ? n.periodPreset : undefined,
+                    durationUnit: n.type === 'gantt' ? n.durationUnit : undefined,
+                    taskDates: n.type === 'gantt' ? { ...n.taskDates } : undefined,
+                    rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
+                    showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
+                    deadlineDate: n.type === 'gantt' ? n.deadlineDate : undefined,
+                    showYearRow: n.type === 'gantt' ? n.showYearRow : undefined,
+                    showMonthRow: n.type === 'gantt' ? n.showMonthRow : undefined,
+                    showDayRow: n.type === 'gantt' ? n.showDayRow : undefined,
+                    showWeekdayRow: n.type === 'gantt' ? n.showWeekdayRow : undefined
                 }))
             }))
         };
@@ -235,7 +272,13 @@ export class LayoutManager {
                 const node = new NodeClass(sn.id, sn.type, sn.x, sn.y, sn);
                 if (sn.width) node.width = sn.width;
                 node.collapsed = !!sn.collapsed;
-                if (sn.inputs) node.inputs = sn.inputs;
+                // ВАЖНО: node.inputs НЕ перезаписываем сохранённым sn.inputs -
+                // конструктор каждой ноды уже сам корректно выставляет inputs
+                // (константа либо производное от inputSockets.length/config).
+                // Перезапись устаревшим числом ломает файлы, сохранённые
+                // ДО изменения схемы конкретной ноды (например, у
+                // PercentageNode было 1 вход, стало 2 - старый .ncp принёс
+                // бы inputs:1 и рассинхронизировал бы его с inputSockets).
                 maxNodeId = Math.max(maxNodeId, sn.id);
                 return node;
             }).filter(Boolean)

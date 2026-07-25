@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    nodeManager.js
+ * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { Helpers } from '../utils/helpers.js';
 
 export class NodeManager {
@@ -36,14 +48,22 @@ export class NodeManager {
     }
 
     // Начало растягивания ноды за ручку в правом нижнем углу.
-    // Пользователь задаёт только ширину; высоту нода определяет сама.
+    // По умолчанию пользователь задаёт только ширину; высоту нода
+    // определяет сама (см. docs/NODE_API.md). Ноды, которым нужна
+    // свобода и по вертикали (например, TableViewerNode - высота видимой
+    // части таблицы), реализуют beginFreeResize()/applyFreeResize() -
+    // тогда та же самая ручка тянет и высоту тоже, в обход общего правила.
     startResize(e, node) {
         const el = document.querySelector(`[data-node-id="${node.id}"]`);
         if (!el) return;
         this.isResizing = true;
         this.resizingNode = node;
         this.resizeStartX = e.clientX;
+        this.resizeStartY = e.clientY;
         this.resizeStartWidth = el.offsetWidth;
+        if (typeof node.beginFreeResize === 'function') {
+            node.beginFreeResize(el);
+        }
     }
 
     updateResize(e) {
@@ -61,10 +81,19 @@ export class NodeManager {
         const newWidth = Math.max(200, this.resizeStartWidth + deltaX);
         
         el.style.width = newWidth + 'px';
-        el.style.height = 'auto';
         
         // Сохраняем только ширину
         this.resizingNode.width = newWidth;
+        
+        if (typeof this.resizingNode.applyFreeResize === 'function') {
+            // Нода сама решает, куда девать дополнительную высоту (см.
+            // tableViewerNode.js) - nodeManager не лезет в её внутреннюю
+            // структуру, просто передаёт дельту движения мыши по Y.
+            const deltaY = (e.clientY - this.resizeStartY) / zoom;
+            this.resizingNode.applyFreeResize(el, deltaY);
+        } else {
+            el.style.height = 'auto';
+        }
         
         // Если это PercentageNode - обновляем легенду
         if (this.resizingNode.type === 'percentage' && this.resizingNode.updateLegendAdaptive) {
@@ -120,10 +149,6 @@ export class NodeManager {
         // Устанавливаем ширину, если она сохранена
         if (node.width) {
             el.style.width = node.width + 'px';
-        } else if (node.type === 'percentage') {
-            // Для процентного узла устанавливаем разумную ширину по умолчанию
-            el.style.width = '320px';
-            node.width = 320;
         }
         
         // Создаем содержимое ноды
@@ -132,10 +157,18 @@ export class NodeManager {
         
         container.appendChild(el);
         
-        // Ручка изменения ширины (правый нижний угол)
+        // Акцентный цвет ноды (боковая панель, InspectorManager) - если задан
+        this.applyNodeColor(node, el);
+        
+        // Ручка изменения размера (правый нижний угол). По умолчанию -
+        // только ширина; если нода реализует applyFreeResize() (см.
+        // tableViewerNode.js), та же самая ручка тянет и высоту тоже -
+        // единственная точка ресайза для такой ноды, без отдельного
+        // внутреннего хэндла, который раньше дублировал эту же ручку.
+        const supportsFreeResize = typeof node.applyFreeResize === 'function';
         const resizeHandle = document.createElement('div');
-        resizeHandle.className = 'node-resize-handle';
-        resizeHandle.title = 'Изменить ширину';
+        resizeHandle.className = supportsFreeResize ? 'node-resize-handle free-resize' : 'node-resize-handle';
+        resizeHandle.title = supportsFreeResize ? 'Изменить размер' : 'Изменить ширину';
         el.appendChild(resizeHandle);
         resizeHandle.addEventListener('mousedown', (e) => {
             e.stopPropagation();
@@ -157,6 +190,11 @@ export class NodeManager {
     setupNodeEventHandlers(node, el) {
         // Перетаскивание
         el.addEventListener('mousedown', (e) => {
+            // Выбор ноды (боковая панель) - срабатывает на любой клик по
+            // ноде, включая клики по её внутренним контролам, не только
+            // по "пустому" месту, которое запускает перетаскивание.
+            this.selectNode(node);
+            
             if (e.target.closest('.socket')) return;
             if (e.target.closest('input')) return;
             if (e.target.closest('button')) return;
@@ -197,6 +235,46 @@ export class NodeManager {
     getNode(id) {
         return this.nodes.find(n => n.id === id);
     }
+
+    // === Боковая панель (InspectorManager): выбор ноды кликом ===
+
+    selectNode(node) {
+        if (this.selectedNode && this.selectedNode.id !== node.id) {
+            const prevEl = document.querySelector(`[data-node-id="${this.selectedNode.id}"]`);
+            if (prevEl) prevEl.classList.remove('inspector-selected');
+        }
+        this.selectedNode = node;
+        const el = document.querySelector(`[data-node-id="${node.id}"]`);
+        if (el) el.classList.add('inspector-selected');
+        if (window.inspectorManager) {
+            window.inspectorManager.open(node);
+        }
+    }
+
+    deselectNode() {
+        if (this.selectedNode) {
+            const el = document.querySelector(`[data-node-id="${this.selectedNode.id}"]`);
+            if (el) el.classList.remove('inspector-selected');
+        }
+        this.selectedNode = null;
+        if (window.inspectorManager) {
+            window.inspectorManager.close();
+        }
+    }
+
+    // Акцентный цвет ноды (--node-accent + класс has-custom-color) -
+    // задаётся из боковой панели, null означает "цвет темы по умолчанию".
+    // Вызывается и при первом рендере ноды, и при каждом изменении из панели.
+    applyNodeColor(node, el) {
+        if (!el) return;
+        if (node.color) {
+            el.style.setProperty('--node-accent', node.color);
+            el.classList.add('has-custom-color');
+        } else {
+            el.style.removeProperty('--node-accent');
+            el.classList.remove('has-custom-color');
+        }
+    }
     
     deleteNode() {
         if (this.contextMenuTarget === null) return;
@@ -204,6 +282,14 @@ export class NodeManager {
         const el = document.querySelector(`[data-node-id="${id}"]`);
         if (el) el.remove();
         this.nodes = this.nodes.filter(n => n.id !== id);
+        
+        // Если удаляемая нода была выбрана - закрываем боковую панель
+        if (this.selectedNode && this.selectedNode.id === id) {
+            this.selectedNode = null;
+            if (window.inspectorManager) {
+                window.inspectorManager.close();
+            }
+        }
         
         // Удаляем соединения
         if (window.connectionManager) {
@@ -284,7 +370,23 @@ export class NodeManager {
         menu.style.display = 'block';
         menu.style.left = x + 'px';
         menu.style.top = y + 'px';
-        
+
+        // Контекстное меню НОДЫ - показываем пункты для ноды, прячем
+        // "Удалить связь" (тот относится к конкретному ребру графа,
+        // выбираемому отдельным правым кликом по самой линии соединения -
+        // см. connectionManager.showConnectionContextMenu)
+        ['contextMenuToggleCollapse', 'contextMenuDeleteNode', 'contextMenuDuplicate'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = '';
+        });
+        const deleteConnItem = document.getElementById('contextMenuDeleteConnection');
+        if (deleteConnItem) deleteConnItem.style.display = 'none';
+
+        // Режимы "выбрана нода" и "выбрана связь" взаимоисключающие
+        if (window.connectionManager) {
+            window.connectionManager.contextMenuTarget = null;
+        }
+
         // Подпись пункта "Свернуть/Развернуть" зависит от текущего
         // состояния конкретной ноды, по которой кликнули правой кнопкой
         const toggleItem = document.getElementById('contextMenuToggleCollapse');
@@ -336,6 +438,10 @@ export class NodeManager {
         // Удаляем все элементы нод
         document.querySelectorAll('.node').forEach(el => el.remove());
         this.nodes = [];
+        this.selectedNode = null;
+        if (window.inspectorManager) {
+            window.inspectorManager.close();
+        }
         // ВАЖНО: nodeIdCounter НЕ сбрасываем в 0.
         // Id нод должны быть уникальны глобально (между всеми листами/layouts),
         // т.к. ноды "Вход листа" ссылаются на ноды "Выход листа" другого листа по id.

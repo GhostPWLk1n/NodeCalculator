@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    tableNode.js
+ * @brief   Обработчик: собирает LIST-входы в столбцы таблицы (выход типа Data)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
@@ -7,17 +19,24 @@ import { SocketFactory } from '../utils/socketFactory.js';
  * У каждого столбца два входа - LIST (обязательный, значения столбца)
  * и String (необязательный, переопределяет заголовок столбца).
  *
- * Формат столбца (число/деньги/проценты) можно выбрать вручную, либо
- * унаследовать от источника через getValueFormat() (см. docs/NODE_API.md
- * и BaseNode.getValueFormat()).
+ * ВИД НОДЫ - НАМЕРЕННО МИНИМАЛЬНЫЙ. Всё оформление (формат/итог/ширина/
+ * знаки после запятой/подцепить имена строк) живёт в боковой панели
+ * (InspectorManager, getInspectorSchema() ниже) - в самом теле ноды
+ * остаются только сокеты с подписью имени подключённого источника
+ * ([сокет][имя источника]), чтобы нода не разрасталась контролами,
+ * которые нужны не постоянно, а изредка. См. docs/NODE_API.md.
+ *
+ * Формат столбца (число/деньги/проценты) можно выбрать вручную в
+ * панели, либо унаследовать от источника через getValueFormat() (см.
+ * BaseNode.getValueFormat()).
  *
  * Названия строк (item.name из подключённого LIST) можно подцепить как
  * отдельный текстовый столбец перед числовым - переключается чекбоксом
- * "имена" у каждого столбца индивидуально (пока грубый переключатель,
- * более тонкий менеджмент - на будущее).
+ * в панели у каждого столбца индивидуально.
  *
- * Ширину столбца в выходной таблице можно задать вручную (px) - иначе
- * потребитель (TableViewerNode) подбирает её сам под содержимое.
+ * Ширину столбца и число знаков после запятой в выходной таблице можно
+ * задать вручную в панели (пусто = авто) - тогда потребитель
+ * (TableViewerNode) применяет их напрямую вместо собственных эвристик.
  *
  * Выход единственный - сокет типа Data (ромб, оранжевый): готовые данные,
  * которые дальше умеет читать, например, PercentageNode.
@@ -45,17 +64,24 @@ export class TableNode extends BaseNode {
                 stringIndex: c.stringIndex,
                 formatOverride: c.formatOverride ?? null,
                 includeNames: c.includeNames ?? false,
-                width: c.width ?? null
+                width: c.width ?? null,
+                totalType: c.totalType ?? null,
+                decimals: c.decimals ?? null
             }))
-            : [{ listIndex: 0, stringIndex: 1, formatOverride: null, includeNames: false, width: null }];
+            : [{ listIndex: 0, stringIndex: 1, formatOverride: null, includeNames: false, width: null, totalType: null, decimals: null }];
 
         this._nextIndex = config._nextIndex ?? (this.columns.length * 2);
 
         this.inputSockets = this.columns.flatMap(c => [c.listIndex, c.stringIndex]);
         this.inputs = this.inputSockets.length;
 
-        this.width = config.width || 320;
+        this.width = config.width || 240;
         this.tableData = new TableData();
+
+        // Имена подключённых источников по столбцам (для подписей
+        // [сокет][имя источника] в теле ноды) - заполняется в calculate(),
+        // читается в updateDisplay()
+        this.columnMeta = this.columns.map(() => ({ listSourceName: null, stringSourceName: null }));
     }
 
     createContent() {
@@ -64,7 +90,7 @@ export class TableNode extends BaseNode {
         content.style.cssText = `
             gap: 8px;
             width: 100%;
-            min-width: 260px;
+            min-width: 150px;
         `;
 
         const columnsContainer = document.createElement('div');
@@ -72,7 +98,7 @@ export class TableNode extends BaseNode {
         columnsContainer.style.cssText = `
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
         `;
 
         this.columns.forEach((col, i) => {
@@ -132,6 +158,9 @@ export class TableNode extends BaseNode {
         return content;
     }
 
+    // Минимальная строка столбца - только сокеты и подпись имени
+    // подключённого источника. Всё оформление - в боковой панели
+    // (getInspectorSchema()).
     createColumnRow(col, index) {
         const row = document.createElement('div');
         row.className = 'table-column-row';
@@ -139,23 +168,15 @@ export class TableNode extends BaseNode {
         row.style.cssText = `
             display: flex;
             flex-direction: column;
-            gap: 3px;
-            padding: 4px 0;
+            gap: 2px;
+            padding: 3px 0;
             ${index > 0 ? 'border-top: 1px dashed var(--md-divider);' : ''}
         `;
 
-        // --- строка 1: LIST-сокет + удаление столбца ---
-        // Минимальная строка - только то, что обязано быть первым
-        // элементом ряда (сокет с отрицательным margin, см.
-        // docs/NODE_API.md раздел 5). Остальные органы управления - на
-        // строке 2, единой строкой, как и просили.
+        // --- строка 1: LIST-сокет + имя источника + удаление столбца ---
         const listLine = document.createElement('div');
         listLine.className = 'table-column-line';
-        listLine.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        `;
+        listLine.style.cssText = 'display:flex; align-items:center; gap:6px;';
 
         const listSocket = SocketFactory.createSocket({
             nodeId: this.id,
@@ -166,9 +187,21 @@ export class TableNode extends BaseNode {
         });
         listLine.appendChild(listSocket);
 
-        const listSpacer = document.createElement('span');
-        listSpacer.style.cssText = 'flex: 1;';
-        listLine.appendChild(listSpacer);
+        const sourceLabel = document.createElement('span');
+        sourceLabel.className = 'table-column-source-label';
+        sourceLabel.dataset.colIndex = String(index);
+        sourceLabel.dataset.role = 'list';
+        sourceLabel.style.cssText = `
+            color: var(--md-text-secondary);
+            font-size: 11px;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        `;
+        sourceLabel.textContent = this.columnMeta[index]?.listSourceName || 'не подключено';
+        listLine.appendChild(sourceLabel);
 
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'delete-input-btn';
@@ -184,14 +217,10 @@ export class TableNode extends BaseNode {
 
         row.appendChild(listLine);
 
-        // --- строка 2: String-сокет + имена + формат + ширина - ОДНОЙ строкой ---
+        // --- строка 2: String-сокет + имя источника заголовка ---
         const metaLine = document.createElement('div');
         metaLine.className = 'table-column-line table-column-meta';
-        metaLine.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        `;
+        metaLine.style.cssText = 'display:flex; align-items:center; gap:6px;';
 
         const stringSocket = SocketFactory.createSocket({
             nodeId: this.id,
@@ -202,98 +231,23 @@ export class TableNode extends BaseNode {
         });
         metaLine.appendChild(stringSocket);
 
-        // Переключатель "подцепить названия строк" - если включён, перед
-        // числовым столбцом появится ещё один, текстовый, со значениями
-        // item.name исходного списка (см. calculate())
-        const namesLabel = document.createElement('label');
-        namesLabel.className = 'table-names-toggle';
-        namesLabel.title = 'Добавить столбец с названиями строк (имена элементов списка)';
-        namesLabel.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 3px;
+        const stringLabel = document.createElement('span');
+        stringLabel.className = 'table-column-source-label';
+        stringLabel.dataset.colIndex = String(index);
+        stringLabel.dataset.role = 'string';
+        stringLabel.style.cssText = `
             color: var(--md-text-disabled);
-            font-size: 9px;
-            cursor: pointer;
-            flex-shrink: 0;
-        `;
-        const namesCheckbox = document.createElement('input');
-        namesCheckbox.type = 'checkbox';
-        namesCheckbox.checked = !!col.includeNames;
-        namesCheckbox.style.cssText = `
-            width: 11px;
-            height: 11px;
-            cursor: pointer;
-            margin: 0;
-            accent-color: var(--md-primary);
-        `;
-        namesCheckbox.addEventListener('mousedown', (e) => e.stopPropagation());
-        namesCheckbox.addEventListener('change', (e) => {
-            col.includeNames = e.target.checked;
-            if (window.nodeManager) window.nodeManager.calculateAll();
-        });
-        namesLabel.appendChild(namesCheckbox);
-        namesLabel.appendChild(document.createTextNode('имена'));
-        metaLine.appendChild(namesLabel);
-
-        const formatSelect = document.createElement('select');
-        formatSelect.className = 'table-format-select';
-        formatSelect.title = 'Формат значения';
-        formatSelect.style.cssText = `
-            flex-shrink: 0;
-            width: 56px;
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--md-divider);
-            border-radius: 4px;
-            color: var(--md-text);
             font-size: 10px;
-            padding: 2px 2px;
-            font-family: inherit;
-            cursor: pointer;
-            outline: none;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         `;
-        formatSelect.innerHTML = `
-            <option value="">Авто</option>
-            <option value="number">Число</option>
-            <option value="currency">Деньги</option>
-            <option value="percent">%</option>
-        `;
-        formatSelect.value = col.formatOverride || '';
-        formatSelect.addEventListener('mousedown', (e) => e.stopPropagation());
-        formatSelect.addEventListener('change', (e) => {
-            col.formatOverride = e.target.value || null;
-            if (window.nodeManager) window.nodeManager.calculateAll();
-        });
-        metaLine.appendChild(formatSelect);
-
-        const widthInput = document.createElement('input');
-        widthInput.type = 'number';
-        widthInput.className = 'table-width-input';
-        widthInput.title = 'Ширина столбца в выходной таблице, px (пусто = авто)';
-        widthInput.placeholder = 'авто';
-        widthInput.min = '30';
-        widthInput.step = '5';
-        widthInput.value = col.width ?? '';
-        widthInput.style.cssText = `
-            width: 42px;
-            flex-shrink: 0;
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--md-divider);
-            border-radius: 4px;
-            color: var(--md-text);
-            font-size: 10px;
-            padding: 2px 4px;
-            font-family: inherit;
-            outline: none;
-            text-align: center;
-        `;
-        widthInput.addEventListener('mousedown', (e) => e.stopPropagation());
-        widthInput.addEventListener('input', (e) => {
-            const val = parseInt(e.target.value, 10);
-            col.width = (e.target.value === '' || isNaN(val)) ? null : Math.max(30, val);
-            if (window.nodeManager) window.nodeManager.calculateAll();
-        });
-        metaLine.appendChild(widthInput);
+        stringLabel.textContent = this.columnMeta[index]?.stringSourceName
+            ? `заголовок: ${this.columnMeta[index].stringSourceName}`
+            : 'заголовок: авто';
+        metaLine.appendChild(stringLabel);
 
         row.appendChild(metaLine);
 
@@ -319,15 +273,21 @@ export class TableNode extends BaseNode {
             stringIndex: this._nextIndex + 1,
             formatOverride: null,
             includeNames: false,
-            width: null
+            width: null,
+            totalType: null,
+            decimals: null
         });
         this._nextIndex += 2;
         this.inputSockets = this.columns.flatMap(c => [c.listIndex, c.stringIndex]);
         this.inputs = this.inputSockets.length;
+        this.columnMeta.push({ listSourceName: null, stringSourceName: null });
 
         setTimeout(() => {
             if (!this._isRerendering && !this.collapsed) {
                 this.rerender();
+            }
+            if (window.inspectorManager?.isOpenFor(this.id)) {
+                window.inspectorManager.refresh();
             }
         }, 50);
     }
@@ -353,6 +313,7 @@ export class TableNode extends BaseNode {
         }
 
         this.columns.splice(index, 1);
+        this.columnMeta.splice(index, 1);
         this.inputSockets = this.columns.flatMap(c => [c.listIndex, c.stringIndex]);
         this.inputs = this.inputSockets.length;
 
@@ -361,6 +322,11 @@ export class TableNode extends BaseNode {
         if (window.nodeManager) {
             window.nodeManager.calculateAll();
             if (window.renderer) window.renderer.updateAllDisplays();
+        }
+        // Панель могла быть открыта для этой же ноды с полями по индексам
+        // столбцов - индексы сместились, перерисовываем
+        if (window.inspectorManager?.isOpenFor(this.id)) {
+            window.inspectorManager.refresh();
         }
     }
 
@@ -390,6 +356,16 @@ export class TableNode extends BaseNode {
             const strConn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === col.stringIndex);
 
             const listSrc = listConn ? nodeManager.getNode(listConn.sourceNodeId) : null;
+            const strSrc = strConn ? nodeManager.getNode(strConn.sourceNodeId) : null;
+
+            // Имена источников - для подписей [сокет][имя источника] в теле
+            // ноды (см. createColumnRow/updateDisplay)
+            const listSourceName = listSrc ? (listSrc.customName || listSrc.getDisplayName?.() || 'источник') : null;
+            const stringSourceName = strSrc
+                ? ((typeof strSrc.value === 'string' && strSrc.value.trim()) ? strSrc.value.trim() : (strSrc.getDisplayName?.() || 'строка'))
+                : null;
+            this.columnMeta[i] = { listSourceName, stringSourceName };
+
             // Столбец без подключённого LIST-источника - "заготовка" для
             // следующего соединения (см. checkAndAddEmptySlot), а не
             // реальные данные. В tableData она не попадает - иначе
@@ -402,10 +378,10 @@ export class TableNode extends BaseNode {
                 ? listSrc.listData.values
                 : (typeof listSrc.value === 'number' ? [listSrc.value] : []);
 
-            const strSrc = strConn ? nodeManager.getNode(strConn.sourceNodeId) : null;
-            const header = (typeof strSrc?.value === 'string' && strSrc.value.trim())
-                ? strSrc.value.trim()
-                : (listSrc.listData?.metadata?.title || listSrc.getDisplayName?.() || `Столбец ${i + 1}`);
+            const header = stringSourceName
+                || listSrc.listData?.metadata?.title
+                || listSourceName
+                || `Столбец ${i + 1}`;
 
             // Приоритет формата: ручной выбор в колонке -> формат,
             // объявленный источником-списком -> 'number' по умолчанию
@@ -416,7 +392,7 @@ export class TableNode extends BaseNode {
             const entries = [];
 
             // Названия строк (item.name) - отдельный текстовый столбец
-            // ПЕРЕД числовым, если пользователь включил переключатель
+            // ПЕРЕД числовым, если включено в панели
             if (col.includeNames && items.length > 0) {
                 entries.push({
                     header: `${header} (имена)`,
@@ -426,7 +402,7 @@ export class TableNode extends BaseNode {
                 });
             }
 
-            entries.push({ header, values, format, width: col.width || null });
+            entries.push({ header, values, format, width: col.width || null, totalType: col.totalType || null, decimals: col.decimals ?? null });
 
             return entries;
         });
@@ -444,5 +420,85 @@ export class TableNode extends BaseNode {
         if (countEl) {
             countEl.textContent = `${this.tableData.columns.length}×${this.tableData.rowCount}`;
         }
+
+        const labels = element.querySelectorAll('.table-column-source-label');
+        labels.forEach(label => {
+            const idx = parseInt(label.dataset.colIndex, 10);
+            const meta = this.columnMeta[idx];
+            if (!meta) return;
+            if (label.dataset.role === 'list') {
+                label.textContent = meta.listSourceName || 'не подключено';
+            } else {
+                label.textContent = meta.stringSourceName ? `заголовок: ${meta.stringSourceName}` : 'заголовок: авто';
+            }
+        });
+    }
+
+    // Боковая панель - здесь живёт всё оформление, которое раньше было
+    // инлайн-контролами в теле ноды: формат/итог/ширина/знаки после
+    // запятой/подцепить имена строк, по одной группе полей на столбец.
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+
+        this.columns.forEach((col, i) => {
+            fields.push({ type: 'section', label: `Столбец ${i + 1}` });
+
+            fields.push({
+                key: `col${i}_format`,
+                label: 'Формат значения',
+                type: 'select',
+                options: [
+                    { value: '', label: 'Авто' },
+                    { value: 'number', label: 'Число' },
+                    { value: 'currency', label: 'Деньги' },
+                    { value: 'percent', label: 'Проценты' }
+                ],
+                get: () => col.formatOverride || '',
+                set: (v) => { col.formatOverride = v || null; }
+            });
+
+            fields.push({
+                key: `col${i}_total`,
+                label: 'Итог (строка "Итого")',
+                type: 'select',
+                options: [
+                    { value: '', label: 'Без итога' },
+                    { value: 'sum', label: 'Сумма' },
+                    { value: 'max', label: 'Наибольшее' },
+                    { value: 'min', label: 'Наименьшее' },
+                    { value: 'avg', label: 'Среднее' }
+                ],
+                get: () => col.totalType || '',
+                set: (v) => { col.totalType = v || null; }
+            });
+
+            fields.push({
+                key: `col${i}_width`,
+                label: 'Ширина столбца, px',
+                type: 'number',
+                min: 30, step: 5,
+                get: () => col.width,
+                set: (v) => { col.width = (v === null || isNaN(v)) ? null : Math.max(30, v); }
+            });
+
+            fields.push({
+                key: `col${i}_decimals`,
+                label: 'Знаков после запятой',
+                type: 'number',
+                min: 0, max: 10, step: 1,
+                get: () => col.decimals,
+                set: (v) => { col.decimals = (v === null || isNaN(v)) ? null : Math.max(0, Math.min(10, v)); }
+            });
+
+            fields.push({
+                key: `col${i}_names`,
+                label: 'Добавить столбец с именами строк',
+                type: 'checkbox',
+                get: () => !!col.includeNames,
+                set: (v) => { col.includeNames = !!v; }
+            });
+        });
+
+        return fields;
     }
 }

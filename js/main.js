@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    main.js
+ * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 // ============================================
 // 1. ИМПОРТЫ 
 // ============================================
@@ -6,6 +18,7 @@ import { NodeManager } from './core/nodeManager.js';
 import { ConnectionManager } from './core/connectionManager.js';
 import { Renderer } from './core/renderer.js';
 import { LayoutManager } from './core/layoutManager.js';
+import { InspectorManager } from './core/inspectorManager.js';
 import { NumberNode } from './nodes/numberNode.js';
 import { OperationNode } from './nodes/operationNode.js';
 import { PercentageNode } from './nodes/percentageNode.js';
@@ -17,6 +30,8 @@ import { ListInputNode } from './nodes/listInputNode.js';
 import { StringNode } from './nodes/stringNode.js';
 import { TableNode } from './nodes/tableNode.js';
 import { TableViewerNode } from './nodes/tableViewerNode.js';
+import { PercentConvertNode } from './nodes/percentConvertNode.js';
+import { GanttNode } from './nodes/ganttNode.js';
 
 // ============================================
 // 2. СОЗДАНИЕ ЭКЗЕМПЛЯРОВ
@@ -28,6 +43,7 @@ const nodeManager = new NodeManager();
 const connectionManager = new ConnectionManager();
 const renderer = new Renderer();
 const layoutManager = new LayoutManager(nodeManager, connectionManager, renderer);
+const inspectorManager = new InspectorManager();
 
 // Регистрируем типы нод
 nodeManager.registerNodeType('number', NumberNode);
@@ -44,12 +60,15 @@ nodeManager.registerNodeType('listInput', ListInputNode);
 nodeManager.registerNodeType('string', StringNode);
 nodeManager.registerNodeType('table', TableNode);
 nodeManager.registerNodeType('tableViewer', TableViewerNode);
+nodeManager.registerNodeType('percentConvert', PercentConvertNode);
+nodeManager.registerNodeType('gantt', GanttNode);
 
 // Делаем доступными глобально (СРАЗУ после создания)
 window.nodeManager = nodeManager;
 window.connectionManager = connectionManager;
 window.renderer = renderer;
 window.layoutManager = layoutManager;
+window.inspectorManager = inspectorManager;
 
 console.log('✅ Менеджеры созданы и зарегистрированы');
 
@@ -215,19 +234,49 @@ window.toggleNodeCollapse = () => {
     }
 };
 
-window.clearConnections = () => {
-    console.log('🔗 Очистка соединений');
-    if (window.connectionManager) {
-        window.connectionManager.clearAll();
+window.closeInspector = () => {
+    if (window.nodeManager) {
+        window.nodeManager.deselectNode();
+    }
+};
+
+// Клик по "пустому" месту холста (не по ноде, не по линии соединения) -
+// снимает выбор ноды и закрывает боковую панель. e.target === сам
+// контейнер срабатывает именно на пустом месте: клики по нодам ловят их
+// собственные обработчики раньше и не всплывают сюда как "пустой" клик
+// (SVG-слой соединений имеет pointer-events:none, кроме самих линий).
+document.getElementById('nodesContainer')?.addEventListener('mousedown', (e) => {
+    if (e.target.id === 'nodesContainer' || e.target.id === 'connectionsSvg') {
+        window.nodeManager?.deselectNode();
+    }
+});
+
+// Escape - закрыть боковую панель, не дожидаясь клика мимо
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        window.nodeManager?.deselectNode();
+    }
+});
+
+window.deleteConnection = () => {
+    console.log('🔗 Удаление связи');
+    const conn = window.connectionManager?.contextMenuTarget;
+    if (window.connectionManager && conn) {
+        window.connectionManager.removeConnection(conn.sourceNodeId, conn.targetNodeId, conn.targetSocket);
+        window.connectionManager.contextMenuTarget = null;
+        if (window.nodeManager) {
+            window.nodeManager.calculateAll();
+        }
         if (window.renderer) {
-            window.renderer.drawAllConnections([]);
+            window.renderer.updateAllDisplays();
         }
         // Обновляем счетчики
         if (window.updateCounters) {
             window.updateCounters();
         }
     }
-    document.getElementById('status').textContent = '🔗 Соединения очищены';
+    document.getElementById('contextMenu').style.display = 'none';
+    document.getElementById('status').textContent = '🔗 Связь удалена';
     setTimeout(() => {
         document.getElementById('status').textContent = 'Готово';
     }, 1500);
@@ -268,7 +317,7 @@ console.log('  - window.calculateAll');
 console.log('  - window.clearWorkspace');
 console.log('  - window.deleteNode');
 console.log('  - window.duplicateNode');
-console.log('  - window.clearConnections');
+console.log('  - window.deleteConnection()');
 console.log('  - window.addLayout / window.switchLayout');
 console.log('  - window.zoomIn / window.zoomOut / window.zoomReset');
 
@@ -419,6 +468,8 @@ document.addEventListener('mousedown', (e) => {
     if (!menu) return;
     if (menu.style.display === 'block' && !e.target.closest('.context-menu')) {
         menu.style.display = 'none';
+        if (window.nodeManager) window.nodeManager.contextMenuTarget = null;
+        if (window.connectionManager) window.connectionManager.contextMenuTarget = null;
     }
 });
 
@@ -554,6 +605,6 @@ console.log('  - window.calculateAll()');
 console.log('  - window.clearWorkspace()');
 console.log('  - window.deleteNode()');
 console.log('  - window.duplicateNode()');
-console.log('  - window.clearConnections()');
+console.log('  - window.deleteConnection()');
 console.log('  - window.addLayout() / window.switchLayout(id)');
 console.log('  - window.zoomIn() / window.zoomOut() / window.zoomReset()');

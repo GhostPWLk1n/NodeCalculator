@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    dataTypes.js
+ * @brief   Единые форматы данных между нодами: ListData и TableData
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 export class ListData {
     constructor(items = [], metadata = {}) {
         this.items = items; // Массив объектов { name: string, value: number }
@@ -60,6 +72,24 @@ export class TableData {
         const obj = {};
         this.columns.forEach(c => { obj[c.header] = c.values[i] ?? null; });
         return obj;
+    }
+
+    // Итог по столбцу для строки "Итого" (TableViewerNode). Не числовые
+    // значения (текстовые столбцы с именами и т.п.) игнорируются;
+    // null возвращается, если у столбца не задан col.totalType, либо
+    // числовых значений нет вовсе.
+    aggregate(col) {
+        if (!col || !col.totalType) return null;
+        const nums = col.values.filter(v => typeof v === 'number' && !isNaN(v));
+        if (nums.length === 0) return null;
+
+        switch (col.totalType) {
+            case 'sum': return nums.reduce((a, b) => a + b, 0);
+            case 'max': return Math.max(...nums);
+            case 'min': return Math.min(...nums);
+            case 'avg': return nums.reduce((a, b) => a + b, 0) / nums.length;
+            default: return null;
+        }
     }
 
     // Сумма каждой колонки как ListData - основной способ, которым

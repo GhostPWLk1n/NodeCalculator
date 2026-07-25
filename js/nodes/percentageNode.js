@@ -1,3 +1,15 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * SPDX-FileCopyrightText: 2024 NodeCalculate Team
+ * SPDX-FileCopyrightText: 2024 Pavel Fomin
+ *
+ * @file    percentageNode.js
+ * @brief   Нода процентного распределения с визуализацией (SVG-диаграмма)
+ * @author  Pavel Fomin
+ * @version 1.4.0
+ * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
+ */
+
 import { BaseNode } from './baseNode.js';
 import { Helpers } from'../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
@@ -6,12 +18,15 @@ import { SocketFactory } from '../utils/socketFactory.js';
 export class PercentageNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
-        this.outputs = 1;
+        // Диаграмма - терминальная Viewer-нода: ничего не передаёт дальше
+        // по графу, поэтому выходного сокета нет (как у TableViewerNode).
+        this.outputs = 0;
         // Вход 0 - LIST (как раньше), вход 1 - Data (таблица, новый).
         // Если подключены оба - побеждает Data (см. calculate()): у него
         // явные заголовки колонок, а не безымянный список.
         this.inputs = 2;
         this.inputSockets = [0, 1];
+        this.width = config.width || 280;
         this.listData = new ListData();
         this.outputListData = new ListData();
         this.customTitle = config.customTitle || 'Процентное распределение';
@@ -26,9 +41,10 @@ export class PercentageNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.minWidth = '280px';
-        content.style.minHeight = '200px';
-        content.style.width = '100%';
+        content.style.cssText = `
+            width: 100%;
+            min-width: 150px;
+        `;
         // ВАЖНО: НЕ ставить overflow: hidden - сокеты выступают за границу
         // ноды через отрицательные margin (--socket-protrude) и обрезались
         
@@ -81,7 +97,7 @@ export class PercentageNode extends BaseNode {
             cursor: pointer;
             outline: none;
             flex: 1;
-            min-width: 100px;
+            min-width: 60px;
         `;
         
         this.chartTypes.forEach(type => {
@@ -112,20 +128,6 @@ export class PercentageNode extends BaseNode {
         `;
         countLabel.textContent = `${this.listData.items.length} эл.`;
         topRow.appendChild(countLabel);
-        
-        // Сумма (общее)
-        const totalValue = document.createElement('span');
-        totalValue.className = 'percentage-total';
-        totalValue.style.cssText = `
-            color: var(--md-accent);
-            font-size: 16px;
-            font-weight: 700;
-            min-width: 50px;
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-        `;
-        totalValue.textContent = this.listData.total !== 0 ? this.listData.total.toFixed(2) : '0';
-        topRow.appendChild(totalValue);
         
         content.appendChild(topRow);
 
@@ -209,65 +211,6 @@ export class PercentageNode extends BaseNode {
         }
         
         content.appendChild(chartContainer);
-        
-        // === ВЫХОДНОЙ СОКЕТ ===
-        const outputRow = document.createElement('div');
-        outputRow.className = 'node-output';
-        outputRow.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 0 2px 0;
-            margin-top: 6px;
-            border-top: 1px solid var(--md-divider);
-        `;
-        
-        const outputLabel = document.createElement('label');
-        outputLabel.textContent = 'Список (LIST):';
-        outputLabel.style.cssText = `
-            color: var(--md-text-secondary);
-            font-size: 11px;
-            font-weight: 400;
-            flex: 1;
-        `;
-        outputRow.appendChild(outputLabel);
-        
-        const outputCount = document.createElement('span');
-        outputCount.className = 'output-count';
-        outputCount.style.cssText = `
-            color: #4fc3f7;
-            font-size: 12px;
-            font-weight: 500;
-        `;
-        outputCount.textContent = `${this.outputListData.items.length} эл.`;
-        outputRow.appendChild(outputCount);
-        
-        const outputSocket = document.createElement('div');
-        outputSocket.className = 'socket output-socket socket-list';
-        outputSocket.dataset.nodeId = this.id;
-        outputSocket.dataset.socketType = 'output';
-        outputSocket.dataset.outputType = 'list';
-        outputSocket.dataset.index = 0;
-        outputSocket.dataset.isList = 'true';
-        outputSocket.style.cssText = `
-            border-color: #4fc3f7 !important;
-            width: 14px;
-            height: 14px;
-            border-radius: 3px;
-            flex-shrink: 0;
-        `;
-        outputSocket.title = 'Выходной список (LIST)';
-        outputRow.appendChild(outputSocket);
-        
-        outputSocket.addEventListener('mousedown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            if (window.connectionManager) {
-                window.connectionManager.startConnection(e, this.id, 'output');
-            }
-        });
-        
-        content.appendChild(outputRow);
         
         return content;
     }
@@ -727,22 +670,10 @@ export class PercentageNode extends BaseNode {
     }
     
     updateDisplay(element) {
-        // Обновляем сумму
-        const totalDisplay = element.querySelector('.percentage-total');
-        if (totalDisplay) {
-            totalDisplay.textContent = this.listData.total !== 0 ? this.listData.total.toFixed(2) : '0';
-        }
-        
         // Обновляем количество элементов
         const countDisplay = element.querySelector('.input-count');
         if (countDisplay) {
             countDisplay.textContent = `${this.listData.items.length} эл.`;
-        }
-        
-        // Обновляем выходной счетчик
-        const outputCount = element.querySelector('.output-count');
-        if (outputCount) {
-            outputCount.textContent = `${this.outputListData.items.length} эл.`;
         }
         
         // Обновляем выпадающий список

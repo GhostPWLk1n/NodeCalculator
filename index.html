@@ -75,6 +75,16 @@
                         <span class="node-name">Умножение списка</span>
                         <span class="node-badge">Операция</span>
                     </div>
+                    <div class="node-item" data-type="percentConvert" onclick="window.addNode('percentConvert', 400, 300)">
+                        <span class="node-icon">📐</span>
+                        <span class="node-name">Проценты от суммы</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
+                    <div class="node-item" data-type="gantt" onclick="window.addNode('gantt', 400, 300)">
+                        <span class="node-icon">📅</span>
+                        <span class="node-name">Диаграмма Ганта</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                 </div>
             </div>
             
@@ -94,7 +104,7 @@
                 <div class="node-list">
                     <div class="node-item" data-type="percentage" onclick="window.addNode('percentage', 400, 300, { customTitle: 'Проценты' })">
                         <span class="node-icon">📊</span>
-                        <span class="node-name">Процентный график</span>
+                        <span class="node-name">Диаграмма</span>
                         <span class="node-badge">Viewer</span>
                     </div>
                     <div class="node-item" data-type="listViewer" onclick="window.addNode('listViewer', 400, 300)">
@@ -177,13 +187,22 @@
     <!-- Контекстное меню -->
     <div class="context-menu" id="contextMenu">
         <div class="context-menu-item" id="contextMenuToggleCollapse" onclick="window.toggleNodeCollapse()">▾ Свернуть ноду</div>
-        <div class="context-menu-item" onclick="window.deleteNode()">🗑️ Удалить ноду</div>
-        <div class="context-menu-item" onclick="window.duplicateNode()">📋 Дублировать</div>
-        <div class="context-menu-item" onclick="window.clearConnections()">🔗 Очистить соединения</div>
+        <div class="context-menu-item" id="contextMenuDeleteNode" onclick="window.deleteNode()">🗑️ Удалить ноду</div>
+        <div class="context-menu-item" id="contextMenuDuplicate" onclick="window.duplicateNode()">📋 Дублировать</div>
+        <div class="context-menu-item" id="contextMenuDeleteConnection" onclick="window.deleteConnection()">🔗 Удалить связь</div>
     </div>
 
     <!-- Информация при перетаскивании -->
     <div id="drag-info">🔗 Перетащите из сокета для создания соединения</div>
+
+    <!-- Боковая панель настроек выбранной ноды (InspectorManager) -->
+    <div class="inspector-panel" id="inspectorPanel">
+        <div class="inspector-header">
+            <span class="inspector-title" id="inspectorTitle">Нода</span>
+            <span class="inspector-close" onclick="window.closeInspector()" title="Закрыть">✕</span>
+        </div>
+        <div class="inspector-body" id="inspectorBody"></div>
+    </div>
 
     <script type="module" src="js/main.js"></script>
 </body>
