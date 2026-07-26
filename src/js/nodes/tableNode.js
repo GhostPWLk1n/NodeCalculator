@@ -6,13 +6,14 @@
  * @file    tableNode.js
  * @brief   Обработчик: собирает LIST-входы в столбцы таблицы (выход типа Data)
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
+import { Helpers } from '../utils/helpers.js';
 
 /**
  * TableNode - обработчик: собирает входящие LIST-ы в столбцы таблицы.
@@ -77,6 +78,16 @@ export class TableNode extends BaseNode {
 
         this.width = config.width || 240;
         this.tableData = new TableData();
+
+        // Состояние ТОЛЬКО для виджета на Доске (Раунд 35) - не влияет на
+        // тело ноды в графе (оно намеренно минимальное, см. докстринг
+        // класса) и не путать с настройками столбцов выше. Зеркало полей
+        // TableViewerNode (showRowNumbers/sortColumnIndex/sortDirection) -
+        // тот же принцип, просто отдельный набор специально для
+        // getDashboardWidget(), т.к. это разные потребители одной tableData.
+        this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        this.boardSortColumn = config.boardSortColumn ?? null;
+        this.boardSortDirection = config.boardSortDirection ?? null; // 'asc' | 'desc' | null
 
         // Имена подключённых источников по столбцам (для подписей
         // [сокет][имя источника] в теле ноды) - заполняется в calculate(),
@@ -413,6 +424,197 @@ export class TableNode extends BaseNode {
         setTimeout(() => this.checkAndAddEmptySlot(), 100);
 
         return this.value;
+    }
+
+    // Порядок строк для виджета Доски с учётом сортировки (см.
+    // boardShowRowNumbers/boardSortColumn/boardSortDirection выше) -
+    // зеркало TableViewerNode.getRowOrder(), тот же алгоритм, но читает
+    // ОТДЕЛЬНОЕ состояние сортировки (виджет и просмотр в графе - разные
+    // потребители одной tableData, у каждого своя сортировка).
+    _getBoardRowOrder() {
+        const rowCount = this.tableData.rowCount;
+        const order = Array.from({ length: rowCount }, (_, i) => i);
+        if (this.boardSortColumn === null || !this.boardSortDirection) return order;
+
+        const col = this.tableData.columns[this.boardSortColumn];
+        if (!col) return order;
+
+        order.sort((a, b) => {
+            const va = col.values[a];
+            const vb = col.values[b];
+            let cmp;
+            if (typeof va === 'number' && typeof vb === 'number') {
+                cmp = va - vb;
+            } else {
+                cmp = String(va ?? '').localeCompare(String(vb ?? ''));
+            }
+            return this.boardSortDirection === 'asc' ? cmp : -cmp;
+        });
+        return order;
+    }
+
+    // Виджет Доски (см. dashboardNode.js/boardManager.js) - рендерит ту
+    // же TableData, что видит TableViewerNode, но как обычную (не
+    // прокручиваемую) HTML-таблицу: страница Доски готовится под печать/
+    // PDF, где скролл не нужен - все строки показываются сразу.
+    // Формат и знаки после запятой каждой колонки уже посчитаны в
+    // calculate() (this.tableData.columns[].format/decimals) - здесь их
+    // просто читаем, повторно решать не нужно.
+    // Строка "Итого" рисуется, только если хотя бы у одной колонки задан
+    // totalType в панели (TableData.aggregate() возвращает null иначе).
+    //
+    // Раунд 35 - оформление зеркалит возможности TableViewerNode:
+    // - номера строк с кнопкой-глазиком (boardShowRowNumbers)
+    // - сортировка по клику на заголовок столбца, 3 состояния по кругу
+    //   (asc → desc → как есть), см. _getBoardRowOrder()
+    // - процентные значения (col.format === 'percent') - мини-график:
+    //   полупрозрачная полоса-подложка на всю ширину ячейки, пропорционально
+    //   значению, текст поверх (тот же приём, что и в TableViewerNode)
+    // Клики внутри виджета мутируют состояние ноды напрямую и сразу
+    // перерисовывают Доску (window.boardManager.renderActiveBoard()) -
+    // без похода через nodeManager.calculateAll(), сортировка/видимость
+    // номеров - чисто визуальные настройки, tableData они не меняют.
+    getDashboardWidget() {
+        const node = this;
+        const table = this.tableData;
+        return {
+            type: 'table',
+            title: this.customName || null,
+            render: (container) => {
+                // Индекс сортировки мог "протухнуть", если у источника
+                // изменился набор столбцов - тогда просто сбрасываем сортировку
+                if (node.boardSortColumn !== null && node.boardSortColumn >= table.columns.length) {
+                    node.boardSortColumn = null;
+                    node.boardSortDirection = null;
+                }
+
+                const rowOrder = node._getBoardRowOrder();
+
+                const el = document.createElement('table');
+                el.className = 'board-widget-table';
+
+                // === ШАПКА ===
+                const thead = document.createElement('thead');
+                const headRow = document.createElement('tr');
+
+                const eyeTh = document.createElement('th');
+                eyeTh.className = 'board-widget-table-num-cell';
+                const eyeBtn = document.createElement('button');
+                eyeBtn.className = 'board-widget-table-eye-btn';
+                eyeBtn.textContent = node.boardShowRowNumbers ? '●' : '‿';
+                eyeBtn.title = node.boardShowRowNumbers ? 'Скрыть номера строк' : 'Показать номера строк';
+                eyeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    node.boardShowRowNumbers = !node.boardShowRowNumbers;
+                    window.boardManager?.renderActiveBoard();
+                });
+                eyeTh.appendChild(eyeBtn);
+                headRow.appendChild(eyeTh);
+
+                table.columns.forEach((col, colIdx) => {
+                    const th = document.createElement('th');
+                    th.className = 'board-widget-table-sortable';
+                    if (col.format !== 'text') th.classList.add('align-right');
+
+                    const label = document.createElement('span');
+                    label.textContent = col.header;
+                    th.appendChild(label);
+
+                    const isSortActive = node.boardSortColumn === colIdx;
+                    const sortIcon = document.createElement('span');
+                    sortIcon.className = 'board-widget-table-sort-icon' + (isSortActive ? ' active' : '');
+                    sortIcon.textContent = isSortActive ? (node.boardSortDirection === 'asc' ? '↑' : '↓') : '↕';
+                    th.appendChild(sortIcon);
+
+                    th.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (node.boardSortColumn !== colIdx) {
+                            node.boardSortColumn = colIdx;
+                            node.boardSortDirection = 'asc';
+                        } else if (node.boardSortDirection === 'asc') {
+                            node.boardSortDirection = 'desc';
+                        } else {
+                            node.boardSortColumn = null;
+                            node.boardSortDirection = null;
+                        }
+                        window.boardManager?.renderActiveBoard();
+                    });
+
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                el.appendChild(thead);
+
+                // === ТЕЛО ===
+                const tbody = document.createElement('tbody');
+                rowOrder.forEach((srcRowIndex, displayIndex) => {
+                    const row = document.createElement('tr');
+
+                    const numTd = document.createElement('td');
+                    numTd.className = 'board-widget-table-num-cell';
+                    numTd.style.visibility = node.boardShowRowNumbers ? 'visible' : 'hidden';
+                    numTd.textContent = String(displayIndex + 1);
+                    row.appendChild(numTd);
+
+                    table.columns.forEach(col => {
+                        const td = document.createElement('td');
+                        const v = col.values[srcRowIndex];
+                        const hasValue = v !== undefined && v !== null && v !== '';
+                        if (col.format !== 'text') td.classList.add('align-right');
+
+                        if (hasValue && col.format === 'percent') {
+                            td.classList.add('board-widget-table-percent-cell');
+                            const pct = Math.max(0, Math.min(100, v));
+                            const bar = document.createElement('div');
+                            bar.className = 'board-widget-table-bar';
+                            bar.style.width = pct + '%';
+                            td.appendChild(bar);
+
+                            const textSpan = document.createElement('span');
+                            textSpan.className = 'board-widget-table-cell-text';
+                            textSpan.textContent = Helpers.formatByType(v, col.format, col.decimals);
+                            td.appendChild(textSpan);
+                        } else {
+                            td.textContent = hasValue
+                                ? Helpers.formatByType(v, col.format, col.decimals)
+                                : (col.format === 'text' ? '' : '—');
+                        }
+
+                        row.appendChild(td);
+                    });
+
+                    tbody.appendChild(row);
+                });
+                el.appendChild(tbody);
+
+                // === ИТОГО ===
+                const hasTotals = table.columns.some(col => col.totalType);
+                if (hasTotals) {
+                    const tfoot = document.createElement('tfoot');
+                    const totalRow = document.createElement('tr');
+
+                    const numTd = document.createElement('td');
+                    numTd.className = 'board-widget-table-num-cell';
+                    numTd.textContent = 'Σ';
+                    numTd.title = 'Итого';
+                    totalRow.appendChild(numTd);
+
+                    table.columns.forEach(col => {
+                        const td = document.createElement('td');
+                        if (col.format !== 'text') td.classList.add('align-right');
+                        const agg = table.aggregate(col);
+                        td.textContent = agg !== null
+                            ? Helpers.formatByType(agg, col.format, col.decimals)
+                            : '';
+                        totalRow.appendChild(td);
+                    });
+                    tfoot.appendChild(totalRow);
+                    el.appendChild(tfoot);
+                }
+
+                container.appendChild(el);
+            }
+        };
     }
 
     updateDisplay(element) {

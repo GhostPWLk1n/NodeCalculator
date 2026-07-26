@@ -6,7 +6,7 @@
  * @file    listInputNode.js
  * @brief   Нода ручного ввода списка пар «имя — значение»
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -242,29 +242,105 @@ export class ListInputNode extends BaseNode {
         }
     }
 
-    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - простая
-    // таблица "имя - значение", формат ячеек значения - по getValueFormat()
-    getDashboardWidget() {
-        const items = this.items.map(i => ({ name: i.name, value: i.value }));
+    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - РЕДАКТИРУЕМАЯ
+    // таблица "имя - значение" (Раунд 37): те же два input на строку, что
+    // и в теле самой ноды (renderRows выше), правки сразу пишут в
+    // this.items и вызывают recalculate() (updateListData +
+    // nodeManager.calculateAll(), тот же путь, что и в графе). mousedown/
+    // click на каждом поле останавливают всплытие - иначе клик триггерил
+    // бы selectWidget() -> пересборку Доски прямо в момент получения
+    // фокуса (см. подробный комментарий в numberNode.js).
+    //
+    // Добавление/удаление строк прямо с Доски - осознанно не в этом
+    // раунде (см. "Заметки на будущее" в CHANGES.md), сейчас можно менять
+    // только значения уже существующих строк.
+    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - таблица с
+    // ДВУМЯ input на строку (имя + значение), правки через ctx.onEdit
+    // пишут в DashboardNode (передаётся ПОЛНЫЙ обновлённый массив), а не
+    // в this.items (Раунд 38, см. докстринг DashboardNode - раньше
+    // правки шли напрямую в саму ноду, меняя её и всё, куда она ещё
+    // подключена в обход Доски). ctx.overrideValue, если задан - это
+    // массив {name,value}, переопределённый на Доске, вместо this.items.
+    //
+    // Добавление/удаление строк прямо с Доски - осознанно не в этом
+    // раунде (см. "Заметки на будущее" в CHANGES.md), сейчас можно менять
+    // только значения уже существующих строк.
+    getDashboardWidget(ctx = {}) {
+        const node = this;
         const format = this.getValueFormat();
+        const sourceItems = Array.isArray(ctx.overrideValue) ? ctx.overrideValue : node.items;
+
         return {
             type: 'list',
             title: this.customName || 'Список',
             render: (container) => {
                 const table = document.createElement('table');
                 table.className = 'board-widget-list';
-                items.forEach(item => {
+
+                if (ctx.readOnly) {
+                    sourceItems.forEach(item => {
+                        const row = document.createElement('tr');
+                        const nameCell = document.createElement('td');
+                        nameCell.textContent = item.name || '';
+                        const valueCell = document.createElement('td');
+                        valueCell.textContent = typeof item.value === 'number'
+                            ? Helpers.formatByType(item.value, format)
+                            : String(item.value ?? '');
+                        row.appendChild(nameCell);
+                        row.appendChild(valueCell);
+                        table.appendChild(row);
+                    });
+                    container.appendChild(table);
+                    return;
+                }
+
+                // Рабочая копия строк - каждая правка шлёт ПОЛНЫЙ массив
+                // через ctx.onEdit (DashboardNode сам решает, что с ним
+                // делать - см. calculate() там), this.items не трогаем
+                const workingItems = sourceItems.map(i => ({ name: i.name, value: i.value }));
+                const emitChange = () => {
+                    if (ctx.onEdit) ctx.onEdit(workingItems.map(i => ({ ...i })));
+                    else node.recalculate();
+                };
+
+                workingItems.forEach((item, idx) => {
                     const row = document.createElement('tr');
+
                     const nameCell = document.createElement('td');
-                    nameCell.textContent = item.name || '';
+                    const nameInput = document.createElement('input');
+                    nameInput.type = 'text';
+                    nameInput.className = 'board-widget-list-input';
+                    nameInput.value = item.name || '';
+                    nameInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                    nameInput.addEventListener('click', (e) => e.stopPropagation());
+                    nameInput.addEventListener('input', (e) => {
+                        item.name = e.target.value;
+                        if (ctx.onEdit) emitChange();
+                        else { node.items[idx].name = e.target.value; node.recalculate(); }
+                    });
+                    nameCell.appendChild(nameInput);
+
                     const valueCell = document.createElement('td');
-                    valueCell.textContent = typeof item.value === 'number'
-                        ? Helpers.formatByType(item.value, format)
-                        : String(item.value ?? '');
+                    const valueInput = document.createElement('input');
+                    valueInput.type = 'number';
+                    valueInput.step = 'any';
+                    valueInput.className = 'board-widget-list-input board-widget-list-input-value';
+                    valueInput.value = typeof item.value === 'number' ? item.value : 0;
+                    valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                    valueInput.addEventListener('click', (e) => e.stopPropagation());
+                    valueInput.addEventListener('input', (e) => {
+                        const val = parseFloat(e.target.value);
+                        item.value = isNaN(val) ? 0 : val;
+                        if (ctx.onEdit) emitChange();
+                        else { node.items[idx].value = item.value; node.recalculate(); }
+                    });
+                    valueCell.appendChild(valueInput);
+
                     row.appendChild(nameCell);
                     row.appendChild(valueCell);
                     table.appendChild(row);
                 });
+
                 container.appendChild(table);
             }
         };

@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -79,6 +79,48 @@ function daysBetween(a, b) {
     return Math.round((b.getTime() - a.getTime()) / 86400000);
 }
 
+// Date.getDay(): 0=вс, 6=сб
+function isWeekend(date) {
+    const day = date.getDay();
+    return day === 0 || day === 6;
+}
+
+// Если calendar-смещение offsetDays (от anchor) попадает на выходной -
+// сдвигает его вперёд до ближайшего рабочего дня. Используется и для
+// автоматической расстановки (курсор), и для перетащенных мышью задач
+// (см. attachBarDrag) - там raw-смещение хранится как есть в taskDates,
+// а "прилипание" к рабочему дню происходит здесь, при каждом calculate().
+function nextWorkingOffset(anchor, offsetDays) {
+    let offset = offsetDays;
+    while (isWeekend(addDays(anchor, offset))) {
+        offset += 1;
+    }
+    return offset;
+}
+
+// Считает calendar-смещение КОНЦА задачи (от anchor), если начать в
+// startOffsetDays (уже гарантированно рабочий день, см. nextWorkingOffset
+// выше) и "расходовать" durationDays РАБОЧИХ дней подряд, пропуская
+// выходные (время на них не тратится, но они остаются внутри итогового
+// календарного диапазона - задача просто визуально "перепрыгивает" через
+// уик-энд, как в большинстве Gantt-инструментов). Дробный последний день
+// (например, 4 часа = 1/6 дня) учитывается частично, без округления.
+function spanWorkingDays(anchor, startOffsetDays, durationDays) {
+    if (durationDays <= 0) return startOffsetDays;
+    let offset = startOffsetDays;
+    let remaining = durationDays;
+    while (remaining > 0) {
+        if (isWeekend(addDays(anchor, offset))) {
+            offset += 1;
+            continue;
+        }
+        const consume = Math.min(1, remaining);
+        remaining -= consume;
+        offset += consume;
+    }
+    return offset;
+}
+
 /**
  * GanttNode - обработчик LIST -> Data: список задач (имя = задача,
  * значение = длительность в часах или днях) превращается в календарный
@@ -120,6 +162,12 @@ export class GanttNode extends BaseNode {
         this.startDate = config.startDate || new Date().toISOString().slice(0, 10);
         this.periodPreset = PERIOD_PRESETS[config.periodPreset] ? config.periodPreset : 'month';
         this.durationUnit = config.durationUnit === 'hours' ? 'hours' : 'days';
+        // Режим расчёта длительности: 'calendar' (как раньше - длительность
+        // это просто N календарных дней подряд, включая выходные) или
+        // 'working' (N РАБОЧИХ дней - выходные внутри диапазона пропускаются
+        // "бесплатно", см. spanWorkingDays/nextWorkingOffset выше и их
+        // применение в calculate())
+        this.scheduleMode = config.scheduleMode === 'working' ? 'working' : 'calendar';
         // Масштаб линейки (плотность/шаг делений) - отдельно от периода
         // отображения (period определяет ОБЩУЮ ширину шкалы в днях,
         // rulerScale - насколько "растянут" каждый день)
@@ -783,6 +831,35 @@ export class GanttNode extends BaseNode {
     }
 
 
+    // Виджет Доски (см. dashboardNode.js/boardManager.js) - переиспользует
+    // createGanttArea() КАК ЕСТЬ: та же интерактивная диаграмма
+    // (перетаскивание полос мышью/ручки дедлайна), что и в теле ноды
+    // графа - метод самодостаточен (никаких обращений к data-node-id
+    // ноды или чему-то ещё специфичному для графа) и НЕ зависит от того,
+    // где именно окажется в DOM. Обработчики drag сами вызывают
+    // nodeManager.calculateAll()/renderer.updateAllDisplays() при
+    // отпускании мыши - это пересчитывает ноду "Дашборд" (если она на
+    // активном Листе) и обновляет Доску тем же путём, что уже работает у
+    // TableNode/ChartNode - отдельная связка с boardManager тут не нужна.
+    //
+    // Известное ограничение: ширина диаграммы считается от периода/
+    // масштаба линейки, а не от ширины виджета на странице (totalDays *
+    // dayWidth может быть заметно шире 730px страницы A4, особенно в
+    // масштабе "Дни" с периодом "Год") - тогда виджет скроллится по
+    // горизонтали внутри себя (.board-widget-body, см. styles.css),
+    // как и в узле графа. Для печати/PDF стоит выбирать масштаб
+    // "Недели" или сжимать период - подгонка под ширину страницы
+    // осталась за рамками этого раунда.
+    getDashboardWidget() {
+        return {
+            type: 'gantt',
+            title: this.customName || null,
+            render: (container) => {
+                container.appendChild(this.createGanttArea());
+            }
+        };
+    }
+
     // === Данные ===
 
     // Таблица считается совместимой, если среди столбцов есть и
@@ -857,6 +934,7 @@ export class GanttNode extends BaseNode {
 
         this.sourceMode = 'list';
         const items = src?.listData?.items || [];
+        const anchor = parseISODate(this.startDate) || new Date();
 
         let cursor = 0;
         this.tasks = items.map(item => {
@@ -867,8 +945,20 @@ export class GanttNode extends BaseNode {
                 startOffsetDays = cursor;
                 this.taskDates[name] = startOffsetDays;
             }
-            cursor = Math.max(cursor, startOffsetDays + duration);
-            return { name, durationDays: duration, startOffsetDays };
+
+            let endOffsetDays;
+            if (this.scheduleMode === 'working') {
+                // Старт мог быть сохранён (авто-курсор или перетаскивание
+                // мышью) на выходном дне - "прилипаем" к ближайшему рабочему
+                // для отрисовки, сам сохранённый taskDates не трогаем
+                startOffsetDays = nextWorkingOffset(anchor, startOffsetDays);
+                endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration);
+            } else {
+                endOffsetDays = startOffsetDays + duration;
+            }
+
+            cursor = Math.max(cursor, endOffsetDays);
+            return { name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays };
         });
 
         this.tableData = this.buildOutputTable();
@@ -934,6 +1024,18 @@ export class GanttNode extends BaseNode {
             ],
             get: () => this.durationUnit,
             set: (v) => { this.durationUnit = v; }
+        });
+
+        fields.push({
+            key: 'scheduleMode',
+            label: 'Расчёт длительности',
+            type: 'select',
+            options: [
+                { value: 'calendar', label: 'Календарные дни' },
+                { value: 'working', label: 'Рабочие дни (искл. выходные)' }
+            ],
+            get: () => this.scheduleMode,
+            set: (v) => { this.scheduleMode = v === 'working' ? 'working' : 'calendar'; }
         });
 
         fields.push({

@@ -6,7 +6,7 @@
  * @file    numberNode.js
  * @brief   Компактная нода с ручным вводом числа и одним выходом
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -184,20 +184,66 @@ export class NumberNode extends BaseNode {
     }
 
     // Виджет для Доски (см. dashboardNode.js/boardManager.js) - крупное
-    // число, отформатированное согласно getValueFormat() (та же логика,
-    // что уже применяют TableNode-столбцы с форматом "Авто")
-    getDashboardWidget() {
-        const value = this.value;
+    // РЕДАКТИРУЕМОЕ число (input, не просто текст, Раунд 32): правки
+    // сразу пишутся в this.value через тот же setValue(), который
+    // использует поле ввода самой ноды в графе - значит и та же логика
+    // применяется (updateListData, обновление DOM ноды если она сейчас
+    // отрисована, nodeManager.calculateAll()). Форматирование
+    // (getValueFormat()) не применяется к значению ВНУТРИ поля - при
+    // редактировании нужно видеть/писать чистое число, не "1 000 ₽".
+    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - крупное
+    // число, РЕДАКТИРУЕМОЕ через ctx.onEdit (Раунд 38 - раньше правки шли
+    // напрямую в this.setValue(), меняя саму ноду и всё, куда она ещё
+    // подключена в обход Доски; теперь запись идёт в DashboardNode, эта
+    // нода остаётся нетронутой - см. докстринг DashboardNode).
+    // ctx.readOnly - виджет только для чтения (нода "Дашборд" заблокирована,
+    // см. DashboardNode.locked). ctx.overrideValue - показывать значение,
+    // переопределённое на Доске, вместо собственного this.value.
+    getDashboardWidget(ctx = {}) {
+        const node = this;
+        const displayValue = ctx.overrideValue !== undefined ? ctx.overrideValue : node.value;
         return {
             type: 'number',
             title: this.customName || null,
             render: (container) => {
-                const el = document.createElement('div');
-                el.className = 'board-widget-number';
-                el.textContent = typeof value === 'number'
-                    ? Helpers.formatByType(value, this.getValueFormat())
-                    : '—';
-                container.appendChild(el);
+                if (ctx.readOnly) {
+                    const el = document.createElement('div');
+                    el.className = 'board-widget-number';
+                    el.textContent = typeof displayValue === 'number'
+                        ? Helpers.formatByType(displayValue, node.getValueFormat())
+                        : '—';
+                    container.appendChild(el);
+                    return;
+                }
+
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'board-widget-number';
+                input.step = String(STEP);
+                input.value = typeof displayValue === 'number' ? displayValue : 0;
+
+                input.addEventListener('focus', () => input.select());
+                input.addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val)) {
+                        // ctx.onEdit пишет в DashboardNode, а не в эту ноду -
+                        // фолбэк на setValue() только на случай вызова вне
+                        // контекста Доски (сейчас не встречается в проекте)
+                        if (ctx.onEdit) ctx.onEdit(val);
+                        else node.setValue(val);
+                    }
+                });
+                // Клик прямо в поле - редактирование, а не выбор виджета.
+                // Иначе клик всплыл бы до widgetEl -> selectWidget() ->
+                // полная пересборка Доски (renderActiveBoard) прямо в
+                // момент получения фокуса, и поле теряло бы фокус,
+                // толком не успев его получить. Выбрать виджет (ручки
+                // резайза/панель стиля) по-прежнему можно кликом рядом -
+                // по подложке/заголовку виджета.
+                input.addEventListener('mousedown', (e) => e.stopPropagation());
+                input.addEventListener('click', (e) => e.stopPropagation());
+
+                container.appendChild(input);
             }
         };
     }

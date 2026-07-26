@@ -4,17 +4,41 @@
  * SPDX-FileCopyrightText: 2024 Pavel Fomin
  *
  * @file    percentageNode.js
- * @brief   Нода процентного распределения с визуализацией (SVG-диаграмма)
+ * @brief   Просмотр диаграммы (Viewer) - без выбора типа, тип берётся из источника
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
-import { Helpers } from'../utils/helpers.js';
 import { ListData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
+import { ChartRenderer } from '../utils/chartRenderer.js';
 
+/**
+ * PercentageNode ("Просмотр диаграммы") - ЧИСТЫЙ viewer, терминальная
+ * нода без выхода (как TableViewerNode). До Раунда 33 у неё был свой
+ * `<select>` для выбора типа диаграммы (круговая/линейчатая) прямо в
+ * теле ноды - теперь этот инструмент живёт в ChartNode (chartNode.js,
+ * "Диаграмма" в сайдбаре, раздел "Таблицы"), а Viewer только показывает
+ * то, что получил на вход, включая ЧЕЙ ТИП диаграммы выбрать:
+ *
+ *   - если подключён ChartNode - тип читается из его
+ *     tableData.metadata.chartType (источник истины - панель ChartNode);
+ *   - если подключено что-то другое (TableNode, LIST-нода напрямую) -
+ *     chartType остаётся тем, что было раньше (по умолчанию 'donut', или
+ *     значение, восстановленное из старого сохранённого проекта, где тип
+ *     ещё выбирался прямо здесь) - обратная совместимость без регрессий
+ *     для существующих .ncp-файлов.
+ *
+ * Разбор входа (LIST или Data) не изменился - тот же приоритет, что был
+ * раньше: готовая таблица (Data) "богаче" списка, если есть и то, и
+ * другое. Единственное отличие для Data-источника: если это именно
+ * ChartNode (двухколоночная Категория/Значение) - строки читаются
+ * ПОСТРОЧНО (TableData.toRowListData()), а не суммой по столбцам
+ * (TableData.toListData(), как для TableNode) - см. комментарий в
+ * dataTypes.js про разницу этих двух методов.
+ */
 export class PercentageNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
@@ -30,11 +54,10 @@ export class PercentageNode extends BaseNode {
         this.listData = new ListData();
         this.outputListData = new ListData();
         this.customTitle = config.customTitle || 'Процентное распределение';
+        // Тип диаграммы больше НЕ выбирается тут (см. докстринг класса) -
+        // либо приходит от ChartNode, либо остаётся тем, что было
+        // восстановлено из старого проекта / дефолтом 'donut'
         this.chartType = config.chartType || 'donut';
-        this.chartTypes = [
-            { value: 'donut', label: '🍩 Круговая' },
-            { value: 'bar', label: '📊 Линейчатая' }
-        ];
         this.resultListData = new ListData();
     }
     
@@ -48,7 +71,7 @@ export class PercentageNode extends BaseNode {
         // ВАЖНО: НЕ ставить overflow: hidden - сокеты выступают за границу
         // ноды через отрицательные margin (--socket-protrude) и обрезались
         
-        // === ВЕРХНЯЯ СТРОКА: сокет | переключатель | сумма ===
+        // === ВЕРХНЯЯ СТРОКА: сокет | количество элементов ===
         const topRow = document.createElement('div');
         topRow.style.cssText = `
             display: flex;
@@ -69,41 +92,7 @@ export class PercentageNode extends BaseNode {
             title: 'Источник данных: список (LIST) или таблица (DATA)'
         });
         topRow.appendChild(socket);
-        
-        // Выпадающий список для выбора типа диаграммы
-        const select = document.createElement('select');
-        select.className = 'chart-type-select';
-        select.style.cssText = `
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--md-divider);
-            border-radius: 4px;
-            color: var(--md-text);
-            font-size: 11px;
-            padding: 2px 6px;
-            font-family: inherit;
-            cursor: pointer;
-            outline: none;
-            flex: 1;
-            min-width: 60px;
-        `;
-        
-        this.chartTypes.forEach(type => {
-            const option = document.createElement('option');
-            option.value = type.value;
-            option.textContent = type.label;
-            if (type.value === this.chartType) {
-                option.selected = true;
-            }
-            select.appendChild(option);
-        });
-        
-        select.addEventListener('change', (e) => {
-            this.chartType = e.target.value;
-            this.rerender();
-        });
-        
-        topRow.appendChild(select);
-        
+
         // Количество элементов
         const countLabel = document.createElement('span');
         countLabel.className = 'input-count';
@@ -111,6 +100,7 @@ export class PercentageNode extends BaseNode {
             color: var(--md-text-secondary);
             font-size: 11px;
             font-weight: 400;
+            flex: 1;
             white-space: nowrap;
         `;
         countLabel.textContent = `${this.listData.items.length} эл.`;
@@ -118,7 +108,7 @@ export class PercentageNode extends BaseNode {
         
         content.appendChild(topRow);
 
-        // === ВИЗУАЛИЗАЦИЯ ===
+        // === ВИЗУАЛИЗАЦИЯ (тип - см. this.chartType, докстринг класса) ===
         const chartContainer = document.createElement('div');
         chartContainer.className = 'percentage-chart';
         chartContainer.style.cssText = `
@@ -130,7 +120,6 @@ export class PercentageNode extends BaseNode {
             flex: 1;
         `;
         
-        // Контейнер для диаграммы
         const chartDisplay = document.createElement('div');
         chartDisplay.className = 'chart-display';
         chartDisplay.style.cssText = `
@@ -141,13 +130,10 @@ export class PercentageNode extends BaseNode {
             min-height: 140px;
         `;
         
-        // Рендерим выбранную диаграмму
         if (this.chartType === 'bar') {
-            const barChart = this.createBarChart();
-            chartDisplay.appendChild(barChart);
+            chartDisplay.appendChild(ChartRenderer.buildBarChart(this.listData));
         } else {
-            const donutChart = this.createDonutChart();
-            chartDisplay.appendChild(donutChart);
+            chartDisplay.appendChild(ChartRenderer.buildDonutChart(this.listData));
         }
         
         chartContainer.appendChild(chartDisplay);
@@ -164,7 +150,7 @@ export class PercentageNode extends BaseNode {
                 padding: 4px 0;
                 width: 100%;
             `;
-            this.updateLegend(legendContainer);
+            ChartRenderer.buildLegend(this.listData, legendContainer);
             chartContainer.appendChild(legendContainer);
         }
         
@@ -173,362 +159,13 @@ export class PercentageNode extends BaseNode {
         return content;
     }
     
-    createDonutChart() {
-        const size = 140;
-        const radius = 48;
-        const strokeWidth = 20;
-        const center = size / 2;
-        
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('width', size);
-        svg.setAttribute('height', size);
-        svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
-        svg.style.cssText = 'transform: rotate(-90deg);';
-        
-        const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        bgCircle.setAttribute('cx', center);
-        bgCircle.setAttribute('cy', center);
-        bgCircle.setAttribute('r', radius);
-        bgCircle.setAttribute('fill', 'none');
-        bgCircle.setAttribute('stroke', 'rgba(255,255,255,0.05)');
-        bgCircle.setAttribute('stroke-width', strokeWidth);
-        svg.appendChild(bgCircle);
-        
-        const items = this.listData.items;
-        const percentages = this.listData.percentages;
-        const total = this.listData.total;
-        
-        if (total > 0 && items.length > 0) {
-            const colors = this.getColors();
-            let startAngle = 0;
-            
-            items.forEach((item, idx) => {
-                const pct = percentages[idx];
-                if (pct <= 0) return;
-                
-                const angle = (pct / 100) * 2 * Math.PI;
-                const endAngle = startAngle + angle;
-                
-                const x1 = center + radius * Math.cos(startAngle);
-                const y1 = center + radius * Math.sin(startAngle);
-                const x2 = center + radius * Math.cos(endAngle);
-                const y2 = center + radius * Math.sin(endAngle);
-                
-                const largeArc = angle > Math.PI ? 1 : 0;
-                
-                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                const d = [
-                    `M ${x1} ${y1}`,
-                    `A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`
-                ].join(' ');
-                
-                path.setAttribute('d', d);
-                path.setAttribute('fill', 'none');
-                path.setAttribute('stroke', colors[idx % colors.length]);
-                path.setAttribute('stroke-width', strokeWidth);
-                path.setAttribute('stroke-linecap', 'round');
-                
-                svg.appendChild(path);
-                startAngle = endAngle;
-            });
-        } else {
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('x', center);
-            text.setAttribute('y', center + 4);
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('fill', 'var(--md-text-disabled)');
-            text.setAttribute('font-size', '12');
-            text.setAttribute('font-weight', '500');
-            text.setAttribute('transform', 'rotate(90, ' + center + ', ' + center + ')');
-            text.textContent = 'Нет данных';
-            svg.appendChild(text);
-        }
-        
-        // Центральный текст - сумма
-        const centerText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        centerText.setAttribute('x', center);
-        centerText.setAttribute('y', center + 5);
-        centerText.setAttribute('text-anchor', 'middle');
-        centerText.setAttribute('fill', 'var(--md-text)');
-        centerText.setAttribute('font-size', '16');
-        centerText.setAttribute('font-weight', '700');
-        centerText.setAttribute('transform', 'rotate(90, ' + center + ', ' + center + ')');
-        centerText.textContent = this.listData.total !== 0 ? this.listData.total.toFixed(1) : '0';
-        svg.appendChild(centerText);
-        
-        return svg;
-    }
-    
-    createBarChart() {
-        const container = document.createElement('div');
-        container.style.cssText = `
-            width: 100%;
-            max-width: 260px;
-            padding: 4px 0;
-        `;
-        
-        const items = this.listData.items;
-        const percentages = this.listData.percentages;
-        const total = this.listData.total;
-        const colors = this.getColors();
-        
-        if (total === 0 || items.length === 0) {
-            const noData = document.createElement('div');
-            noData.style.cssText = `
-                color: var(--md-text-disabled);
-                font-size: 13px;
-                text-align: center;
-                padding: 20px 0;
-            `;
-            noData.textContent = 'Нет данных';
-            container.appendChild(noData);
-            return container;
-        }
-        
-        const maxValue = Math.max(...percentages);
-        const barHeight = 18;
-        const maxBars = 8;
-        
-        let displayItems = items;
-        let displayPercentages = percentages;
-        let displayColors = colors;
-        
-        if (items.length > maxBars) {
-            const sorted = items.map((item, idx) => ({
-                item,
-                pct: percentages[idx],
-                color: colors[idx % colors.length],
-                idx
-            })).sort((a, b) => b.pct - a.pct);
-            
-            const top = sorted.slice(0, maxBars);
-            const rest = sorted.slice(maxBars);
-            
-            displayItems = top.map(d => d.item);
-            displayPercentages = top.map(d => d.pct);
-            displayColors = top.map(d => d.color);
-            
-            if (rest.length > 0) {
-                const restPct = rest.reduce((sum, d) => sum + d.pct, 0);
-                displayItems.push({ name: 'Остальные' });
-                displayPercentages.push(restPct);
-                displayColors.push('#78909c');
-            }
-        }
-        
-        displayItems.forEach((item, idx) => {
-            const pct = displayPercentages[idx];
-            if (pct <= 0) return;
-            
-            const row = document.createElement('div');
-            row.style.cssText = `
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                margin: 2px 0;
-            `;
-            
-            const name = document.createElement('span');
-            name.style.cssText = `
-                color: var(--md-text-secondary);
-                font-size: 10px;
-                min-width: 50px;
-                max-width: 70px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                text-align: right;
-            `;
-            name.textContent = item.name || 'unknown';
-            name.title = item.name || 'unknown';
-            row.appendChild(name);
-            
-            const barContainer = document.createElement('div');
-            barContainer.style.cssText = `
-                flex: 1;
-                height: ${barHeight}px;
-                background: rgba(255,255,255,0.05);
-                border-radius: 3px;
-                overflow: hidden;
-                position: relative;
-                min-width: 40px;
-            `;
-            
-            const bar = document.createElement('div');
-            const widthPercent = Math.max((pct / maxValue) * 100, 3);
-            bar.style.cssText = `
-                width: ${widthPercent}%;
-                height: 100%;
-                background: ${displayColors[idx % displayColors.length]};
-                border-radius: 3px;
-                transition: width 0.5s ease;
-                position: relative;
-            `;
-            
-            barContainer.appendChild(bar);
-            row.appendChild(barContainer);
-            
-            const pctLabel = document.createElement('span');
-            pctLabel.style.cssText = `
-                color: var(--md-text);
-                font-size: 10px;
-                font-weight: 500;
-                min-width: 40px;
-                text-align: right;
-                font-variant-numeric: tabular-nums;
-            `;
-            pctLabel.textContent = `${pct.toFixed(1)}%`;
-            row.appendChild(pctLabel);
-            
-            container.appendChild(row);
-        });
-        
-        return container;
-    }
-    
-    getColors() {
-        return [
-            '#4fc3f7', '#81c784', '#ffb74d', '#ce93d8', '#ef5350',
-            '#26c6da', '#ffa726', '#66bb6a', '#42a5f5', '#ec407a',
-            '#ab47bc', '#26a69a', '#ff8a65', '#5c6bc0', '#78909c'
-        ];
-    }
-    
-    updateLegend(container) {
-        container.innerHTML = '';
-        const items = this.listData.items;
-        const percentages = this.listData.percentages;
-        const colors = this.getColors();
-        
-        if (items.length === 0) {
-            const empty = document.createElement('div');
-            empty.style.cssText = `
-                color: var(--md-text-disabled);
-                font-size: 11px;
-                padding: 4px;
-                text-align: center;
-                width: 100%;
-            `;
-            empty.textContent = 'Нет данных';
-            container.appendChild(empty);
-            return;
-        }
-        
-        // Если элементов слишком много - показываем компактную легенду
-        if (items.length > 15) {
-            const summary = document.createElement('div');
-            summary.style.cssText = `
-                color: var(--md-text-secondary);
-                font-size: 11px;
-                padding: 4px;
-                text-align: center;
-                width: 100%;
-            `;
-            summary.textContent = `${items.length} элементов`;
-            container.appendChild(summary);
-            return;
-        }
-        
-        // Фильтруем только элементы с положительным значением
-        const positiveItems = [];
-        items.forEach((item, idx) => {
-            if (item.value > 0) {
-                positiveItems.push({ item, idx, pct: percentages[idx] });
-            }
-        });
-        
-        if (positiveItems.length === 0) {
-            const empty = document.createElement('div');
-            empty.style.cssText = `
-                color: var(--md-text-disabled);
-                font-size: 11px;
-                padding: 4px;
-                text-align: center;
-                width: 100%;
-            `;
-            empty.textContent = 'Нет данных для отображения';
-            container.appendChild(empty);
-            return;
-        }
-        
-        // Ограничиваем количество отображаемых элементов в легенде
-        const maxLegendItems = 12;
-        let displayItems = positiveItems;
-        let hasMore = false;
-        
-        if (positiveItems.length > maxLegendItems) {
-            displayItems = positiveItems.slice(0, maxLegendItems);
-            hasMore = true;
-        }
-        
-        // Просто рендерим элементы - flex-wrap контейнера сам разложит их
-        // по ширине ноды; при нехватке места элементы переносятся на новую
-        // строку, а нода растёт по высоте (у .node высота авто)
-        displayItems.forEach(({ item, idx, pct }) => {
-            const legendItem = document.createElement('div');
-            legendItem.style.cssText = `
-                display: flex;
-                align-items: center;
-                gap: 4px;
-                font-size: 10px;
-                padding: 2px 6px;
-                background: rgba(255,255,255,0.03);
-                border-radius: 3px;
-                max-width: 100%;
-                overflow: hidden;
-            `;
-            
-            const colorBox = document.createElement('span');
-            colorBox.style.cssText = `
-                width: 8px;
-                height: 8px;
-                border-radius: 2px;
-                background: ${colors[idx % colors.length]};
-                flex-shrink: 0;
-            `;
-            
-            const nameLabel = document.createElement('span');
-            const displayPct = pct || 0;
-            const displayName = item.name || 'unknown';
-            const displayValue = Helpers.formatByType(item.value, item.format);
-
-            const labelText = `${displayName}: ${displayValue} (${displayPct.toFixed(1)}%)`;
-            nameLabel.textContent = labelText;
-            nameLabel.style.cssText = `
-                color: var(--md-text);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            `;
-            nameLabel.title = labelText;
-            
-            legendItem.appendChild(colorBox);
-            legendItem.appendChild(nameLabel);
-            container.appendChild(legendItem);
-        });
-        
-        // Добавляем индикатор "и еще ..." если есть скрытые элементы
-        if (hasMore) {
-            const moreLabel = document.createElement('div');
-            moreLabel.style.cssText = `
-                color: var(--md-text-disabled);
-                font-size: 10px;
-                padding: 2px 6px;
-                text-align: center;
-                width: 100%;
-                font-style: italic;
-            `;
-            moreLabel.textContent = `и еще ${positiveItems.length - maxLegendItems} ...`;
-            container.appendChild(moreLabel);
-        }
-    }
 
     updateLegendAdaptive() {
         // Ширину не фиксируем: легенда занимает 100% ширины ноды
         // и перекладывается через flex-wrap автоматически
         const legendContainer = document.querySelector(`[data-node-id="${this.id}"] .percentage-legend`);
         if (legendContainer) {
-            this.updateLegend(legendContainer);
+            ChartRenderer.buildLegend(this.listData, legendContainer);
         }
     }
     
@@ -552,7 +189,18 @@ export class PercentageNode extends BaseNode {
         // "Богаче" по семантике - заголовки колонок уже явные, поэтому
         // если у источника есть и tableData, и listData - побеждает tableData.
         if (srcNode && srcNode.tableData && srcNode.tableData.columns.length > 0) {
-            inputList = srcNode.tableData.toListData();
+            if (srcNode.type === 'chart') {
+                // ChartNode - двухколоночная Категория/Значение, строка =
+                // элемент диаграммы (см. TableData.toRowListData() в
+                // dataTypes.js), и именно ChartNode - источник истины для
+                // типа диаграммы (см. докстринг класса)
+                inputList = srcNode.tableData.toRowListData();
+                if (srcNode.tableData.metadata?.chartType) {
+                    this.chartType = srcNode.tableData.metadata.chartType;
+                }
+            } else {
+                inputList = srcNode.tableData.toListData();
+            }
             inputName = srcNode.tableData.metadata?.title || srcNode.customName || srcNode.getDisplayName?.() || 'Таблица';
         }
 
@@ -627,22 +275,14 @@ export class PercentageNode extends BaseNode {
             countDisplay.textContent = `${this.listData.items.length} эл.`;
         }
         
-        // Обновляем выпадающий список
-        const select = element.querySelector('.chart-type-select');
-        if (select) {
-            select.value = this.chartType;
-        }
-        
         // Обновляем диаграмму
         const chartDisplay = element.querySelector('.chart-display');
         if (chartDisplay) {
             chartDisplay.innerHTML = '';
             if (this.chartType === 'bar') {
-                const barChart = this.createBarChart();
-                chartDisplay.appendChild(barChart);
+                chartDisplay.appendChild(ChartRenderer.buildBarChart(this.listData));
             } else {
-                const donutChart = this.createDonutChart();
-                chartDisplay.appendChild(donutChart);
+                chartDisplay.appendChild(ChartRenderer.buildDonutChart(this.listData));
             }
         }
         
@@ -651,7 +291,7 @@ export class PercentageNode extends BaseNode {
         if (legendContainer) {
             if (this.chartType === 'donut') {
                 legendContainer.style.display = 'flex';
-                this.updateLegend(legendContainer);
+                ChartRenderer.buildLegend(this.listData, legendContainer);
             } else {
                 legendContainer.style.display = 'none';
             }

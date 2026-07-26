@@ -11,7 +11,7 @@
     <div id="sidebar">
         <div class="sidebar-header">
             <h2>🧮 Ноды</h2>
-            <span class="sidebar-version">v1.0</span>
+            <span class="sidebar-version" id="sidebarVersion"></span>
         </div>
         
         <div class="sidebar-search">
@@ -96,6 +96,11 @@
                         <span class="node-name">Таблица</span>
                         <span class="node-badge">Данные</span>
                     </div>
+                    <div class="node-item" data-type="chart" onclick="window.addNode('chart', 400, 300)">
+                        <span class="node-icon">📊</span>
+                        <span class="node-name">Диаграмма</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
                 </div>
             </div>
 
@@ -103,8 +108,8 @@
                 <div class="section-title">📊 Визуализация</div>
                 <div class="node-list">
                     <div class="node-item" data-type="percentage" onclick="window.addNode('percentage', 400, 300, { customTitle: 'Проценты' })">
-                        <span class="node-icon">📊</span>
-                        <span class="node-name">Диаграмма</span>
+                        <span class="node-icon">🍩</span>
+                        <span class="node-name">Просмотр диаграммы</span>
                         <span class="node-badge">Viewer</span>
                     </div>
                     <div class="node-item" data-type="listViewer" onclick="window.addNode('listViewer', 400, 300)">

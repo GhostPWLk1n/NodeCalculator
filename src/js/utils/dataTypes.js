@@ -6,7 +6,7 @@
  * @file    dataTypes.js
  * @brief   Единые форматы данных между нодами: ListData и TableData
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -108,5 +108,30 @@ export class TableData {
                 })),
             { title: this.metadata.title || 'Таблица' }
         );
+    }
+
+    // Построчная разборка таблицы в ListData - КАЖДАЯ СТРОКА становится
+    // одним элементом {name, value}. Зеркально toListData() выше (там
+    // наоборот: один СТОЛБЕЦ - это один суммарный элемент). Такой формат
+    // нужен диаграммам (ChartNode, см. chartNode.js) - там таблица всегда
+    // двухколоночная "Категория (text) / Значение (число)", и строка
+    // таблицы - это ровно один сектор/столбец диаграммы, а не то, что
+    // нужно суммировать. Категория берётся из первого текстового столбца
+    // (format === 'text'), значение - из первого нетекстового; если
+    // текстового столбца нет - имена строк "Строка N".
+    toRowListData() {
+        const textCol = this.columns.find(col => col.format === 'text');
+        const valueCol = this.columns.find(col => col.format !== 'text') || this.columns[0];
+        if (!valueCol) return new ListData([], { title: this.metadata.title || 'Диаграмма' });
+
+        const items = [];
+        for (let i = 0; i < this.rowCount; i++) {
+            items.push({
+                name: (textCol ? textCol.values[i] : null) || `Строка ${i + 1}`,
+                value: typeof valueCol.values[i] === 'number' ? valueCol.values[i] : 0,
+                format: valueCol.format || 'number'
+            });
+        }
+        return new ListData(items, { title: this.metadata.title || 'Диаграмма' });
     }
 }

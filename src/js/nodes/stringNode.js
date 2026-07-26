@@ -6,7 +6,7 @@
  * @file    stringNode.js
  * @brief   Компактная нода ввода текста (по образцу NumberNode)
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -83,18 +83,48 @@ export class StringNode extends BaseNode {
         return this.value;
     }
 
-    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - просто
-    // выводит текст строки
-    getDashboardWidget() {
-        const value = this.value;
+    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - РЕДАКТИРУЕМОЕ
+    // поле (input, не текст, Раунд 37) - тот же приём, что у NumberNode:
+    // правки сразу пишутся в this.value через тот же setValue(), которым
+    // пользуется поле ввода самой ноды в графе. mousedown/click
+    // останавливают всплытие - иначе клик в поле триггерил бы
+    // selectWidget() -> пересборку Доски прямо в момент получения фокуса
+    // (см. подробный комментарий в numberNode.js).
+    // Виджет для Доски (см. dashboardNode.js/boardManager.js) - РЕДАКТИРУЕМОЕ
+    // поле, правки через ctx.onEdit пишут в DashboardNode, а не в эту
+    // ноду (Раунд 38, см. докстринг DashboardNode - раньше правки шли
+    // напрямую в this.setValue(), меняя ноду и всё, куда она ещё
+    // подключена в обход Доски).
+    getDashboardWidget(ctx = {}) {
+        const node = this;
+        const displayValue = ctx.overrideValue !== undefined ? ctx.overrideValue : node.value;
         return {
             type: 'string',
             title: this.customName || null,
             render: (container) => {
-                const el = document.createElement('div');
-                el.className = 'board-widget-string';
-                el.textContent = value || '—';
-                container.appendChild(el);
+                if (ctx.readOnly) {
+                    const el = document.createElement('div');
+                    el.className = 'board-widget-string';
+                    el.textContent = displayValue || '—';
+                    container.appendChild(el);
+                    return;
+                }
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'board-widget-string board-widget-string-input';
+                input.value = displayValue || '';
+                input.placeholder = 'Текст…';
+
+                input.addEventListener('focus', () => input.select());
+                input.addEventListener('input', (e) => {
+                    if (ctx.onEdit) ctx.onEdit(e.target.value);
+                    else node.setValue(e.target.value);
+                });
+                input.addEventListener('mousedown', (e) => e.stopPropagation());
+                input.addEventListener('click', (e) => e.stopPropagation());
+
+                container.appendChild(input);
             }
         };
     }

@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -26,11 +26,40 @@
  * сразу после загрузки проекта). Сериализуются только сами доски
  * (id/имя) - см. serialize()/loadFromData().
  */
+/**
+ * Условная сетка страницы Доски (см. Раунд 32 в CHANGES.md) - 12 колонок
+ * (как в большинстве dashboard-конструкторов, Bootstrap/Looker Studio),
+ * фиксированная высота ряда ROW_PX. GRID_GAP синхронизирован с CSS
+ * (.board-page { gap }) - оба места нужно менять вместе, если захочется
+ * поменять зазор между виджетами.
+ */
+const GRID_COLS = 12;
+const ROW_PX = 24;
+const GRID_GAP = 16;
+const MIN_ROW_SPAN = 2;
+
+function clamp(v, min, max) {
+    return Math.min(max, Math.max(min, v));
+}
+
 export class BoardManager {
     constructor() {
         this.boards = [];
         this.boardIdCounter = 0;
         this.activeBoardId = null;
+
+        // id виджета (= id ноды "Дашборд"), выбранного кликом на Доске -
+        // открывает боковую панель для редактирования стиля виджета
+        // (цвет/размер/выравнивание), см. selectWidget()/deselectWidget()
+        // и DashboardNode.getInspectorSchema()
+        this.selectedWidgetId = null;
+
+        // Флаг "сейчас на экране показана Доска (а не граф нод)" - см.
+        // подробное объяснение у layoutManager.viewActive, это его
+        // зеркало. По умолчанию false: при старте приложения виден граф
+        // нод (layoutManager.initFirstLayout выставляет свой флаг сам),
+        // initFirstBoard() ниже сознательно НЕ трогает этот флаг.
+        this.viewActive = false;
     }
 
     // ============================================
@@ -80,8 +109,23 @@ export class BoardManager {
     // ============================================
 
     switchToBoard(id) {
-        if (id === this.activeBoardId) return;
+        // Переключаем, если это другая доска ИЛИ эта же доска формально
+        // "активна", но сейчас закрыта видом графа нод (см. viewActive)
+        if (id === this.activeBoardId && this.viewActive) return;
         this.activeBoardId = id;
+
+        this.viewActive = true;
+        if (window.layoutManager) {
+            window.layoutManager.viewActive = false;
+            window.layoutManager.renderTabs();
+        }
+
+        // Свежий вид Доски - снимаем выбор виджета и закрываем панель,
+        // оставшуюся от предыдущего вида (ноды графа или другой Доски),
+        // а не показываем настройки того, что сейчас не на экране
+        this.selectedWidgetId = null;
+        if (window.inspectorManager) window.inspectorManager.close();
+
         this.showBoardView();
         this.renderTabs();
         this.renderActiveBoard();
@@ -158,7 +202,11 @@ export class BoardManager {
 
         this.boards.forEach(board => {
             const tab = document.createElement('div');
-            tab.className = 'layout-tab' + (board.id === this.activeBoardId ? ' active' : '');
+            // "active" только если Доска и правда сейчас на экране -
+            // одного совпадения id с activeBoardId недостаточно, пока
+            // видом владеет граф нод (см. viewActive)
+            const isActive = board.id === this.activeBoardId && this.viewActive;
+            tab.className = 'layout-tab' + (isActive ? ' active' : '');
             tab.dataset.boardId = board.id;
 
             const label = document.createElement('span');
@@ -180,7 +228,7 @@ export class BoardManager {
 
             tab.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
-                if (board.id !== this.activeBoardId) return;
+                if (!isActive) return;
                 this.startRenameTab(board, tab, label);
             });
 
@@ -231,56 +279,270 @@ export class BoardManager {
     }
 
     // ============================================
+    // ВЫБОР ВИДЖЕТА (клик по виджету на Доске -> боковая панель стиля)
+    // ============================================
+
+    // widgetId совпадает с id ноды "Дашборд", создавшей виджет - ищем
+    // инстанс через layoutManager.findNodeAnywhere(), т.к. эта нода может
+    // жить на ЛЮБОМ Листе, не обязательно активном сейчас (см.
+    // dashboardNode.js). Открываем ту же боковую панель, что и для
+    // выбора ноды в графе - DashboardNode.getInspectorSchema() уже
+    // содержит секцию "Стиль виджета".
+    selectWidget(widgetId) {
+        if (this.selectedWidgetId === widgetId) return;
+        this.selectedWidgetId = widgetId;
+        this.renderActiveBoard();
+
+        const node = window.layoutManager?.findNodeAnywhere(widgetId);
+        if (node && window.inspectorManager) {
+            window.inspectorManager.open(node);
+        }
+    }
+
+    deselectWidget() {
+        if (this.selectedWidgetId === null) return;
+        this.selectedWidgetId = null;
+        this.renderActiveBoard();
+        if (window.inspectorManager) window.inspectorManager.close();
+    }
+
+    // ============================================
     // РЕНДЕР ХОЛСТА (страница, вертикальный поток виджетов)
     // ============================================
 
+    // renderActiveBoard() вызывается ОЧЕНЬ часто - в том числе на каждое
+    // нажатие клавиши в редактируемом поле виджета (Число/Список/Строка,
+    // Раунд 37): любое их изменение идёт через node.setValue()/
+    // recalculate() -> nodeManager.calculateAll() -> DashboardNode.calculate()
+    // -> registerWidget() -> renderActiveBoard() (см. dashboardNode.js).
+    // Раньше метод БЕЗУСЛОВНО делал container.innerHTML='' и пересоздавал
+    // все виджеты заново - на каждое нажатие клавиши input, в который
+    // печатает пользователь, уничтожался и создавался заново, теряя
+    // фокус (ровно то, от чего в NODE_API.md предупреждает раздел про
+    // updateDisplay() - "не перезаписывайте поле, пока в нём фокус", но
+    // раньше здесь эта защита отсутствовала вовсе).
+    //
+    // Решение - реконсиляция ПО МЕСТУ вместо innerHTML='': если фокус
+    // сейчас внутри какого-то виджета, его DOM-элемент переиспользуется
+    // КАК ЕСТЬ (не пересоздаётся), остальные виджеты по-прежнему
+    // перестраиваются заново на каждый вызов (живое обновление, например
+    // у Таблицы, получающей изменённое число через ноду "Дашборд",
+    // работает как и раньше). page.insertBefore/removeChild ниже двигают
+    // узлы ВНУТРИ уже прикреплённой к документу страницы, не отсоединяя
+    // их от документа ни на миг - в отличие от innerHTML='', это не
+    // сбрасывает фокус.
     renderActiveBoard() {
         const container = document.getElementById('boardCanvas');
         if (!container) return;
-        container.innerHTML = '';
 
-        const board = this.getActiveBoard();
-        if (!board) return;
-
-        const page = document.createElement('div');
-        page.className = 'board-page';
-
-        const widgets = [...board.widgets.entries()]
-            .map(([id, w]) => ({ id, ...w }))
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id);
-
-        if (widgets.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'board-empty';
-            empty.textContent = 'На этой доске пока нет виджетов - подключите ноду "Дашборд" к источнику данных на любом Листе и выберите эту доску в её панели настроек';
-            page.appendChild(empty);
-        } else {
-            widgets.forEach(w => page.appendChild(this.buildWidgetEl(w)));
+        let page = container.querySelector('.board-page');
+        if (!page) {
+            page = document.createElement('div');
+            page.className = 'board-page';
+            container.innerHTML = '';
+            container.appendChild(page);
         }
 
-        container.appendChild(page);
+        const activeEl = document.activeElement;
+        const focusedWidgetEl = (activeEl && page.contains(activeEl))
+            ? activeEl.closest('.board-widget')
+            : null;
+        const focusedWidgetId = focusedWidgetEl ? focusedWidgetEl.dataset.widgetId : null;
+
+        const board = this.getActiveBoard();
+        const widgets = board
+            ? [...board.widgets.entries()]
+                .map(([id, w]) => ({ id, ...w }))
+                .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id)
+            : [];
+
+        if (widgets.length === 0) {
+            page.innerHTML = '';
+            if (board) {
+                const empty = document.createElement('div');
+                empty.className = 'board-empty';
+                empty.textContent = 'На этой доске пока нет виджетов - подключите ноду "Дашборд" к источнику данных на любом Листе и выберите эту доску в её панели настроек';
+                page.appendChild(empty);
+            }
+            return;
+        }
+
+        // Для виджета в фокусе - тот же DOM-узел, что уже стоит в
+        // странице; для всех остальных - свежий, как и раньше
+        const desiredEls = widgets.map(w => (
+            (focusedWidgetId !== null && String(w.id) === focusedWidgetId)
+                ? focusedWidgetEl
+                : this.buildWidgetEl(w)
+        ));
+
+        desiredEls.forEach((el, i) => {
+            const current = page.children[i];
+            if (current !== el) page.insertBefore(el, current || null);
+        });
+        while (page.children.length > desiredEls.length) {
+            page.removeChild(page.lastChild);
+        }
     }
 
     buildWidgetEl(widget) {
         const widgetEl = document.createElement('div');
         widgetEl.className = 'board-widget';
         widgetEl.dataset.widgetId = widget.id;
+        const isSelected = widget.id === this.selectedWidgetId;
+        if (isSelected) widgetEl.classList.add('selected');
+
+        // Стиль из боковой панели (DashboardNode.widgetStyle) - размер
+        // читает CSS через data-size (см. styles.css, .board-widget[data-size]),
+        // цвет - через CSS-переменную (используют .board-widget-number/
+        // -table/-list, см. styles.css), выравнивание - инлайн на теле и
+        // заголовке виджета
+        const style = widget.style || {};
+        widgetEl.dataset.size = style.size || 'medium';
+        if (style.color) {
+            widgetEl.style.setProperty('--board-widget-accent', style.color);
+        }
+
+        // Место на условной сетке страницы (см. GRID_COLS/ROW_PX выше).
+        // colSpan всегда задан явно (12 = во всю ширину - дефолт, как
+        // раньше вело себя width:100%). rowSpan === null - "авто высота
+        // по контенту": grid-row намеренно НЕ трогаем, единственный
+        // implicit-ряд сам растягивается под контент через
+        // grid-auto-rows: minmax(ROW_PX, auto) (см. styles.css) - ручное
+        // измерение не нужно, пока пользователь сам не потянет за
+        // верхнюю/нижнюю ручку (см. attachResizeDrag).
+        const layout = widget.layout || { colSpan: GRID_COLS, rowSpan: null };
+        widgetEl.style.gridColumn = `span ${clamp(layout.colSpan || GRID_COLS, 1, GRID_COLS)}`;
+        if (layout.rowSpan) {
+            widgetEl.style.gridRow = `span ${Math.max(MIN_ROW_SPAN, layout.rowSpan)}`;
+        }
+
+        widgetEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.selectWidget(widget.id);
+        });
 
         if (widget.title) {
             const titleEl = document.createElement('div');
             titleEl.className = 'board-widget-title';
             titleEl.textContent = widget.title;
+            titleEl.style.textAlign = style.align || 'left';
             widgetEl.appendChild(titleEl);
+        }
+
+        // Метка "переопределено на Доске" (см. dashboardNode.js) - чисто
+        // визуальная, показывает, что текущее значение отличается от
+        // исходной ноды в графе
+        if (widget.overridden) {
+            const overrideMark = document.createElement('span');
+            overrideMark.className = 'board-widget-override-mark';
+            overrideMark.textContent = '✎';
+            overrideMark.title = 'Значение переопределено на Доске - отличается от исходной ноды в графе';
+            widgetEl.appendChild(overrideMark);
         }
 
         const bodyEl = document.createElement('div');
         bodyEl.className = 'board-widget-body';
+        bodyEl.style.textAlign = style.align || 'left';
         if (typeof widget.render === 'function') {
             widget.render(bodyEl);
         }
         widgetEl.appendChild(bodyEl);
 
+        // Ручки деформации по сетке - по одной на середину каждой грани,
+        // рисуются только у выбранного виджета (не захламляют страницу,
+        // когда ничего не выбрано)
+        if (isSelected) {
+            ['n', 'e', 's', 'w'].forEach(edge => {
+                const handle = document.createElement('div');
+                handle.className = `board-widget-handle board-widget-handle-${edge}`;
+                this.attachResizeDrag(handle, widget.id, edge, widgetEl);
+                widgetEl.appendChild(handle);
+            });
+        }
+
         return widgetEl;
+    }
+
+    // Перетаскивание ручки на грани виджета - меняет colSpan (e/w) или
+    // rowSpan (n/s) на условной сетке страницы. Во время движения мыши
+    // меняем только инлайн-стиль САМОГО виджета (мгновенный визуальный
+    // отклик, без пересборки остальной Доски на каждый pixel) - реальное
+    // перетекание соседних виджетов на новое место сетки (grid-auto-flow)
+    // пересчитывается один раз на mouseup через renderActiveBoard().
+    //
+    // Доска НЕ находится внутри зумируемого #nodesContainer (см.
+    // main.js/applyZoom) - в отличие от перетаскивания в графе нод,
+    // здесь зум-коррекция дельты мыши не нужна.
+    attachResizeDrag(handleEl, widgetId, edge, widgetEl) {
+        handleEl.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const node = window.layoutManager?.findNodeAnywhere(widgetId);
+            if (!node || !node.widgetLayout) return;
+
+            const pageEl = widgetEl.closest('.board-page');
+            if (!pageEl) return;
+            const pageStyle = getComputedStyle(pageEl);
+            const contentWidth = pageEl.clientWidth
+                - parseFloat(pageStyle.paddingLeft) - parseFloat(pageStyle.paddingRight);
+            // Шаг в px, который сдвигает ровно на 1 колонку/ряд сетки -
+            // включает зазор (GRID_GAP), т.к. дорожки repeat(12,1fr)
+            // вместе с зазорами в точности заполняют contentWidth
+            const colStepPx = (contentWidth + GRID_GAP) / GRID_COLS;
+            const rowStepPx = ROW_PX + GRID_GAP;
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startColSpan = clamp(node.widgetLayout.colSpan || GRID_COLS, 1, GRID_COLS);
+            // Если высота ещё "авто" (rowSpan === null) - точкой отсчёта
+            // для вертикальной ручки берём ТЕКУЩУЮ измеренную высоту
+            // виджета, чтобы перетаскивание не начиналось со скачка
+            const startRowSpan = node.widgetLayout.rowSpan
+                || Math.max(MIN_ROW_SPAN, Math.round(widgetEl.offsetHeight / rowStepPx));
+
+            let pendingColSpan = startColSpan;
+            let pendingRowSpan = startRowSpan;
+
+            const onMove = (ev) => {
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+
+                if (edge === 'e') {
+                    pendingColSpan = clamp(startColSpan + Math.round(dx / colStepPx), 1, GRID_COLS);
+                    widgetEl.style.gridColumn = `span ${pendingColSpan}`;
+                } else if (edge === 'w') {
+                    // Тянем левую грань влево - виджет растёт, вправо - сжимается
+                    pendingColSpan = clamp(startColSpan - Math.round(dx / colStepPx), 1, GRID_COLS);
+                    widgetEl.style.gridColumn = `span ${pendingColSpan}`;
+                } else if (edge === 's') {
+                    pendingRowSpan = Math.max(MIN_ROW_SPAN, startRowSpan + Math.round(dy / rowStepPx));
+                    widgetEl.style.gridRow = `span ${pendingRowSpan}`;
+                } else if (edge === 'n') {
+                    pendingRowSpan = Math.max(MIN_ROW_SPAN, startRowSpan - Math.round(dy / rowStepPx));
+                    widgetEl.style.gridRow = `span ${pendingRowSpan}`;
+                }
+            };
+
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+
+                // Прямая мутация - widgetLayout передан в registerWidget()
+                // ПО ССЫЛКЕ (тот же приём, что и widgetStyle, см. Раунд 31),
+                // поэтому запись видна сразу, даже если нода "Дашборд"
+                // сейчас на неактивном Листе
+                node.widgetLayout.colSpan = pendingColSpan;
+                if (edge === 'n' || edge === 's') {
+                    node.widgetLayout.rowSpan = pendingRowSpan;
+                }
+
+                this.renderActiveBoard();
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
     }
 
     // ============================================

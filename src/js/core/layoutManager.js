@@ -19,6 +19,17 @@ export class LayoutManager {
         this.layouts = [];
         this.layoutIdCounter = 0;
         this.activeLayoutId = null;
+
+        // Флаг "сейчас на экране показан граф нод (а не Доска)".
+        // activeLayoutId сам по себе НЕ говорит, виден ли лист прямо
+        // сейчас - Доски (boardManager) используют свой отдельный стек
+        // activeBoardId, и оба стека раньше сравнивали клик только со
+        // СВОИМ активным id. Из-за этого повторный клик по листу, который
+        // формально остался "активным" в layoutManager, но фактически
+        // сейчас закрыт видом Доски, ничего не делал. viewActive снимается
+        // соседним менеджером при переключении на его вид, см.
+        // boardManager.switchToBoard() и loadLayout()/initFirstLayout() ниже.
+        this.viewActive = false;
     }
 
     // ============================================
@@ -60,6 +71,7 @@ export class LayoutManager {
         };
         this.layouts.push(layout);
         this.activeLayoutId = id;
+        this.viewActive = true; // при старте приложения виден граф нод, не Доска
         this.renderTabs();
         return layout;
     }
@@ -108,6 +120,16 @@ export class LayoutManager {
         const boardCanvas = document.getElementById('boardCanvasWrap');
         if (workspace) workspace.style.display = '';
         if (boardCanvas) boardCanvas.style.display = 'none';
+
+        // Этот вид (граф нод) теперь на экране - снимаем флаг с Досок,
+        // иначе оба стека вкладок будут одновременно считать себя
+        // "видимыми" (см. viewActive в конструкторе)
+        this.viewActive = true;
+        if (window.boardManager) {
+            window.boardManager.viewActive = false;
+            window.boardManager.selectedWidgetId = null;
+            window.boardManager.renderTabs();
+        }
 
         this.activeLayoutId = id;
         this.nodeManager.nodes = layout.nodes;
@@ -231,6 +253,9 @@ export class LayoutManager {
                         ? n.columns.map(c => ({ ...c }))
                         : undefined,
                     _nextIndex: n.type === 'table' ? n._nextIndex : undefined,
+                    boardShowRowNumbers: n.type === 'table' ? n.boardShowRowNumbers : undefined,
+                    boardSortColumn: n.type === 'table' ? n.boardSortColumn : undefined,
+                    boardSortDirection: n.type === 'table' ? n.boardSortDirection : undefined,
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
                     sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
@@ -243,10 +268,16 @@ export class LayoutManager {
                     // DashboardNode: привязка к Доске
                     targetBoardId: n.type === 'dashboard' ? n.targetBoardId : undefined,
                     dashboardOrder: n.type === 'dashboard' ? n.dashboardOrder : undefined,
+                    widgetStyle: n.type === 'dashboard' ? { ...n.widgetStyle } : undefined,
+                    widgetLayout: n.type === 'dashboard' ? { ...n.widgetLayout } : undefined,
+                    overridden: n.type === 'dashboard' ? n.overridden : undefined,
+                    overrideValue: n.type === 'dashboard' ? n.overrideValue : undefined,
+                    locked: n.type === 'dashboard' ? n.locked : undefined,
                     // GanttNode: календарь плана
                     startDate: n.type === 'gantt' ? n.startDate : undefined,
                     periodPreset: n.type === 'gantt' ? n.periodPreset : undefined,
                     durationUnit: n.type === 'gantt' ? n.durationUnit : undefined,
+                    scheduleMode: n.type === 'gantt' ? n.scheduleMode : undefined,
                     taskDates: n.type === 'gantt' ? { ...n.taskDates } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
@@ -334,6 +365,18 @@ export class LayoutManager {
         return layout.nodes.find(n => n.id === nodeId && n.type === 'layoutOutput') || null;
     }
 
+    // Найти ноду по id ПО ВСЕМ Листам, не только по активному - нужно
+    // Доскам (boardManager.selectWidget()): нода "Дашборд", создавшая
+    // виджет, может жить на любом Листе, а не обязательно на том,
+    // который сейчас открыт.
+    findNodeAnywhere(nodeId) {
+        for (const layout of this.layouts) {
+            const node = layout.nodes.find(n => n.id === nodeId);
+            if (node) return node;
+        }
+        return null;
+    }
+
     // ============================================
     // РЕНДЕР ВКЛАДОК
     // ============================================
@@ -345,7 +388,11 @@ export class LayoutManager {
 
         this.layouts.forEach(layout => {
             const tab = document.createElement('div');
-            tab.className = 'layout-tab' + (layout.id === this.activeLayoutId ? ' active' : '');
+            // "active" только если этот лист и правда сейчас на экране -
+            // одного совпадения id с activeLayoutId недостаточно, пока
+            // видом владеет Доска (см. viewActive)
+            const isActive = layout.id === this.activeLayoutId && this.viewActive;
+            tab.className = 'layout-tab' + (isActive ? ' active' : '');
             tab.dataset.layoutId = layout.id;
 
             const label = document.createElement('span');
@@ -364,17 +411,19 @@ export class LayoutManager {
             tab.appendChild(closeBtn);
 
             tab.addEventListener('click', () => {
-                if (layout.id !== this.activeLayoutId) {
+                // Переключаем, если это другой лист ИЛИ этот же лист
+                // формально "активен", но сейчас закрыт видом Доски
+                if (layout.id !== this.activeLayoutId || !this.viewActive) {
                     this.loadLayout(layout.id);
                 }
             });
 
             tab.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
-                // Редактируем только активную вкладку: по неактивной первый
-                // клик переключает лист и пересоздаёт DOM вкладок, поэтому
-                // dblclick до старого элемента просто не доходит
-                if (layout.id !== this.activeLayoutId) return;
+                // Редактируем только активную (реально видимую) вкладку: по
+                // неактивной первый клик переключает лист и пересоздаёт DOM
+                // вкладок, поэтому dblclick до старого элемента просто не доходит
+                if (!isActive) return;
                 this.startRenameTab(layout, tab, label);
             });
 

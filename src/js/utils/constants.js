@@ -11,6 +11,14 @@
  */
 
 export const Constants = {
+    // Единственный источник версии приложения - раньше "v1.0" была
+    // захардкожена прямо в index.html (.sidebar-version) и не менялась
+    // при релизах. Теперь index.html хранит только пустой <span id=
+    // "sidebarVersion">, а текст в него пишет main.js при старте (см.
+    // инициализацию там) - обновлять нужно только это значение, одно
+    // место на весь проект.
+    APP_VERSION: '1.5.0',
+
     NODE_TYPES: {
         NUMBER: 'number',
         ADD: 'add',
@@ -28,7 +36,8 @@ export const Constants = {
         string: 'Строка',
         table: 'Таблица',
         percentConvert: 'Проценты от суммы',
-        percentage: 'Диаграмма',
+        chart: 'Диаграмма',
+        percentage: 'Просмотр диаграммы',
         gantt: 'Диаграмма Ганта',
         dashboard: 'Дашборд'
     },

@@ -34,12 +34,20 @@ import { TableViewerNode } from './nodes/tableViewerNode.js';
 import { PercentConvertNode } from './nodes/percentConvertNode.js';
 import { GanttNode } from './nodes/ganttNode.js';
 import { DashboardNode } from './nodes/dashboardNode.js';
+import { ChartNode } from './nodes/chartNode.js';
+import { Constants } from './utils/constants.js';
 
 // ============================================
 // 2. СОЗДАНИЕ ЭКЗЕМПЛЯРОВ
 // ============================================
 
 console.log('🚀 Загрузка приложения...');
+
+// Версия в сайдбаре (.sidebar-version) - единственный источник, см.
+// Constants.APP_VERSION (utils/constants.js). Раньше "v1.0" была
+// захардкожена прямо в index.html и не обновлялась при релизах.
+const sidebarVersionEl = document.getElementById('sidebarVersion');
+if (sidebarVersionEl) sidebarVersionEl.textContent = `v${Constants.APP_VERSION}`;
 
 const nodeManager = new NodeManager();
 const connectionManager = new ConnectionManager();
@@ -66,6 +74,7 @@ nodeManager.registerNodeType('tableViewer', TableViewerNode);
 nodeManager.registerNodeType('percentConvert', PercentConvertNode);
 nodeManager.registerNodeType('gantt', GanttNode);
 nodeManager.registerNodeType('dashboard', DashboardNode);
+nodeManager.registerNodeType('chart', ChartNode);
 
 // Делаем доступными глобально (СРАЗУ после создания)
 window.nodeManager = nodeManager;
@@ -257,10 +266,20 @@ document.getElementById('nodesContainer')?.addEventListener('mousedown', (e) => 
     }
 });
 
+// То же самое для холста Доски: клик мимо виджета (пустое место
+// страницы/серый фон вокруг неё) снимает выбор виджета - виджеты сами
+// останавливают всплытие клика (boardManager.buildWidgetEl)
+document.getElementById('boardCanvasWrap')?.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('.board-widget')) {
+        window.boardManager?.deselectWidget();
+    }
+});
+
 // Escape - закрыть боковую панель, не дожидаясь клика мимо
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         window.nodeManager?.deselectNode();
+        window.boardManager?.deselectWidget();
     }
 });
 

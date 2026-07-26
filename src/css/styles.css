@@ -860,6 +860,7 @@ body {
 
 .number-input-compact {
     -moz-appearance: textfield;
+    appearance: textfield;
 }
 
 /* Компактное поле ввода */
@@ -2032,9 +2033,19 @@ input[type="checkbox"].inspector-field-input {
     border: 1px solid var(--md-divider);
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
     padding: 32px;
-    display: flex;
-    flex-direction: column;
+    /* Условная сетка (12 колонок, см. boardManager.js GRID_COLS/ROW_PX/
+       GRID_GAP - меняются вместе с gap ниже) - позволяет деформировать
+       виджеты ручками по граням (Раунд 32) и расставлять их по несколько
+       в ряд. minmax(ROW_PX, auto) - implicit-ряд без явного grid-row
+       растягивается под контент сам (виджет без ручного resize ведёт
+       себя как раньше, просто "по высоте содержимого"). */
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-rows: minmax(24px, auto);
     gap: 16px;
+    /* Без этого grid растянул бы редкие/невысокие implicit-ряды на всю
+       высоту min-height страницы (default align-content: stretch) */
+    align-content: start;
 }
 
 .board-empty {
@@ -2045,9 +2056,101 @@ input[type="checkbox"].inspector-field-input {
 }
 
 .board-widget {
-    width: 100%;
+    /* Ширина/высота теперь задаёт grid-column/grid-row (инлайн, см.
+       boardManager.buildWidgetEl) - не width:100%, иначе виджет с
+       colSpan < 12 всё равно растягивался бы на всю ширину своей ячейки
+       сетки (тут это и так поведение grid-item по умолчанию, но явный
+       width:100% раньше был расчитан на flex-контейнер, который сняли) */
+    position: relative;
+    min-width: 0;
     /* Не резать виджет между страницами при печати/экспорте в PDF */
     break-inside: avoid;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 4px;
+    margin: -4px;
+    transition: box-shadow 0.15s;
+}
+
+.board-widget:hover {
+    box-shadow: 0 0 0 1px var(--md-divider);
+}
+
+/* Виджет в фокусе (боковая панель открыта для его DashboardNode) -
+   см. boardManager.selectWidget(), зеркало .node.inspector-selected */
+.board-widget.selected {
+    outline: 2px solid var(--md-primary);
+    outline-offset: 2px;
+}
+
+/* Метка "переопределено на Доске" (Раунд 38, см. dashboardNode.js) -
+   маленький значок в углу виджета, значение которого отличается от
+   исходной ноды в графе (правка не трогает саму ноду, см. докстринг
+   DashboardNode) */
+.board-widget-override-mark {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--md-warning);
+    opacity: 0.8;
+    z-index: 6;
+    cursor: help;
+}
+
+/* Ручки деформации по граням (Раунд 32) - по одной на середину каждой
+   грани выбранного виджета, зеркало ручек TableViewerNode/GanttNode в
+   графе. Деформация "по условной сетке" - см. boardManager.attachResizeDrag. */
+.board-widget-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--md-primary);
+    border: 2px solid var(--md-surface-variant);
+    border-radius: 50%;
+    z-index: 5;
+}
+
+.board-widget-handle-n {
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+.board-widget-handle-s {
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+.board-widget-handle-e {
+    right: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+.board-widget-handle-w {
+    left: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+/* Размер виджета (боковая панель, DashboardNode.widgetStyle.size) -
+   zoom, а не transform:scale(), чтобы соседние виджеты корректно
+   перетекали по высоте (transform не влияет на layout-поток).
+   zoom - нестандартное, но нативно поддерживаемое Chromium/Electron
+   свойство, приложение таргетит только этот движок. */
+.board-widget[data-size="small"] .board-widget-body {
+    zoom: 0.8;
+}
+
+.board-widget[data-size="large"] .board-widget-body {
+    zoom: 1.3;
 }
 
 .board-widget-title {
@@ -2061,19 +2164,69 @@ input[type="checkbox"].inspector-field-input {
 
 .board-widget-body {
     color: var(--md-text);
+    /* На дефолтной авто-высоте (rowSpan===null) не влияет - ряд и так
+       растягивается под контент. После ручного resize по вертикали
+       (grid-row: span N задан явно) не даёт содержимому вылезать за
+       рамку виджета, а даёт прокрутку внутри неё */
+    max-height: 100%;
+    overflow: auto;
 }
 
 .board-widget-number {
     font-size: 32px;
     font-weight: 700;
-    color: var(--md-primary);
+    color: var(--board-widget-accent, var(--md-primary));
     font-variant-numeric: tabular-nums;
+}
+
+/* Виджет числа - редактируемый input (Раунд 32, см. numberNode.js
+   getDashboardWidget), не просто текст - сбрасываем стандартные стили
+   поля ввода, чтобы выглядел как текст, пока не наведён/не в фокусе */
+input.board-widget-number {
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    width: 100%;
+    padding: 0;
+    font-family: inherit;
+}
+
+input.board-widget-number:hover,
+input.board-widget-number:focus {
+    border-bottom-color: var(--md-divider);
+    outline: none;
+}
+
+input.board-widget-number::-webkit-inner-spin-button,
+input.board-widget-number::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .board-widget-string {
     font-size: 15px;
     line-height: 1.5;
     white-space: pre-wrap;
+}
+
+/* Виджет строки - редактируемый input (Раунд 37, см. stringNode.js
+   getDashboardWidget), сбрасываем стандартные стили поля ввода, чтобы
+   выглядел как текст, пока не наведён/не в фокусе - тот же приём, что у
+   input.board-widget-number */
+input.board-widget-string-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    width: 100%;
+    padding: 0;
+    font-family: inherit;
+    color: var(--md-text);
+}
+
+input.board-widget-string-input:hover,
+input.board-widget-string-input:focus {
+    border-bottom-color: var(--md-divider);
+    outline: none;
 }
 
 table.board-widget-list {
@@ -2090,5 +2243,136 @@ table.board-widget-list td {
 table.board-widget-list td:last-child {
     text-align: right;
     font-variant-numeric: tabular-nums;
-    color: var(--md-primary);
+    color: var(--board-widget-accent, var(--md-primary));
+}
+
+/* Виджет списка - редактируемые input в каждой ячейке (Раунд 37, см.
+   listInputNode.js getDashboardWidget) - сбрасываем стандартные стили
+   поля ввода, чтобы выглядели как обычные ячейки таблицы, пока не
+   наведены/не в фокусе - тот же приём, что у остальных input-виджетов */
+table.board-widget-list .board-widget-list-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    width: 100%;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: inherit;
+}
+
+table.board-widget-list .board-widget-list-input:hover,
+table.board-widget-list .board-widget-list-input:focus {
+    border-bottom-color: var(--md-divider);
+    outline: none;
+}
+
+table.board-widget-list .board-widget-list-input-value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+table.board-widget-list .board-widget-list-input-value::-webkit-inner-spin-button,
+table.board-widget-list .board-widget-list-input-value::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+table.board-widget-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+table.board-widget-table th {
+    text-align: left;
+    padding: 4px 8px;
+    font-weight: 600;
+    color: var(--md-text-secondary);
+    border-bottom: 2px solid var(--board-widget-accent, var(--md-divider));
+}
+
+table.board-widget-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--md-divider);
+    font-variant-numeric: tabular-nums;
+}
+
+table.board-widget-table tfoot td {
+    font-weight: 600;
+    border-top: 2px solid var(--board-widget-accent, var(--md-divider));
+    border-bottom: none;
+}
+
+/* Оформление таблицы на Доске (Раунд 35) - зеркало возможностей
+   TableViewerNode на Листе: номера строк, сортировка по клику на
+   заголовок, проценты в виде мини-графика в ячейке. См.
+   tableNode.js/getDashboardWidget(). */
+
+table.board-widget-table .align-right {
+    text-align: right;
+}
+
+table.board-widget-table th,
+table.board-widget-table td {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+table.board-widget-table .board-widget-table-num-cell {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--md-text-disabled);
+    font-size: 11px;
+    padding-right: 4px;
+}
+
+table.board-widget-table .board-widget-table-eye-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0;
+    line-height: 1;
+    color: var(--md-text-secondary);
+}
+
+table.board-widget-table th.board-widget-table-sortable {
+    cursor: pointer;
+    user-select: none;
+    display: table-cell;
+}
+
+table.board-widget-table th.board-widget-table-sortable .board-widget-table-sort-icon {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 9px;
+    opacity: 0.35;
+}
+
+table.board-widget-table th.board-widget-table-sortable .board-widget-table-sort-icon.active {
+    opacity: 1;
+    color: var(--board-widget-accent, var(--md-primary));
+}
+
+table.board-widget-table td.board-widget-table-percent-cell {
+    position: relative;
+}
+
+table.board-widget-table .board-widget-table-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--board-widget-accent, var(--md-primary));
+    opacity: 0.22;
+    z-index: 0;
+}
+
+table.board-widget-table .board-widget-table-cell-text {
+    position: relative;
+    z-index: 1;
 }
