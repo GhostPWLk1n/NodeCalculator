@@ -6,7 +6,7 @@
  * @file    inspectorManager.js
  * @brief   Боковая панель настроек выбранной ноды (цвет, формат значения и т.п.)
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -101,6 +101,30 @@ export class InspectorManager {
             heading.className = 'inspector-section-heading';
             heading.textContent = field.label;
             return heading;
+        }
+
+        // 'button' - разовое действие (например, "Импортировать выбранное"
+        // у xlsxImportNode.js), а не значение для чтения/записи через
+        // get()/set() - поэтому рендерится отдельно от обычных полей: без
+        // подписи слева, кнопка на всю ширину. field.onClick может быть
+        // асинхронным - панель просто ждёт и перерисовывается после,
+        // чтобы отразить любые изменения схемы (например, новые чекбоксы
+        // столбцов после того, как выбрали файл).
+        if (field.type === 'button') {
+            const btnRow = document.createElement('div');
+            btnRow.className = 'inspector-field inspector-field-button-row';
+            const btn = document.createElement('button');
+            btn.className = 'inspector-action-btn';
+            btn.textContent = field.label;
+            if (field.disabled) btn.disabled = true;
+            btn.addEventListener('mousedown', (e) => e.stopPropagation());
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (field.onClick) await field.onClick();
+                this.render();
+            });
+            btnRow.appendChild(btn);
+            return btnRow;
         }
 
         const row = document.createElement('div');

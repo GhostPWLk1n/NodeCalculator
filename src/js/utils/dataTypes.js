@@ -134,4 +134,32 @@ export class TableData {
         }
         return new ListData(items, { title: this.metadata.title || 'Диаграмма' });
     }
+
+    // Обобщение toRowListData() на НЕСКОЛЬКО числовых столбцов сразу
+    // (Раунд 42) - toRowListData() выше берёт только ПЕРВЫЙ нетекстовый
+    // столбец, теряя остальные; здесь сохраняются ВСЕ - каждый становится
+    // отдельной "серией" со своим именем (заголовок столбца) и набором
+    // значений по тем же категориям (строкам). Нужно ChartNode, когда у
+    // источника больше одного столбца с данными - каждый рисуется как
+    // отдельное кольцо (круговая) или отдельный набор столбиков
+    // (линейчатая), а не схлопывается в одно число на строку.
+    // При РОВНО одном числовом столбце возвращает ровно 1 серию - то есть
+    // ведёт себя как toRowListData() в самом частом (однорядном) случае.
+    toSeriesData() {
+        const textCol = this.columns.find(col => col.format === 'text');
+        const valueCols = this.columns.filter(col => col.format !== 'text');
+
+        const categories = [];
+        for (let i = 0; i < this.rowCount; i++) {
+            categories.push((textCol ? textCol.values[i] : null) || `Строка ${i + 1}`);
+        }
+
+        const series = valueCols.map(col => ({
+            name: col.header,
+            format: col.format || 'number',
+            values: categories.map((_, i) => (typeof col.values[i] === 'number' ? col.values[i] : 0))
+        }));
+
+        return { categories, series };
+    }
 }

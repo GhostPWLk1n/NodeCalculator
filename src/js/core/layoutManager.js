@@ -10,6 +10,15 @@
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
+// Ноды, отдающие Data-таблицу и подключаемые к виджету Доски через
+// TableWidgetRenderer (Раунды 35/42/44/45) - у всех общие поля
+// boardShowRowNumbers/boardSortColumn/boardSortDirection (см. serialize()
+// ниже). Один список на всех, чтобы не повторять его в каждой строке.
+const TABLE_WIDGET_TYPES = [
+    'table', 'tableInject', 'tableRemove', 'tableFormat',
+    'tableMergeColumns', 'tableJoin', 'tableFilter'
+];
+
 export class LayoutManager {
     constructor(nodeManager, connectionManager, renderer) {
         this.nodeManager = nodeManager;
@@ -253,9 +262,20 @@ export class LayoutManager {
                         ? n.columns.map(c => ({ ...c }))
                         : undefined,
                     _nextIndex: n.type === 'table' ? n._nextIndex : undefined,
-                    boardShowRowNumbers: n.type === 'table' ? n.boardShowRowNumbers : undefined,
-                    boardSortColumn: n.type === 'table' ? n.boardSortColumn : undefined,
-                    boardSortDirection: n.type === 'table' ? n.boardSortDirection : undefined,
+                    // Виджет Доски (Раунды 35/42/45) - номера строк/сортировка -
+                    // общие поля у ЛЮБОЙ ноды, отдающей Data-таблицу
+                    // (TableNode/TableInjectNode/TableRemoveNode/
+                    // TableFormatNode/TableMergeColumnsNode/TableJoinNode/
+                    // TableFilterNode), см. TableWidgetRenderer
+                    boardShowRowNumbers: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardShowRowNumbers : undefined,
+                    boardSortColumn: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortColumn : undefined,
+                    boardSortDirection: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortDirection : undefined,
+                    // Зебра/линии (Раунд 44) - ТОЛЬКО у TableFormatNode -
+                    // остальные табличные ноды намеренно не хламятся
+                    // оформлением, см. докстринг tableFormatNode.js
+                    boardZebra: n.type === 'tableFormat' ? n.boardZebra : undefined,
+                    boardShowRowLines: n.type === 'tableFormat' ? n.boardShowRowLines : undefined,
+                    boardShowColumnLines: n.type === 'tableFormat' ? n.boardShowColumnLines : undefined,
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
                     sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
@@ -285,7 +305,60 @@ export class LayoutManager {
                     showYearRow: n.type === 'gantt' ? n.showYearRow : undefined,
                     showMonthRow: n.type === 'gantt' ? n.showMonthRow : undefined,
                     showDayRow: n.type === 'gantt' ? n.showDayRow : undefined,
-                    showWeekdayRow: n.type === 'gantt' ? n.showWeekdayRow : undefined
+                    showWeekdayRow: n.type === 'gantt' ? n.showWeekdayRow : undefined,
+
+                    // XlsxImportNode: только УЖЕ импортированный снимок данных -
+                    // сырые байты файла НЕ сериализуются (см. докстринг класса,
+                    // xlsxImportNode.js) - после загрузки проекта нужно заново
+                    // выбрать файл, чтобы сменить лист/столбцы, но сам импорт
+                    // переживает сохранение/загрузку как обычные данные ноды
+                    fileName: n.type === 'xlsxImport' ? n.fileName : undefined,
+                    selectedSheet: n.type === 'xlsxImport' ? n.selectedSheet : undefined,
+                    selectedColumns: n.type === 'xlsxImport' ? [...n.selectedColumns] : undefined,
+                    headerRow: n.type === 'xlsxImport' ? n.headerRow : undefined,
+                    importedHeaders: n.type === 'xlsxImport' ? [...n.importedHeaders] : undefined,
+                    importedRows: n.type === 'xlsxImport' ? n.importedRows.map(r => [...r]) : undefined,
+
+                    // TableInjectNode: операция вставки + номер строки
+                    operation: (n.type === 'tableInject' || n.type === 'tableRemove') ? n.operation : undefined,
+                    rowIndex: (n.type === 'tableInject' || n.type === 'tableRemove') ? n.rowIndex : undefined,
+                    // TableRemoveNode: доп. параметры для режимов "Диапазон"/"Первые N"/"Последние N"
+                    rangeStart: n.type === 'tableRemove' ? n.rangeStart : undefined,
+                    rangeEnd: n.type === 'tableRemove' ? n.rangeEnd : undefined,
+                    count: n.type === 'tableRemove' ? n.count : undefined,
+                    // TableFormatNode: переопределения оформления по столбцу
+                    // (формат/ширина/знаки/итог/цвет) - см. докстринг
+                    // this.columnStyles в конструкторе, tableFormatNode.js
+                    columnStyles: n.type === 'tableFormat' && n.columnStyles
+                        ? n.columnStyles.map(s => ({ ...s }))
+                        : undefined,
+
+                    // TableMergeColumnsNode: какие столбцы объединяем, как, куда
+                    sourceColumns: n.type === 'tableMergeColumns' ? [...n.sourceColumns] : undefined,
+                    mergeOperation: n.type === 'tableMergeColumns' ? n.operation : undefined,
+                    separator: n.type === 'tableMergeColumns' ? n.separator : undefined,
+                    targetPosition: n.type === 'tableMergeColumns' ? n.targetPosition : undefined,
+                    resultHeader: n.type === 'tableMergeColumns' ? n.resultHeader : undefined,
+
+                    // TableJoinNode: ключевые столбцы А/Б + операция агрегации
+                    keyColumnA: n.type === 'tableJoin' ? n.keyColumnA : undefined,
+                    keyColumnB: n.type === 'tableJoin' ? n.keyColumnB : undefined,
+                    // Раунд 46: агрегация переехала с одной глобальной на
+                    // отдельную по каждому столбцу Б + возможность убрать
+                    // столбец из результата (А и Б) - см. докстринг
+                    // tableJoinNode.js про columnConfigA/columnConfigB
+                    columnConfigA: n.type === 'tableJoin' && n.columnConfigA
+                        ? n.columnConfigA.map(c => ({ ...c }))
+                        : undefined,
+                    columnConfigB: n.type === 'tableJoin' && n.columnConfigB
+                        ? n.columnConfigB.map(c => ({ ...c }))
+                        : undefined,
+
+                    // TableFilterNode: условие на каждый столбец (см. докстринг
+                    // tableFilterNode.js - список значений или сравнение)
+                    columnFilters: n.type === 'tableFilter' && n.columnFilters
+                        ? [...n.columnFilters]
+                        : undefined
                 }))
             }))
         };

@@ -37,6 +37,13 @@ export const Constants = {
         table: 'Таблица',
         percentConvert: 'Проценты от суммы',
         chart: 'Диаграмма',
+        xlsxImport: 'Импорт из Excel',
+        tableInject: 'Инъекция в таблицу',
+        tableRemove: 'Изъятие из таблицы',
+        tableFormat: 'Оформление таблицы',
+        tableMergeColumns: 'Объединение столбцов',
+        tableJoin: 'Слияние таблиц',
+        tableFilter: 'Отсеять',
         percentage: 'Просмотр диаграммы',
         gantt: 'Диаграмма Ганта',
         dashboard: 'Дашборд'

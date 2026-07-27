@@ -75,6 +75,63 @@ body {
     letter-spacing: 0.5px;
 }
 
+.sidebar-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Переключатель темы (день/ночь), Раунд 40 - см. #themeSwitch в
+   index.html и applyTheme() в main.js. Переключение - это смена всего
+   файла стилей целиком (styles.css <-> day_styles.css), а не набор
+   CSS-переменных внутри одного файла - поэтому кружок здесь ВСЕГДА у
+   луны без всяких условных селекторов: эта таблица стилей загружена
+   именно потому, что сейчас активна тёмная тема (зеркальное правило -
+   кружок у солнца - в day_styles.css). */
+.theme-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 52px;
+    height: 26px;
+    padding: 0 5px;
+    border-radius: 999px;
+    border: 1px solid var(--md-divider);
+    background: var(--md-surface-2);
+    cursor: pointer;
+    outline: none;
+    flex-shrink: 0;
+    transition: border-color 0.15s;
+}
+
+.theme-switch:hover {
+    border-color: var(--md-primary);
+}
+
+.theme-switch-icon {
+    font-size: 12px;
+    line-height: 1;
+    z-index: 1;
+    pointer-events: none;
+    filter: grayscale(1);
+    opacity: 0.55;
+}
+
+.theme-switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--md-primary);
+    box-shadow: var(--md-elevation);
+    transition: transform 0.2s ease;
+    transform: translateX(26px);
+    z-index: 0;
+}
+
 .sidebar-version {
     color: var(--md-text-secondary);
     font-size: 11px;
@@ -1461,6 +1518,42 @@ body {
     line-height: 1;
 }
 
+/* Тело xlsxImportNode.js - тот же приём кнопки, что у .add-input-btn
+   выше (пунктирная рамка, во всю ширину), плюс строка с именем файла
+   и строка статуса импорта */
+.xlsx-pick-btn {
+    width: 100%;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--md-divider);
+    border-radius: var(--md-radius);
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: inherit;
+    transition: all 0.2s ease;
+}
+
+.xlsx-pick-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--md-primary);
+    color: var(--md-text);
+}
+
+.xlsx-filename {
+    color: var(--md-text);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.xlsx-status {
+    color: var(--md-text-secondary);
+    font-size: 10px;
+}
+
 .delete-input-btn:hover {
     color: var(--md-error);
     transform: scale(1.2);
@@ -1999,6 +2092,37 @@ select.inspector-field-input {
     border-color: var(--md-primary);
 }
 
+/* Кнопка-действие в панели (field.type === 'button', см.
+   inspectorManager.js) - на всю ширину, в отличие от компактной
+   .inspector-reset-btn - это САМОСТОЯТЕЛЬНОЕ действие ("Импортировать
+   выбранное" у xlsxImportNode.js), а не мелкая утилита рядом с полем */
+.inspector-field-button-row {
+    margin-top: 2px;
+}
+
+.inspector-action-btn {
+    width: 100%;
+    background: var(--md-primary);
+    border: none;
+    border-radius: var(--md-radius);
+    color: var(--md-surface);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 9px 12px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.inspector-action-btn:hover {
+    opacity: 0.88;
+}
+
+.inspector-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 input[type="checkbox"].inspector-field-input {
     flex: 0 0 auto;
     width: 16px;
@@ -2049,10 +2173,15 @@ input[type="checkbox"].inspector-field-input {
 }
 
 .board-empty {
+    grid-column: 1 / -1;
     color: var(--md-text-disabled);
     font-size: 13px;
+    line-height: 1.6;
     text-align: center;
-    padding: 60px 20px;
+    padding: 64px 32px;
+    border: 1px dashed var(--md-divider);
+    border-radius: var(--md-radius-lg);
+    background: var(--md-surface);
 }
 
 .board-widget {
@@ -2066,14 +2195,27 @@ input[type="checkbox"].inspector-field-input {
     /* Не резать виджет между страницами при печати/экспорте в PDF */
     break-inside: avoid;
     cursor: pointer;
-    border-radius: 4px;
-    padding: 4px;
-    margin: -4px;
-    transition: box-shadow 0.15s;
+
+    /* Карточка (Раунд 39, ориентир - Google-дашборды/Looker Studio):
+       виджет - самостоятельная приподнятая плитка над страницей, а не
+       текст, просто лежащий на фоне. --md-surface-3 (не -surface-2!) -
+       --md-surface-2 БУКВАЛЬНО совпадает по цвету с --md-divider
+       (обе #2d2d2d) - на таком фоне все внутренние разделители
+       (строки таблиц/списков) стали бы невидимы. */
+    background: var(--md-surface-3);
+    border-radius: var(--md-radius);
+    padding: 16px 18px;
+    box-shadow: var(--md-elevation);
+    /* Цветная полоса сверху - тот же акцентный цвет, что уже красит
+       число/шапку таблицы (--board-widget-accent, Раунд 31); прозрачная,
+       если цвет не задан - тогда просто не видна, но не влияет на layout */
+    border-top: 3px solid var(--board-widget-accent, transparent);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .board-widget:hover {
-    box-shadow: 0 0 0 1px var(--md-divider);
+    box-shadow: var(--md-elevation-hover);
+    transform: translateY(-1px);
 }
 
 /* Виджет в фокусе (боковая панель открыта для его DashboardNode) -
@@ -2089,12 +2231,12 @@ input[type="checkbox"].inspector-field-input {
    DashboardNode) */
 .board-widget-override-mark {
     position: absolute;
-    top: 2px;
-    right: 2px;
-    font-size: 10px;
+    top: 8px;
+    right: 10px;
+    font-size: 11px;
     line-height: 1;
     color: var(--md-warning);
-    opacity: 0.8;
+    opacity: 0.85;
     z-index: 6;
     cursor: help;
 }
@@ -2158,8 +2300,8 @@ input[type="checkbox"].inspector-field-input {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.03em;
-    margin-bottom: 6px;
+    letter-spacing: 0.05em;
+    margin-bottom: 10px;
 }
 
 .board-widget-body {
@@ -2173,8 +2315,9 @@ input[type="checkbox"].inspector-field-input {
 }
 
 .board-widget-number {
-    font-size: 32px;
+    font-size: 36px;
     font-weight: 700;
+    letter-spacing: -0.01em;
     color: var(--board-widget-accent, var(--md-primary));
     font-variant-numeric: tabular-nums;
 }
@@ -2375,4 +2518,30 @@ table.board-widget-table .board-widget-table-bar {
 table.board-widget-table .board-widget-table-cell-text {
     position: relative;
     z-index: 1;
+}
+
+/* Оформление виджета таблицы на Доске (Раунд 42, см.
+   TableWidgetRenderer/getInspectorSchema у TableNode/TableInjectNode/
+   TableRemoveNode) - зебра/линии, классы навешиваются на сам <table> */
+
+table.board-widget-table.board-widget-table-zebra tbody tr:nth-child(even) td {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* По умолчанию у строк уже есть тонкая нижняя граница (см. правило
+   table.board-widget-table td выше) - этот класс её снимает, когда
+   "Линии между строками" выключены в панели */
+table.board-widget-table.board-widget-table-no-row-lines td,
+table.board-widget-table.board-widget-table-no-row-lines th {
+    border-bottom: none;
+}
+
+table.board-widget-table.board-widget-table-col-lines th,
+table.board-widget-table.board-widget-table-col-lines td {
+    border-right: 1px solid var(--md-divider);
+}
+
+table.board-widget-table.board-widget-table-col-lines th:last-child,
+table.board-widget-table.board-widget-table-col-lines td:last-child {
+    border-right: none;
 }

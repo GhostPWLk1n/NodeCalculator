@@ -4,14 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Нодовый калькулятор</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css" id="themeStylesheet">
+    <script>
+        // Применяем сохранённую тему МАКСИМАЛЬНО РАНО (синхронно, до
+        // отрисовки) - иначе была бы вспышка тёмной темы по умолчанию
+        // при каждом старте, если у пользователя выбрана светлая. Вся
+        // остальная логика переключения (клик по .theme-switch) - в
+        // main.js, applyTheme(). Атрибут на <html>, а не <body> - тела
+        // документа ещё не существует, когда этот скрипт выполняется
+        // (он лежит в <head>, до <body>).
+        (function () {
+            var theme = localStorage.getItem('nodecalculate-theme') || 'dark';
+            document.documentElement.dataset.theme = theme;
+            if (theme === 'light') {
+                document.getElementById('themeStylesheet').setAttribute('href', 'css/day_styles.css');
+            }
+        })();
+    </script>
 </head>
 <body>
     <!-- Боковая панель -->
     <div id="sidebar">
         <div class="sidebar-header">
             <h2>🧮 Ноды</h2>
-            <span class="sidebar-version" id="sidebarVersion"></span>
+            <div class="sidebar-header-right">
+                <button
+                    class="theme-switch"
+                    id="themeSwitch"
+                    type="button"
+                    title="Переключить тему (день/ночь)"
+                    aria-label="Переключить тему"
+                >
+                    <span class="theme-switch-icon">☀️</span>
+                    <span class="theme-switch-knob"></span>
+                    <span class="theme-switch-icon">🌙</span>
+                </button>
+                <span class="sidebar-version" id="sidebarVersion"></span>
+            </div>
         </div>
         
         <div class="sidebar-search">
@@ -99,6 +128,41 @@
                     <div class="node-item" data-type="chart" onclick="window.addNode('chart', 400, 300)">
                         <span class="node-icon">📊</span>
                         <span class="node-name">Диаграмма</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="xlsxImport" onclick="window.addNode('xlsxImport', 400, 300)">
+                        <span class="node-icon">📥</span>
+                        <span class="node-name">Импорт из Excel</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableInject" onclick="window.addNode('tableInject', 400, 300)">
+                        <span class="node-icon">➕</span>
+                        <span class="node-name">Инъекция в таблицу</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableRemove" onclick="window.addNode('tableRemove', 400, 300)">
+                        <span class="node-icon">➖</span>
+                        <span class="node-name">Изъятие из таблицы</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableFormat" onclick="window.addNode('tableFormat', 400, 300)">
+                        <span class="node-icon">🎨</span>
+                        <span class="node-name">Оформление таблицы</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableMergeColumns" onclick="window.addNode('tableMergeColumns', 400, 300)">
+                        <span class="node-icon">🔗</span>
+                        <span class="node-name">Объединение столбцов</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableJoin" onclick="window.addNode('tableJoin', 400, 300)">
+                        <span class="node-icon">🧬</span>
+                        <span class="node-name">Слияние таблиц</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tableFilter" onclick="window.addNode('tableFilter', 400, 300)">
+                        <span class="node-icon">🔍</span>
+                        <span class="node-name">Отсеять</span>
                         <span class="node-badge">Данные</span>
                     </div>
                 </div>

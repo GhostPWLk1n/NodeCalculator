@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -35,6 +35,13 @@ import { PercentConvertNode } from './nodes/percentConvertNode.js';
 import { GanttNode } from './nodes/ganttNode.js';
 import { DashboardNode } from './nodes/dashboardNode.js';
 import { ChartNode } from './nodes/chartNode.js';
+import { XlsxImportNode } from './nodes/xlsxImportNode.js';
+import { TableInjectNode } from './nodes/tableInjectNode.js';
+import { TableRemoveNode } from './nodes/tableRemoveNode.js';
+import { TableFormatNode } from './nodes/tableFormatNode.js';
+import { TableMergeColumnsNode } from './nodes/tableMergeColumnsNode.js';
+import { TableJoinNode } from './nodes/tableJoinNode.js';
+import { TableFilterNode } from './nodes/tableFilterNode.js';
 import { Constants } from './utils/constants.js';
 
 // ============================================
@@ -48,6 +55,38 @@ console.log('🚀 Загрузка приложения...');
 // захардкожена прямо в index.html и не обновлялась при релизах.
 const sidebarVersionEl = document.getElementById('sidebarVersion');
 if (sidebarVersionEl) sidebarVersionEl.textContent = `v${Constants.APP_VERSION}`;
+
+// Переключатель темы (день/ночь), Раунд 40 - см. #themeSwitch в
+// index.html. Тема - это НЕ набор CSS-переменных внутри одного файла, а
+// два ПОЛНОСТЬЮ отдельных файла (css/styles.css - тёмная, css/day_styles.css -
+// светлая, зеркально друг другу селектор-в-селектор) - переключение
+// сводится к подмене href у <link id="themeStylesheet">. Сохранённое
+// значение уже применено СИНХРОННО в <head> (см. инлайн-скрипт в
+// index.html, до этого файла) - здесь только навешиваем обработчик клика
+// и держим DOM/localStorage в согласованном состоянии при последующих
+// переключениях.
+const THEME_STORAGE_KEY = 'nodecalculate-theme';
+const themeStylesheetEl = document.getElementById('themeStylesheet');
+const themeSwitchEl = document.getElementById('themeSwitch');
+
+function applyTheme(theme) {
+    const isLight = theme === 'light';
+    document.documentElement.dataset.theme = isLight ? 'light' : 'dark';
+    if (themeStylesheetEl) {
+        themeStylesheetEl.setAttribute('href', isLight ? 'css/day_styles.css' : 'css/styles.css');
+    }
+    if (themeSwitchEl) themeSwitchEl.setAttribute('aria-pressed', String(isLight));
+    localStorage.setItem(THEME_STORAGE_KEY, isLight ? 'light' : 'dark');
+}
+
+themeSwitchEl?.addEventListener('click', () => {
+    const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    applyTheme(current === 'light' ? 'dark' : 'light');
+});
+// aria-pressed при старте - без пересборки href (уже верный из <head>)
+if (themeSwitchEl) {
+    themeSwitchEl.setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'light'));
+}
 
 const nodeManager = new NodeManager();
 const connectionManager = new ConnectionManager();
@@ -75,6 +114,13 @@ nodeManager.registerNodeType('percentConvert', PercentConvertNode);
 nodeManager.registerNodeType('gantt', GanttNode);
 nodeManager.registerNodeType('dashboard', DashboardNode);
 nodeManager.registerNodeType('chart', ChartNode);
+nodeManager.registerNodeType('xlsxImport', XlsxImportNode);
+nodeManager.registerNodeType('tableInject', TableInjectNode);
+nodeManager.registerNodeType('tableRemove', TableRemoveNode);
+nodeManager.registerNodeType('tableFormat', TableFormatNode);
+nodeManager.registerNodeType('tableMergeColumns', TableMergeColumnsNode);
+nodeManager.registerNodeType('tableJoin', TableJoinNode);
+nodeManager.registerNodeType('tableFilter', TableFilterNode);
 
 // Делаем доступными глобально (СРАЗУ после создания)
 window.nodeManager = nodeManager;

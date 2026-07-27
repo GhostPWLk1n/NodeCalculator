@@ -59,6 +59,11 @@ export class PercentageNode extends BaseNode {
         // восстановлено из старого проекта / дефолтом 'donut'
         this.chartType = config.chartType || 'donut';
         this.resultListData = new ListData();
+        // Мультисерийные данные (Раунд 42) - заполняется в calculate()
+        // ТОЛЬКО когда источник - ChartNode с несколькими столбцами
+        // данных (см. calculate()); null - обычный однорядный режим,
+        // рисуем через this.listData как раньше
+        this._seriesData = null;
     }
     
     createContent() {
@@ -130,7 +135,15 @@ export class PercentageNode extends BaseNode {
             min-height: 140px;
         `;
         
-        if (this.chartType === 'bar') {
+        if (this._seriesData) {
+            // Мультисерийно (Раунд 42) - несколько столбцов данных у
+            // источника (ChartNode), см. docstring класса и ChartRenderer
+            if (this.chartType === 'bar') {
+                chartDisplay.appendChild(ChartRenderer.buildMultiBarChart(this._seriesData));
+            } else {
+                chartDisplay.appendChild(ChartRenderer.buildMultiDonutChart(this._seriesData));
+            }
+        } else if (this.chartType === 'bar') {
             chartDisplay.appendChild(ChartRenderer.buildBarChart(this.listData));
         } else {
             chartDisplay.appendChild(ChartRenderer.buildDonutChart(this.listData));
@@ -138,8 +151,26 @@ export class PercentageNode extends BaseNode {
         
         chartContainer.appendChild(chartDisplay);
         
-        // Легенда (только для круговой диаграммы)
-        if (this.chartType === 'donut') {
+        // Легенда - категорий/серий при мультисерийности (см. выше),
+        // иначе как раньше (только для круговой)
+        if (this._seriesData) {
+            const legendContainer = document.createElement('div');
+            legendContainer.className = 'percentage-legend';
+            legendContainer.style.cssText = `
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px 6px;
+                justify-content: center;
+                padding: 4px 0;
+                width: 100%;
+            `;
+            if (this.chartType === 'bar') {
+                ChartRenderer.buildSeriesLegend(this._seriesData.series, legendContainer);
+            } else {
+                ChartRenderer.buildCategoryLegend(this._seriesData.categories, legendContainer);
+            }
+            chartContainer.appendChild(legendContainer);
+        } else if (this.chartType === 'donut') {
             const legendContainer = document.createElement('div');
             legendContainer.className = 'percentage-legend';
             legendContainer.style.cssText = `
@@ -164,7 +195,14 @@ export class PercentageNode extends BaseNode {
         // Ширину не фиксируем: легенда занимает 100% ширины ноды
         // и перекладывается через flex-wrap автоматически
         const legendContainer = document.querySelector(`[data-node-id="${this.id}"] .percentage-legend`);
-        if (legendContainer) {
+        if (!legendContainer) return;
+        if (this._seriesData) {
+            if (this.chartType === 'bar') {
+                ChartRenderer.buildSeriesLegend(this._seriesData.series, legendContainer);
+            } else {
+                ChartRenderer.buildCategoryLegend(this._seriesData.categories, legendContainer);
+            }
+        } else {
             ChartRenderer.buildLegend(this.listData, legendContainer);
         }
     }
@@ -184,21 +222,28 @@ export class PercentageNode extends BaseNode {
 
         let inputList = new ListData();
         let inputName = this.customTitle || 'Процентное распределение';
+        // Сбрасываем каждый пересчёт - если источник сменился на что-то
+        // однорядное (или отключился совсем), старые мультисерийные
+        // данные от предыдущего ChartNode-источника не должны остаться
+        this._seriesData = null;
 
         // === ПРИОРИТЕТ 1: у источника есть готовая таблица (Data) ===
         // "Богаче" по семантике - заголовки колонок уже явные, поэтому
         // если у источника есть и tableData, и listData - побеждает tableData.
         if (srcNode && srcNode.tableData && srcNode.tableData.columns.length > 0) {
             if (srcNode.type === 'chart') {
-                // ChartNode - двухколоночная Категория/Значение, строка =
-                // элемент диаграммы (см. TableData.toRowListData() в
-                // dataTypes.js), и именно ChartNode - источник истины для
-                // типа диаграммы (см. докстринг класса)
+                // ChartNode - двухколоночная Категория/Значение (или больше
+                // при нескольких сериях, см. TableData.toSeriesData() в
+                // dataTypes.js, Раунд 42), строка = элемент диаграммы, и
+                // именно ChartNode - источник истины для типа диаграммы
+                const seriesData = srcNode.tableData.toSeriesData();
+                this._seriesData = seriesData.series.length > 1 ? seriesData : null;
                 inputList = srcNode.tableData.toRowListData();
                 if (srcNode.tableData.metadata?.chartType) {
                     this.chartType = srcNode.tableData.metadata.chartType;
                 }
             } else {
+                this._seriesData = null;
                 inputList = srcNode.tableData.toListData();
             }
             inputName = srcNode.tableData.metadata?.title || srcNode.customName || srcNode.getDisplayName?.() || 'Таблица';
@@ -279,17 +324,29 @@ export class PercentageNode extends BaseNode {
         const chartDisplay = element.querySelector('.chart-display');
         if (chartDisplay) {
             chartDisplay.innerHTML = '';
-            if (this.chartType === 'bar') {
+            if (this._seriesData) {
+                chartDisplay.appendChild(this.chartType === 'bar'
+                    ? ChartRenderer.buildMultiBarChart(this._seriesData)
+                    : ChartRenderer.buildMultiDonutChart(this._seriesData));
+            } else if (this.chartType === 'bar') {
                 chartDisplay.appendChild(ChartRenderer.buildBarChart(this.listData));
             } else {
                 chartDisplay.appendChild(ChartRenderer.buildDonutChart(this.listData));
             }
         }
         
-        // Обновляем легенду (только для круговой)
+        // Обновляем легенду - категорий/серий при мультисерийности,
+        // иначе как раньше (только для круговой)
         const legendContainer = element.querySelector('.percentage-legend');
         if (legendContainer) {
-            if (this.chartType === 'donut') {
+            if (this._seriesData) {
+                legendContainer.style.display = 'flex';
+                if (this.chartType === 'bar') {
+                    ChartRenderer.buildSeriesLegend(this._seriesData.series, legendContainer);
+                } else {
+                    ChartRenderer.buildCategoryLegend(this._seriesData.categories, legendContainer);
+                }
+            } else if (this.chartType === 'donut') {
                 legendContainer.style.display = 'flex';
                 ChartRenderer.buildLegend(this.listData, legendContainer);
             } else {
