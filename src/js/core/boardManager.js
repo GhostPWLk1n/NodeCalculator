@@ -384,6 +384,34 @@ export class BoardManager {
         }
     }
 
+    // Раунд 47 - "выравнивание" виджета (style.align, Раунд 31) раньше
+    // ставилось ТОЛЬКО как text-align на обёртку (bodyEl) и полагалось
+    // на CSS-наследование - для простого текста этого достаточно, но НЕ
+    // работает для table/input-содержимого:
+    //   - <input> с width:100% занимает всю ширину контейнера целиком -
+    //     "центрировать" сам БОКС нечем (он уже во всю ширину), нужно
+    //     выравнивать ТЕКСТ ВНУТРИ поля - inherited text-align до него
+    //     не всегда доходит достаточно надёжно;
+    //   - <td>/<th> внутри таблиц (Список/Таблица/Итого) УЖЕ несут
+    //     СВОЙ text-align через CSS-класс (.align-right и т.п.) - более
+    //     специфичное правило класса побеждает унаследованное значение
+    //     от родителя вообще без вариантов, унаследованное там не
+    //     работает никогда, а не иногда.
+    // Поэтому: после того как render() построил содержимое, проходим по
+    // нему и переопределяем text-align НАПРЯМУЮ на найденных input/td/th -
+    // инлайн-стиль побеждает любой CSS-класс. Столбец номеров строк
+    // (.board-widget-table-num-cell) исключён - это служебная навигация,
+    // не "данные", которыми управляет align виджета.
+    _applyWidgetAlign(bodyEl, align) {
+        const value = align || 'left';
+        bodyEl.querySelectorAll('input').forEach(el => {
+            el.style.textAlign = value;
+        });
+        bodyEl.querySelectorAll('table td:not(.board-widget-table-num-cell), table th:not(.board-widget-table-num-cell)').forEach(el => {
+            el.style.textAlign = value;
+        });
+    }
+
     buildWidgetEl(widget) {
         const widgetEl = document.createElement('div');
         widgetEl.className = 'board-widget';
@@ -446,6 +474,7 @@ export class BoardManager {
         if (typeof widget.render === 'function') {
             widget.render(bodyEl);
         }
+        this._applyWidgetAlign(bodyEl, style.align);
         widgetEl.appendChild(bodyEl);
 
         // Ручки деформации по сетке - по одной на середину каждой грани,

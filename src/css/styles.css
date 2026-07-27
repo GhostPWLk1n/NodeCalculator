@@ -284,8 +284,9 @@ body {
    ============================================ */
 
 #workspace {
+    /* height - см. правило "#workspace, #boardCanvasWrap" (там же, где
+       margin-top) - один источник истины, не дублируем здесь */
     flex: 1;
-    height: 100vh;
     position: relative;
     background: var(--md-surface);
     overflow: auto;
@@ -616,9 +617,17 @@ body {
     display: none !important;
 }
 
-/* Корректируем отступ для рабочей области (теперь только одна панель) */
+/* Корректируем отступ для рабочей области (теперь только одна панель) -
+   ВАЖНО: height ниже (Раунд 47) намеренно calc(100vh - 84px), а не
+   100vh - у обоих элементов уже стоит height:100vh в их основных
+   правилах (#workspace ниже, #boardCanvasWrap в разделе "ХОЛСТ ДОСКИ") -
+   100vh ВЫСОТА + 84px ОТСТУП СВЕРХУ вместе выходят за нижнюю границу
+   реального окна на те же 84px, а body { overflow: hidden; } эту часть
+   молча обрезает - в ней помещалась часть скроллируемой области, из-за
+   чего скролл казался "укороченным"/нерабочим у самого низа страницы */
 #workspace, #boardCanvasWrap {
-    margin-top: 84px; /* 48px topbar + 36px layoutTabsBar */
+    margin-top: 84px;
+    height: calc(100vh - 84px);
 }
 
 /* Ноды layoutInput/layoutOutput: select-ы внутри ноды не должны запускать drag */
@@ -2136,8 +2145,12 @@ input[type="checkbox"].inspector-field-input {
    ============================================ */
 
 #boardCanvasWrap {
+    /* height - см. правило "#workspace, #boardCanvasWrap" (там же, где
+       margin-top) - специально НЕ дублируется здесь: этот блок идёт
+       позже в каскаде и раньше содержал СВОЙ height:100vh, который
+       побеждал более раннее правило и возвращал баг с обрезанным низом
+       страницы (см. комментарий там, Раунд 47) */
     flex: 1;
-    height: 100vh;
     overflow: auto;
     background: var(--md-surface);
 }
@@ -2145,9 +2158,23 @@ input[type="checkbox"].inspector-field-input {
 .board-canvas {
     display: flex;
     justify-content: center;
-    /* Отступ сверху - под фиксированные topbar+layoutTabsBar+boardTabsBar
-       (48+36+36px), чтобы первый виджет не оказался под ними */
-    padding: 132px 24px 40px;
+    /* align-items:flex-start (не дефолтный stretch!) - Раунд 47.
+       #boardCanvasWrap уже флекс-контейнер (см. buildWidgetEl/showBoardView),
+       а .board-canvas - его единственный ребёнок в РЯДНОМ (по умолчанию)
+       направлении - без явного align-items тут сработал бы дефолтный
+       stretch и растянул .board-page по высоте ПОД видимую область
+       (100vh) вместо того, чтобы дать ей вырасти под реальный контент -
+       именно из-за этого страница не "перерастала" высоту окна и скролл
+       казался ненужным/нерабочим, хотя данные за пределами видимой
+       области физически были. */
+    align-items: flex-start;
+    /* Раньше здесь стоял padding-top: 132px (расчёт под ТРИ фиксированные
+       панели - topbar+layoutTabsBar+boardTabsBar, ещё до их объединения
+       в Раунде 30) - #boardCanvasWrap УЖЕ отступает от них через
+       margin-top: 84px (см. это правило) сам по себе, поэтому здесь
+       нужен только небольшой отступ для "воздуха", а не повторный сдвиг
+       под те же самые панели. */
+    padding: 40px 24px;
 }
 
 .board-page {

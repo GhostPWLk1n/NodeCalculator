@@ -329,6 +329,55 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// ============================================
+// DRAG-AND-DROP ДЛЯ НОД ИЗ САЙДБАРА (Раунд 47)
+// ============================================
+// Клик по .node-item (см. onclick в index.html) по-прежнему создаёт
+// ноду в фиксированной точке - drag-and-drop это ДОПОЛНИТЕЛЬНЫЙ способ
+// разместить её ровно там, где отпустили мышь, как в большинстве
+// нод-редакторов. Тип ноды и (если есть) доп. конфиг читаются из
+// data-type/data-config самого .node-item - один и тот же источник
+// правды, что и у onclick, дублировать вручную не пришлось.
+document.querySelectorAll('.node-item').forEach(item => {
+    item.draggable = true;
+    item.addEventListener('dragstart', (e) => {
+        const type = item.dataset.type;
+        if (!type) return;
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('application/x-nodecalculate-type', type);
+        if (item.dataset.config) {
+            e.dataTransfer.setData('application/x-nodecalculate-config', item.dataset.config);
+        }
+    });
+});
+
+const nodesContainerEl = document.getElementById('nodesContainer');
+nodesContainerEl?.addEventListener('dragover', (e) => {
+    // Без preventDefault() браузер по умолчанию ЗАПРЕЩАЕТ drop - это
+    // единственная причина этого обработчика, сам по себе он ничего не делает
+    if (e.dataTransfer.types.includes('application/x-nodecalculate-type')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    }
+});
+nodesContainerEl?.addEventListener('drop', (e) => {
+    const type = e.dataTransfer.getData('application/x-nodecalculate-type');
+    if (!type) return;
+    e.preventDefault();
+
+    let config = {};
+    const configRaw = e.dataTransfer.getData('application/x-nodecalculate-config');
+    if (configRaw) {
+        try { config = JSON.parse(configRaw); } catch { /* игнорируем битый JSON, создаём с дефолтным конфигом */ }
+    }
+
+    // toContainerCoords() уже учитывает текущие зум/скролл #nodesContainer
+    // (см. её же определение выше) - ровно то же преобразование, что
+    // используется при перетаскивании самих нод по холсту
+    const { x, y } = window.toContainerCoords(e.clientX, e.clientY);
+    window.addNode(type, x, y, config);
+});
+
 window.deleteConnection = () => {
     console.log('🔗 Удаление связи');
     const conn = window.connectionManager?.contextMenuTarget;

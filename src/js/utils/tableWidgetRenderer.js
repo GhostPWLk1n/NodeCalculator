@@ -90,6 +90,15 @@ export const TableWidgetRenderer = {
         if (node.boardShowRowLines === false) el.classList.add('board-widget-table-no-row-lines');
         if (node.boardShowColumnLines) el.classList.add('board-widget-table-col-lines');
 
+        // Раунд 47 - раньше col.width (та же настройка "Ширина столбца,
+        // px", что уже применялась к TableViewerNode в графе) на Доске
+        // просто ИГНОРИРОВАЛАСЬ - таблица всегда была auto-layout, ширины
+        // столбцов подбирал браузер сам. table-layout:fixed включаем,
+        // только если хоть у одного столбца задана явная ширина - иначе
+        // (самый частый случай) поведение не меняется вообще.
+        const hasExplicitWidths = table.columns.some(col => col.width);
+        if (hasExplicitWidths) el.style.tableLayout = 'fixed';
+
         // === ШАПКА ===
         const thead = document.createElement('thead');
         const headRow = document.createElement('tr');
@@ -113,6 +122,10 @@ export const TableWidgetRenderer = {
             th.className = 'board-widget-table-sortable';
             if (col.format !== 'text') th.classList.add('align-right');
             if (col.color) th.style.color = col.color;
+            if (col.width) {
+                th.style.width = col.width + 'px';
+                th.style.maxWidth = col.width + 'px';
+            }
 
             const label = document.createElement('span');
             label.textContent = col.header;
@@ -160,6 +173,10 @@ export const TableWidgetRenderer = {
                 const hasValue = v !== undefined && v !== null && v !== '';
                 if (col.format !== 'text') td.classList.add('align-right');
                 if (col.color) td.style.color = col.color;
+                if (col.width) {
+                    td.style.width = col.width + 'px';
+                    td.style.maxWidth = col.width + 'px';
+                }
 
                 if (hasValue && col.format === 'percent') {
                     td.classList.add('board-widget-table-percent-cell');
@@ -203,6 +220,10 @@ export const TableWidgetRenderer = {
                 const td = document.createElement('td');
                 if (col.format !== 'text') td.classList.add('align-right');
                 if (col.color) td.style.color = col.color;
+                if (col.width) {
+                    td.style.width = col.width + 'px';
+                    td.style.maxWidth = col.width + 'px';
+                }
                 const agg = table.aggregate(col);
                 td.textContent = agg !== null
                     ? Helpers.formatByType(agg, col.format, col.decimals)
