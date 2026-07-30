@@ -6,7 +6,7 @@
  * @file    baseNode.js
  * @brief   Базовый класс, от которого наследуются все ноды
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

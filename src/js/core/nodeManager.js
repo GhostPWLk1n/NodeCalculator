@@ -6,7 +6,7 @@
  * @file    nodeManager.js
  * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -350,6 +350,20 @@ export class NodeManager {
                 c.sourceNodeId !== id && c.targetNodeId !== id
             );
         }
+
+        // Багфикс 1.6.1: если удаляемая нода была нодой "Дашборд" (id
+        // виджета на Доске = id ноды "Дашборд"), её виджет должен
+        // исчезнуть с Доски вместе с ней. Раньше unregisterWidgetEverywhere()
+        // вызывался ТОЛЬКО изнутри DashboardNode.calculate() - а удалённая
+        // нода больше никогда не пересчитывается, поэтому виджет оставался
+        // на Доске навсегда, застыв с последним посчитанным значением
+        // ("осиротевший" виджет - выглядело как баг проброса данных).
+        // Для любого другого типа ноды это безопасный no-op:
+        // unregisterWidgetEverywhere() на отсутствующий ключ просто
+        // ничего не находит.
+        if (window.boardManager) {
+            window.boardManager.unregisterWidgetEverywhere(id);
+        }
     }
 
     deleteNode() {
@@ -531,7 +545,22 @@ export class NodeManager {
         if (window.renderer) {
             window.renderer.updateAllDisplays();
         }
-        
+
+        // Багфикс 1.6.1: Доска перерисовывается ОДИН раз здесь, а не
+        // изнутри каждого DashboardNode.calculate() на каждый из
+        // nodes.length проходов цикла выше. Раньше при N виджетах на
+        // Доске и графе из M нод один calculateAll() (то есть одно
+        // нажатие клавиши в виджете) вызывал полную пересборку Доски до
+        // M×N раз - тот же главный поток, что обрабатывает ввод на
+        // Листе, отсюда и тормоза "и на Доске, и на Листе". Данные
+        // виджетов (board.widgets) по-прежнему пишутся из
+        // DashboardNode.calculate() на каждом проходе (это дёшево -
+        // Map.set), но сама перерисовка DOM отложена до этой единственной
+        // точки, см. boardManager.flush().
+        if (window.boardManager) {
+            window.boardManager.flush();
+        }
+
         document.getElementById('status').textContent = '✅ Вычислено';
         setTimeout(() => {
             document.getElementById('status').textContent = 'Готово';

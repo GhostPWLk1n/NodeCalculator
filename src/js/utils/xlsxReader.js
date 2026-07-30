@@ -6,7 +6,7 @@
  * @file    xlsxReader.js
  * @brief   Чтение .xlsx (ZIP + OOXML) без сторонних библиотек - только браузерные API
  * @author  Pavel Fomin
- * @version 1.5.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

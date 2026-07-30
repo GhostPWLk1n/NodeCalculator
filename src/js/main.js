@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.5.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -39,6 +39,8 @@ import { DashboardNode } from './nodes/dashboardNode.js';
 import { ChartNode } from './nodes/chartNode.js';
 import { XlsxImportNode } from './nodes/xlsxImportNode.js';
 import { JsonImportNode } from './nodes/jsonImportNode.js';
+import { ExportXlsxNode } from './nodes/exportXlsxNode.js';
+import { ExportJsonNode } from './nodes/exportJsonNode.js';
 import { ImageNode } from './nodes/imageNode.js';
 import { ProxyNode } from './nodes/proxyNode.js';
 import { TreeNode } from './nodes/treeNode.js';
@@ -141,6 +143,8 @@ nodeManager.registerNodeType('tableJoin', TableJoinNode);
 nodeManager.registerNodeType('tableFilter', TableFilterNode);
 nodeManager.registerNodeType('tableUnique', TableUniqueNode);
 nodeManager.registerNodeType('listConvert', ListConvertNode);
+nodeManager.registerNodeType('exportXlsx', ExportXlsxNode);
+nodeManager.registerNodeType('exportJson', ExportJsonNode);
 
 // Делаем доступными глобально (СРАЗУ после создания)
 window.nodeManager = nodeManager;
@@ -777,6 +781,14 @@ window.loadProject = () => {
 window.exportImage = () => {
     if (window.electron) {
         window.electron.exportImage();
+    } else {
+        console.warn('Electron API не доступен');
+    }
+};
+
+window.exportBoardPdf = () => {
+    if (window.electron) {
+        window.electron.exportBoardPdf();
     } else {
         console.warn('Electron API не доступен');
     }

@@ -171,6 +171,16 @@
                         <span class="node-name">Импорт JSON</span>
                         <span class="node-badge">Данные</span>
                     </div>
+                    <div class="node-item" data-type="exportXlsx" onclick="window.addNode('exportXlsx', 400, 300)">
+                        <span class="node-icon">📤</span>
+                        <span class="node-name">Экспорт в Excel</span>
+                        <span class="node-badge">Экспорт</span>
+                    </div>
+                    <div class="node-item" data-type="exportJson" onclick="window.addNode('exportJson', 400, 300)">
+                        <span class="node-icon">📤</span>
+                        <span class="node-name">Экспорт JSON</span>
+                        <span class="node-badge">Экспорт</span>
+                    </div>
                     <div class="node-item" data-type="tableInject" onclick="window.addNode('tableInject', 400, 300)">
                         <span class="node-icon">➕</span>
                         <span class="node-name">Инъекция в таблицу</span>
@@ -350,6 +360,9 @@
         <div id="layoutTabs" class="layout-tabs"></div>
         <!-- Панель досок (Boards) - визуализация расчётных данных, отдельно от графа вычислений -->
         <div id="boardTabs" class="layout-tabs"></div>
+        <!-- Экспорт активной Доски в PDF (1.7.0) - видима только когда
+             реально смотрим на Доску, см. boardManager.renderTabs() -->
+        <button id="exportBoardPdfBtn" class="topbar-btn icon-only" title="Экспорт Доски в PDF" style="display:none;" onclick="window.exportBoardPdf?.()">📄</button>
     </div>
 
     <!-- Контекстное меню -->

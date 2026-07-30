@@ -6,7 +6,7 @@
  * @file    preload.js
  * @brief   Electron preload-скрипт: безопасный мост IPC между main-процессом и рендерером (contextBridge)
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -30,5 +30,16 @@ contextBridge.exposeInMainWorld('electron', {
     statusUpdate: (cb) => ipcRenderer.on('status-update', cb),
     clearAll: (cb) => ipcRenderer.on('clear-all', cb),
     onExportImage: (cb) => ipcRenderer.on('export-image', cb),
-    saveImage: (data, filePath) => ipcRenderer.invoke('save-image', data, filePath)
+    saveImage: (data, filePath) => ipcRenderer.invoke('save-image', data, filePath),
+
+    // === Экспорт файла (1.7.0) - обобщённый канал: диалог "Сохранить
+    // как" + запись на диск, используется Export-нодами (Excel/JSON) и
+    // расширяемо под будущие форматы. payload:
+    //   { content, encoding: 'utf8'|'base64', suggestedName, filters }
+    // Возвращает { success, filePath } | { success:false, canceled:true }
+    // | { success:false, error }
+    exportFile: (payload) => ipcRenderer.invoke('export-file', payload),
+
+    // === Экспорт активной Доски в PDF (1.7.0) ===
+    exportBoardPdf: () => ipcRenderer.send('request-export-board-pdf')
 });

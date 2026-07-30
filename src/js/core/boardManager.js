@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.5.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -60,6 +60,32 @@ export class BoardManager {
         // нод (layoutManager.initFirstLayout выставляет свой флаг сам),
         // initFirstBoard() ниже сознательно НЕ трогает этот флаг.
         this.viewActive = false;
+
+        // Багфикс 1.6.1: registerWidget()/unregisterWidgetEverywhere()
+        // раньше рендерили Доску СРАЗУ при каждом вызове. Оба метода
+        // вызываются только изнутри DashboardNode.calculate() (плюс
+        // теперь nodeManager.deleteNodeById(), см. там) - то есть всегда
+        // либо во время nodeManager.calculateAll() (может прогнать
+        // calculate() до nodes.length раз за один вызов - при N виджетах
+        // на Доске это давало до nodes.length×N лишних пересборок DOM на
+        // одно изменение), либо непосредственно перед вызовом
+        // calculateAll(). В обоих случаях рендер безопасно отложить:
+        // оба метода теперь только помечают доску "грязной"
+        // (_dirtyBoardIds), а единственный реальный renderActiveBoard()
+        // происходит один раз в конце calculateAll() через flush() (см.
+        // nodeManager.js).
+        this._dirtyBoardIds = new Set();
+    }
+
+    // Перерисовывает активную Доску, если после предыдущего flush() в
+    // неё приходили изменения виджетов (registerWidget/
+    // unregisterWidgetEverywhere). Безопасно вызывать часто - если
+    // ничего не "грязно", ничего не делает.
+    flush() {
+        if (this._dirtyBoardIds.size === 0) return;
+        const shouldRenderActive = this._dirtyBoardIds.has(this.activeBoardId);
+        this._dirtyBoardIds.clear();
+        if (shouldRenderActive) this.renderActiveBoard();
     }
 
     // ============================================
@@ -176,19 +202,17 @@ export class BoardManager {
     // этот же widgetId со ВСЕХ досок - если нода "Дашборд" сменила
     // targetBoardId, виджет не должен остаться дублем на старой доске.
     registerWidget(boardId, widgetId, data) {
-        this.unregisterWidgetEverywhere(widgetId, false);
+        this.unregisterWidgetEverywhere(widgetId);
         const board = this.getBoard(boardId);
         if (!board) return;
         board.widgets.set(widgetId, data);
-        if (boardId === this.activeBoardId) this.renderActiveBoard();
+        this._dirtyBoardIds.add(boardId);
     }
 
-    unregisterWidgetEverywhere(widgetId, rerender = true) {
-        let touched = false;
+    unregisterWidgetEverywhere(widgetId) {
         this.boards.forEach(board => {
-            if (board.widgets.delete(widgetId)) touched = true;
+            if (board.widgets.delete(widgetId)) this._dirtyBoardIds.add(board.id);
         });
-        if (touched && rerender) this.renderActiveBoard();
     }
 
     // ============================================
@@ -199,6 +223,13 @@ export class BoardManager {
         const tabsContainer = document.getElementById('boardTabs');
         if (!tabsContainer) return;
         tabsContainer.innerHTML = '';
+
+        // Кнопка "Экспорт в PDF" (1.7.0) имеет смысл, только пока на
+        // экране действительно Доска, а не граф нод - та же логика
+        // "видимо только когда реально смотрим на это", что уже
+        // используется ниже для isActive конкретной вкладки.
+        const pdfBtn = document.getElementById('exportBoardPdfBtn');
+        if (pdfBtn) pdfBtn.style.display = this.viewActive ? '' : 'none';
 
         this.boards.forEach(board => {
             const tab = document.createElement('div');
@@ -310,11 +341,20 @@ export class BoardManager {
     // РЕНДЕР ХОЛСТА (страница, вертикальный поток виджетов)
     // ============================================
 
-    // renderActiveBoard() вызывается ОЧЕНЬ часто - в том числе на каждое
-    // нажатие клавиши в редактируемом поле виджета (Число/Список/Строка,
-    // Раунд 37): любое их изменение идёт через node.setValue()/
-    // recalculate() -> nodeManager.calculateAll() -> DashboardNode.calculate()
-    // -> registerWidget() -> renderActiveBoard() (см. dashboardNode.js).
+    // До 1.6.1 этот метод вызывался ОЧЕНЬ часто напрямую из
+    // registerWidget()/unregisterWidgetEverywhere() - на каждое нажатие
+    // клавиши в редактируемом поле виджета (Число/Список/Строка, Раунд 37)
+    // и на КАЖДЫЙ из nodes.length проходов nodeManager.calculateAll() для
+    // КАЖДОГО виджета на Доске (при N виджетах - до nodes.length×N
+    // пересборок на одно изменение, см. багфикс 1.6.1 у registerWidget()
+    // выше). Начиная с 1.6.1 registerWidget()/unregisterWidgetEverywhere()
+    // только помечают доску "грязной" (_dirtyBoardIds), а renderActiveBoard()
+    // вызывается один раз за calculateAll() - через flush() (см.
+    // nodeManager.js). Реконсиляция ниже по-прежнему нужна: при живом
+    // редактировании (пользователь печатает) flush всё равно происходит
+    // на каждое нажатие клавиши (просто один раз, а не N×M) - фокус
+    // нужно сохранять.
+    //
     // Раньше метод БЕЗУСЛОВНО делал container.innerHTML='' и пересоздавал
     // все виджеты заново - на каждое нажатие клавиши input, в который
     // печатает пользователь, уничтожался и создавался заново, теряя
@@ -375,13 +415,34 @@ export class BoardManager {
                 : this.buildWidgetEl(w)
         ));
 
+        // Багфикс (виджеты №2+ ломались при вводе). Раньше цикл ниже
+        // сверял desiredEls с ЖИВОЙ коллекцией page.children[i], которая
+        // меняется прямо по ходу того же цикла: как только перед
+        // виджетом в фокусе вставлялся/пересобирался хоть один другой
+        // виджет (i=0 обрабатывается раньше), все последующие индексы
+        // сдвигались - и на следующей итерации page.children[i] для
+        // виджета В ФОКУСЕ уже указывал не на него, из-за чего код
+        // считал, что его тоже надо "переставить" через insertBefore(),
+        // хотя он и так стоял на месте. insertBefore() на элементе,
+        // у которого прямо сейчас фокус и курсор посреди текста, сбивает
+        // ввод. Именно поэтому баг был только у виджетов НЕ на первой
+        // позиции - перед первым (i=0) сдвигов ещё не было.
+        //
+        // Фикс - сначала явно удалить из DOM только те узлы, которых
+        // нет среди desiredEls (точное сравнение ссылок, включая
+        // сфокусированный - он есть в desiredEls, поэтому не тронется).
+        // После этого "мусорных" узлов, из-за которых сдвигались индексы,
+        // не остаётся, и обычная вставка по индексу работает корректно
+        // без единого лишнего перемещения уже стоящих на месте элементов.
+        const desiredSet = new Set(desiredEls);
+        Array.from(page.children).forEach(child => {
+            if (!desiredSet.has(child)) page.removeChild(child);
+        });
+
         desiredEls.forEach((el, i) => {
             const current = page.children[i];
             if (current !== el) page.insertBefore(el, current || null);
         });
-        while (page.children.length > desiredEls.length) {
-            page.removeChild(page.lastChild);
-        }
     }
 
     // Раунд 47 - "выравнивание" виджета (style.align, Раунд 31) раньше

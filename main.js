@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Electron main-процесс: создание окна, меню, IPC-обработчики сохранения/загрузки .ncp и экспорта изображения
  * @author  Pavel Fomin
- * @version 1.4.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -221,6 +221,66 @@ ipcMain.handle('save-image', (event, data, filePath) => {
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+});
+
+// --- Экспорт файла (1.7.0) - обобщённый канал: диалог "Сохранить как"
+// + запись на диск. Используется Export-нодами (Excel/JSON, см.
+// exportXlsxNode.js/exportJsonNode.js) - payload формируется целиком в
+// рендерере (уже готовое содержимое файла), main только спрашивает путь
+// и пишет байты. encoding='base64' для бинарных форматов (.xlsx),
+// 'utf8' для текстовых (.json) - тот же приём, что уже применён у
+// save-image выше, просто обобщённый под произвольные фильтры/имена.
+ipcMain.handle('export-file', async (event, payload) => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Экспорт',
+        defaultPath: payload?.suggestedName || 'export',
+        filters: payload?.filters || [{ name: 'Все файлы', extensions: ['*'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true };
+    }
+
+    try {
+        const encoding = payload?.encoding === 'base64' ? 'base64' : 'utf8';
+        fs.writeFileSync(result.filePath, payload.content, encoding);
+        mainWindow.webContents.send('status-update', '💾 Файл сохранён');
+        return { success: true, filePath: result.filePath };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// --- Экспорт активной Доски в PDF (1.7.0) - через встроенный Electron
+// webContents.printToPDF(), а НЕ через ручную склейку canvas (тот
+// подход уже используется у "Экспорт изображения" выше и, как
+// выяснилось, там не рисует реальное содержимое нод - см. обсуждение с
+// Mr.D). printToPDF эмулирует @media print так же, как обычная печать -
+// CSS-правило в конце styles.css/day_styles.css прячет весь "хром"
+// интерфейса (сайдбар/топбар/вкладки), оставляя только #boardCanvasWrap.
+// Кнопка в рендерере видна только когда Доска реально на экране (см.
+// boardManager.renderTabs()), так что здесь дополнительно проверять
+// "а что сейчас показано" не нужно - печатается то, что видно.
+ipcMain.on('request-export-board-pdf', async () => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Экспорт Доски в PDF',
+        defaultPath: 'board.pdf',
+        filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+
+    if (result.canceled || !result.filePath) return;
+
+    try {
+        const pdfBuffer = await mainWindow.webContents.printToPDF({
+            pageSize: 'A4',
+            printBackground: true,
+            preferCSSPageSize: false
+        });
+        fs.writeFileSync(result.filePath, pdfBuffer);
+        mainWindow.webContents.send('status-update', '📄 Доска экспортирована в PDF');
+    } catch (error) {
+        dialog.showErrorBox('Ошибка экспорта PDF', error.message);
     }
 });
 

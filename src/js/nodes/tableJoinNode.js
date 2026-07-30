@@ -6,7 +6,7 @@
  * @file    tableJoinNode.js
  * @brief   Обработчик: слияние двух таблиц по ключевым столбцам с агрегацией по столбцу
  * @author  Pavel Fomin
- * @version 1.5.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

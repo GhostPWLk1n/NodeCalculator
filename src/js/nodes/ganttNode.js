@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.5.0
+ * @version 1.7.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -316,7 +316,23 @@ export class GanttNode extends BaseNode {
         // === ТЕЛО - единственная часть с собственным вертикальным скроллом ===
         const rowsWrap = document.createElement('div');
         rowsWrap.className = 'gantt-rows-scroll';
-        rowsWrap.style.cssText = 'overflow-y: auto;';
+        // Багфикс (та же причина "двойного скролла", что уже чинили в
+        // tableViewerNode.js, Раунд 47 - см. докстринг там): если
+        // overflow-y задан (auto), а overflow-x НЕ задан явно, спека CSS
+        // обязывает браузер трактовать overflow-x тоже как 'auto', а не
+        // как молчаливый 'visible'. Ширина .gantt-inner (родителя) задаётся
+        // явным пикселем (leftWidth + timelineWidth) ВЫШЕ - и rowsWrap как
+        // обычный блочный потомок обычно наследует ровно эту же ширину,
+        // но стоило контенту хоть на пиксель вылезти (длинные подписи,
+        // сетка, полоса выходных) - у rowsWrap САМОГО появлялся свой
+        // горизонтальный скролл, вторая полоса поверх внешней у
+        // .gantt-outer-scroll. overflow-x: hidden - явно, а не "молчание" -
+        // закрывает эту лазейку: горизонтальный вылет теперь ловит ТОЛЬКО
+        // внешняя обёртка, один скроллбар на всю диаграмму.
+        // scrollbar-gutter: stable - для консистентности с TableViewer,
+        // резервирует место под вертикальный скроллбар, чтобы он не
+        // сдвигал последний столбец временной шкалы.
+        rowsWrap.style.cssText = 'overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable;';
 
         if (this.tasks.length === 0) {
             const empty = document.createElement('div');

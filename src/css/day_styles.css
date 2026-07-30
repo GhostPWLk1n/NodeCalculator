@@ -1779,7 +1779,7 @@ body {
 /* Тело xlsxImportNode.js - тот же приём кнопки, что у .add-input-btn
    выше (пунктирная рамка, во всю ширину), плюс строка с именем файла
    и строка статуса импорта */
-.xlsx-pick-btn {
+.xlsx-pick-btn, .node-action-btn {
     width: 100%;
     padding: 6px 8px;
     background: rgba(0, 0, 0, 0.02);
@@ -1793,10 +1793,15 @@ body {
     transition: all 0.2s ease;
 }
 
-.xlsx-pick-btn:hover {
+.xlsx-pick-btn:hover, .node-action-btn:hover:not(:disabled) {
     background: rgba(0, 0, 0, 0.04);
     border-color: var(--md-primary);
     color: var(--md-text);
+}
+
+.node-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .xlsx-filename {
@@ -3015,4 +3020,22 @@ table.board-widget-table.board-widget-table-col-lines td {
 table.board-widget-table.board-widget-table-col-lines th:last-child,
 table.board-widget-table.board-widget-table-col-lines td:last-child {
     border-right: none;
+}
+/* ============================================
+   ЭКСПОРТ ДОСКИ В PDF (1.7.0) - парность с styles.css
+   ============================================ */
+@media print {
+    #sidebar, #topbar, #layoutTabsBar, #canvasToolbar,
+    #inspectorPanel, #contextMenu, #drag-info, #workspace {
+        display: none !important;
+    }
+    #boardCanvasWrap {
+        display: flex !important;
+        margin: 0 !important;
+        height: auto !important;
+    }
+    .board-widget, .board-widget:hover {
+        box-shadow: none !important;
+        transform: none !important;
+    }
 }
