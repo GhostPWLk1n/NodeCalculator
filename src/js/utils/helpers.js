@@ -29,6 +29,8 @@ export const Helpers = {
             if (el.classList.contains('socket-list')) return 'list';
             if (el.classList.contains('socket-string')) return 'string';
             if (el.classList.contains('socket-data')) return 'data';
+            if (el.classList.contains('socket-bool')) return 'bool';
+            if (el.classList.contains('socket-image')) return 'image';
             if (el.classList.contains('socket-any')) return 'any';
             if (el.classList.contains('socket-count')) return 'count';
         }
@@ -80,6 +82,25 @@ export const Helpers = {
      * @param {number|null} [decimals] - число знаков после запятой
      *        (null/не задано = авто)
      */
+    /**
+     * Приводит значение ЛЮБОГО типа к true/false - для столбца с
+     * форматом 'boolean' ("Логический", Раунд 56): значение в ячейке
+     * не обязательно уже булево (может быть числом из Excel-импорта,
+     * текстом "да"/"нет" и т.п.) - формат столбца ЗАЯВЛЯЕТ намерение
+     * "это логическое поле", а эта функция решает, как его читать.
+     * @param {*} value
+     * @returns {boolean}
+     */
+    coerceBool(value) {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value !== 0;
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            return ['true', '1', 'да', 'yes', 'истина'].includes(v);
+        }
+        return !!value;
+    },
+
     formatByType(value, formatId, decimals = null) {
         // Нечисловое значение (например, текстовый столбец с именами строк) -
         // форматы денег/процентов к нему неприменимы, показываем как есть

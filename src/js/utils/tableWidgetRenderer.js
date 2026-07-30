@@ -59,6 +59,9 @@ export const TableWidgetRenderer = {
             let cmp;
             if (typeof va === 'number' && typeof vb === 'number') {
                 cmp = va - vb;
+            } else if (typeof va === 'boolean' && typeof vb === 'boolean') {
+                // Раунд 49 - см. тот же приём в TableViewerNode.getRowOrder()
+                cmp = va === vb ? 0 : (va ? 1 : -1);
             } else {
                 cmp = String(va ?? '').localeCompare(String(vb ?? ''));
             }
@@ -120,7 +123,15 @@ export const TableWidgetRenderer = {
         table.columns.forEach((col, colIdx) => {
             const th = document.createElement('th');
             th.className = 'board-widget-table-sortable';
-            if (col.format !== 'text') th.classList.add('align-right');
+            // Раунд 49 - булев столбец центрируем целиком (шапка + ячейки-
+            // чекбоксы), а не оставляем шапку слева от центрированных
+            // чекбоксов - col.format у таких столбцов обычно 'text'
+            // (XlsxImportNode и т.п. не знают отдельного формата "bool"),
+            // поэтому определяем "булевость" по факту наличия булевых
+            // значений в столбце, а не по объявленному формату
+            const isBoolColumn = col.format === 'boolean' || col.values.some(v => typeof v === 'boolean');
+            if (isBoolColumn) th.style.textAlign = 'center';
+            else if (col.format !== 'text') th.classList.add('align-right');
             if (col.color) th.style.color = col.color;
             if (col.width) {
                 th.style.width = col.width + 'px';
@@ -171,6 +182,11 @@ export const TableWidgetRenderer = {
                 const td = document.createElement('td');
                 const v = col.values[srcRowIndex];
                 const hasValue = v !== undefined && v !== null && v !== '';
+                // Раунд 56 - не только "значение УЖЕ булево" (typeof), но
+                // и "столбец ЯВНО объявлен логическим" (col.format ===
+                // 'boolean', TableFormatNode) - см. тот же приём в
+                // tableViewerNode.js
+                const isBoolValue = typeof v === 'boolean' || col.format === 'boolean';
                 if (col.format !== 'text') td.classList.add('align-right');
                 if (col.color) td.style.color = col.color;
                 if (col.width) {
@@ -178,7 +194,18 @@ export const TableWidgetRenderer = {
                     td.style.maxWidth = col.width + 'px';
                 }
 
-                if (hasValue && col.format === 'percent') {
+                if (isBoolValue) {
+                    // Раунд 49 - см. тот же приём и докстринг в
+                    // tableViewerNode.js - чекбокс вместо текста "true"/"false"
+                    td.classList.remove('align-right');
+                    td.style.textAlign = 'center';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'table-cell-checkbox';
+                    checkbox.checked = hasValue ? Helpers.coerceBool(v) : false;
+                    checkbox.disabled = true;
+                    td.appendChild(checkbox);
+                } else if (hasValue && col.format === 'percent') {
                     td.classList.add('board-widget-table-percent-cell');
                     const pct = Math.max(0, Math.min(100, v));
                     const bar = document.createElement('div');

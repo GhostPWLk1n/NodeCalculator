@@ -17,7 +17,7 @@ export const Constants = {
     // "sidebarVersion">, а текст в него пишет main.js при старте (см.
     // инициализацию там) - обновлять нужно только это значение, одно
     // место на весь проект.
-    APP_VERSION: '1.5.0',
+    APP_VERSION: '1.6.0',
 
     NODE_TYPES: {
         NUMBER: 'number',
@@ -29,6 +29,12 @@ export const Constants = {
     
     TYPE_NAMES: {
         number: 'Число',
+        boolean: 'Булево',
+        booleanOp: 'Логическая операция',
+        image: 'Изображение',
+        tree: 'Дерево',
+        treeFormat: 'Оформление дерева',
+        treeViewer: 'Просмотр дерева',
         add: 'Сложение',
         subtract: 'Вычитание',
         multiply: 'Умножение',
@@ -44,6 +50,9 @@ export const Constants = {
         tableMergeColumns: 'Объединение столбцов',
         tableJoin: 'Слияние таблиц',
         tableFilter: 'Отсеять',
+        tableUnique: 'Найти уникальные',
+        listConvert: 'Преобразование списка',
+        jsonImport: 'Импорт JSON',
         percentage: 'Просмотр диаграммы',
         gantt: 'Диаграмма Ганта',
         dashboard: 'Дашборд'
@@ -57,7 +66,7 @@ export const Constants = {
     // по списку, а не безусловное "true", даёт задел на будущее: если
     // когда-нибудь понадобится "any", который принимает не всё подряд,
     // а конкретное подмножество - меняется только этот список).
-    SOCKET_KINDS: ['list', 'string', 'data', 'plain', 'count'],
+    SOCKET_KINDS: ['list', 'string', 'data', 'plain', 'count', 'bool', 'image'],
 
     // Система бейджей (см. baseNode.js getStaticBadges/addBadge/getActiveBadge) -
     // короткая плашка над нодой: error/warning/beta/deprecated/info.

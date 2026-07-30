@@ -3,8 +3,8 @@
  * SPDX-FileCopyrightText: 2024 NodeCalculate Team
  * SPDX-FileCopyrightText: 2024 Pavel Fomin
  *
- * @file    tableFormatNode.js
- * @brief   Обработчик: применяет оформление (формат/ширина/итог/цвет/зебра/линии) к любой Data-таблице
+ * @file    treeFormatNode.js
+ * @brief   Обработчик: оформление свода "Дерева" (формат/ширина/цвет полей), с сохранением иерархии
  * @author  Pavel Fomin
  * @version 1.5.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
@@ -16,31 +16,22 @@ import { SocketFactory } from '../utils/socketFactory.js';
 import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
 
 /**
- * TableFormatNode ("Оформление таблицы") - Раунд 44. До этого раунда
- * оформление (формат/ширина/знаки/итог/цвет столбца, зебра, линии) жило
- * ПРЯМО в TableInjectNode/TableRemoveNode (Раунд 43) - но это захламляло
- * операционные ноды настройками, вообще не относящимися к их основной
- * задаче (вставить/удалить строки). Mr.D верно предложил разделить -
- * теперь оформление живёт в ОТДЕЛЬНОЙ ноде, подключаемой ПОСЛЕ любой
- * Data-ноды (TableNode, ChartNode, XlsxImportNode, TableInjectNode,
- * TableRemoveNode - какой угодно источник Data), а не встроено в каждую
- * из них по отдельности.
+ * TreeFormatNode ("Оформление дерева") - Раунд 56, план 1.6.0 п.8 (по
+ * просьбе Mr.D - "сделать по примеру таблиц"). Практически то же самое,
+ * что `TableFormatNode` (Раунд 44) - формат/ширина/знаки/итог/цвет по
+ * каждому полю - но специально для `TreeNode`: КРОМЕ плоского свода
+ * (`this.tableData`, тот же формат, что у любой другой Data-ноды) ещё и
+ * ПРОКИДЫВАЕТ `this.branches` от источника без изменений - иначе
+ * `TreeViewerNode`, подключённый ПОСЛЕ этой ноды, потерял бы доступ к
+ * самой иерархии (branches хранит ссылки на ноды-ветки, а не просто
+ * цифры - см. докстринг treeNode.js) и не смог бы её рекурсивно
+ * отрисовать.
  *
- * Один вход (Data), один выход (та же таблица + оформление). Строки/
- * значения НЕ меняются - меняется только то, КАК таблица показывается
- * (формат числа, ширина столбца на Доске, строка "Итого", цвет столбца,
- * зебра/линии у самого виджета). Столбцы сопоставляются ПО ПОЗИЦИИ - тот
- * же принцип, что у TableInjectNode (см. её докстринг): переопределения
- * (this.columnStyles) синхронизируются по длине с текущим набором
- * столбцов на каждый calculate().
- *
- * Выход - Data (ромб, оранжевый), та же порода, что у остальных
- * табличных нод - подключается куда угодно, что понимает Data, включая
- * ноду "Дашборд" (виджет Доски - см. getDashboardWidget() ниже, код
- * общий с TableNode/TableInjectNode/TableRemoveNode, см.
- * utils/tableWidgetRenderer.js).
+ * Столбцы для оформления - берутся из `srcNode.tableData.columns` (те
+ * же совпавшие поля, что уже посчитал `TreeNode`) - "Ветка" (имя) не
+ * входит в список оформляемых полей, это служебный столбец.
  */
-export class TableFormatNode extends BaseNode {
+export class TreeFormatNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
         this.inputs = 1;
@@ -50,14 +41,16 @@ export class TableFormatNode extends BaseNode {
 
         this._sourceName = null;
         this.tableData = new TableData();
+        this.branches = []; // проброс от источника - см. докстринг класса
 
-        // Переопределения оформления ПО СТОЛБЦУ - формат/ширина/знаки/
-        // итог/цвет, синхронизируется по длине с текущим набором столбцов
-        // на каждый calculate() (см. _applyColumnStyles() ниже). Индекс
-        // массива = индекс столбца входной (= выходной) таблицы.
+        // Переопределения оформления ПО ПОЛЮ (индекс = индекс столбца
+        // ПОСЛЕ служебного "Ветка", т.е. 0 = первое совпавшее поле) -
+        // тот же принцип, что у TableFormatNode.columnStyles
         this.columnStyles = Array.isArray(config.columnStyles) ? config.columnStyles : [];
 
-        // Виджет Доски (Раунды 35/42/44, см. TableWidgetRenderer)
+        // Виджет Доски (см. utils/tableWidgetRenderer.js) - показывает
+        // ПЛОСКИЙ свод (как TableFormatNode) - для показа именно
+        // ИЕРАРХИИ на Доске понадобится отдельная задача, не в этом раунде
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
@@ -75,7 +68,7 @@ export class TableFormatNode extends BaseNode {
         inRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
         const inSocket = SocketFactory.createSocket({
             nodeId: this.id, socketType: 'input', index: 0, isData: true,
-            title: 'Таблица, которую оформляем'
+            title: 'Дерево, которое оформляем'
         });
         inRow.appendChild(inSocket);
         const sourceLabel = document.createElement('span');
@@ -89,7 +82,7 @@ export class TableFormatNode extends BaseNode {
         hintRow.style.cssText = 'padding-left:20px;';
         const hint = document.createElement('span');
         hint.style.cssText = 'color:var(--md-text-disabled); font-size:10px;';
-        hint.textContent = '→ формат/ширина/итог/цвет/зебра — в панели справа';
+        hint.textContent = '→ формат/ширина/итог/цвет по полям — в панели справа';
         hintRow.appendChild(hint);
         content.appendChild(hintRow);
 
@@ -108,7 +101,7 @@ export class TableFormatNode extends BaseNode {
         outRow.appendChild(outLabel);
         const outSocket = SocketFactory.createSocket({
             nodeId: this.id, socketType: 'output', index: 0, isData: true,
-            title: 'Та же таблица с применённым оформлением'
+            title: 'Дерево с применённым оформлением (иерархия сохранена)'
         });
         outRow.appendChild(outSocket);
         content.appendChild(outRow);
@@ -116,12 +109,9 @@ export class TableFormatNode extends BaseNode {
         return content;
     }
 
-    // Накладывает переопределения из панели (this.columnStyles) поверх
-    // столбцов входной таблицы - формат/ширина/знаки/итог/цвет.
-    // Синхронизирует длину массива с текущим набором столбцов: лишние
-    // обрезаются, недостающие добавляются пустыми - вызывается в конце
-    // calculate(). Тот же приём, что раньше был у TableInjectNode/
-    // TableRemoveNode (Раунд 43), до переноса сюда (Раунд 44).
+    // Тот же приём, что и в TableFormatNode._applyColumnStyles() -
+    // синхронизация по длине, лишнее обрезается, недостающее добавляется
+    // пустыми
     _applyColumnStyles(columns) {
         while (this.columnStyles.length < columns.length) {
             this.columnStyles.push({ formatOverride: null, width: null, decimals: null, totalType: null, color: null });
@@ -148,6 +138,9 @@ export class TableFormatNode extends BaseNode {
         const srcNode = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
 
         this._sourceName = srcNode ? (srcNode.customName || srcNode.getDisplayName?.() || 'источник') : null;
+        // Проброс иерархии - см. докстринг класса. Пустой массив, если
+        // источник не подключён или не несёт branches (не "Дерево")
+        this.branches = Array.isArray(srcNode?.branches) ? srcNode.branches : [];
 
         const baseTable = (srcNode && srcNode.tableData && srcNode.tableData.columns.length > 0)
             ? srcNode.tableData
@@ -170,11 +163,8 @@ export class TableFormatNode extends BaseNode {
         return this.value;
     }
 
-    // Виджет Доски (см. dashboardNode.js/boardManager.js) - та же
-    // интерактивная таблица, что у остальных табличных нод (номера
-    // строк, сортировка, итоги, зебра/линии, цвет столбцов) - код общий,
-    // см. utils/tableWidgetRenderer.js. Это ЕДИНСТВЕННАЯ табличная нода,
-    // у которой зебра/линии настраиваются - см. докстринг класса.
+    // Виджет Доски - плоский свод, код общий с остальными табличными
+    // нодами (см. utils/tableWidgetRenderer.js)
     getDashboardWidget() {
         const node = this;
         return {
@@ -194,11 +184,11 @@ export class TableFormatNode extends BaseNode {
     getInspectorSchema() {
         const fields = super.getInspectorSchema();
 
-        fields.push({ type: 'section', label: 'Оформление по столбцу' });
+        fields.push({ type: 'section', label: 'Оформление по полю' });
 
         this.columnStyles.forEach((style, i) => {
             const header = this.tableData.columns[i]?.header;
-            fields.push({ type: 'section', label: `Столбец ${i + 1}${header ? ' — ' + header : ''}` });
+            fields.push({ type: 'section', label: `Поле ${i + 1}${header ? ' — ' + header : ''}` });
 
             fields.push({
                 key: `colStyle${i}_format`,
@@ -232,7 +222,7 @@ export class TableFormatNode extends BaseNode {
 
             fields.push({
                 key: `colStyle${i}_width`,
-                label: 'Ширина столбца, px',
+                label: 'Ширина поля, px',
                 type: 'number',
                 min: 30, step: 5,
                 get: () => style.width,
@@ -250,15 +240,14 @@ export class TableFormatNode extends BaseNode {
 
             fields.push({
                 key: `colStyle${i}_color`,
-                label: 'Цвет столбца (шапка/значения на Доске)',
+                label: 'Цвет поля (шапка/значения на Доске)',
                 type: 'color',
                 get: () => style.color,
                 set: (v) => { style.color = v; }
             });
         });
 
-        // Оформление виджета на Доске целиком (см. TableWidgetRenderer)
-        fields.push({ type: 'section', label: 'Оформление на Доске' });
+        fields.push({ type: 'section', label: 'Оформление на Доске (плоский свод)' });
 
         fields.push({
             key: 'boardZebra',

@@ -240,6 +240,8 @@ export class ConnectionManager {
                         list: 'LIST (список)',
                         string: 'String (строка)',
                         data: 'Data (таблица)',
+                        bool: 'Bool (истина/ложь)',
+                        image: 'Image (изображение)',
                         plain: 'числовому',
                         any: 'универсальному'
                     };

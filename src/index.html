@@ -50,6 +50,17 @@
         <!-- Прокручиваемая область со всеми разделами нод -->
         <div class="sidebar-scroll">
             <div class="sidebar-section">
+                <div class="section-title">🧩 Служебные</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="proxy" onclick="window.addNode('proxy', 300, 200)">
+                        <span class="node-icon">⚪</span>
+                        <span class="node-name">Точка</span>
+                        <span class="node-badge">Служебная</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
                 <div class="section-title">📊 Входные данные</div>
                 <div class="node-list">
                     <div class="node-item" data-type="number" onclick="window.addNode('number', 300, 200)">
@@ -65,6 +76,16 @@
                     <div class="node-item" data-type="string" onclick="window.addNode('string', 300, 200)">
                         <span class="node-icon">🔤</span>
                         <span class="node-name">Строка</span>
+                        <span class="node-badge">Ввод</span>
+                    </div>
+                    <div class="node-item" data-type="boolean" onclick="window.addNode('boolean', 300, 200)">
+                        <span class="node-icon">🔘</span>
+                        <span class="node-name">Булево</span>
+                        <span class="node-badge">Ввод</span>
+                    </div>
+                    <div class="node-item" data-type="image" onclick="window.addNode('image', 300, 200)">
+                        <span class="node-icon">🖼️</span>
+                        <span class="node-name">Изображение</span>
                         <span class="node-badge">Ввод</span>
                     </div>
                 </div>
@@ -93,6 +114,11 @@
                         <span class="node-name">Деление</span>
                         <span class="node-badge">Операция</span>
                     </div>
+                    <div class="node-item" data-type="booleanOp" onclick="window.addNode('booleanOp', 400, 300)">
+                        <span class="node-icon">🔀</span>
+                        <span class="node-name">Логическая операция</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                 </div>
             </div>
 
@@ -114,6 +140,11 @@
                         <span class="node-name">Диаграмма Ганта</span>
                         <span class="node-badge">Операция</span>
                     </div>
+                    <div class="node-item" data-type="listConvert" onclick="window.addNode('listConvert', 400, 300)">
+                        <span class="node-icon">🔀</span>
+                        <span class="node-name">Преобразование списка</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                 </div>
             </div>
             
@@ -133,6 +164,11 @@
                     <div class="node-item" data-type="xlsxImport" onclick="window.addNode('xlsxImport', 400, 300)">
                         <span class="node-icon">📥</span>
                         <span class="node-name">Импорт из Excel</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="jsonImport" onclick="window.addNode('jsonImport', 400, 300)">
+                        <span class="node-icon">📄</span>
+                        <span class="node-name">Импорт JSON</span>
                         <span class="node-badge">Данные</span>
                     </div>
                     <div class="node-item" data-type="tableInject" onclick="window.addNode('tableInject', 400, 300)">
@@ -165,6 +201,16 @@
                         <span class="node-name">Отсеять</span>
                         <span class="node-badge">Данные</span>
                     </div>
+                    <div class="node-item" data-type="tableUnique" onclick="window.addNode('tableUnique', 400, 300)">
+                        <span class="node-icon">✨</span>
+                        <span class="node-name">Найти уникальные</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="tree" onclick="window.addNode('tree', 400, 300)">
+                        <span class="node-icon">🌳</span>
+                        <span class="node-name">Дерево</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
                 </div>
             </div>
 
@@ -184,6 +230,11 @@
                     <div class="node-item" data-type="tableViewer" onclick="window.addNode('tableViewer', 400, 300)">
                         <span class="node-icon">🔍</span>
                         <span class="node-name">Просмотр таблицы</span>
+                        <span class="node-badge">Viewer</span>
+                    </div>
+                    <div class="node-item" data-type="treeViewer" onclick="window.addNode('treeViewer', 400, 300)">
+                        <span class="node-icon">🗂️</span>
+                        <span class="node-name">Просмотр дерева</span>
                         <span class="node-badge">Viewer</span>
                     </div>
                 </div>
@@ -213,6 +264,11 @@
                         <span class="node-name">Дашборд</span>
                         <span class="node-badge">Board</span>
                     </div>
+                    <div class="node-item" data-type="treeFormat" onclick="window.addNode('treeFormat', 400, 300)">
+                        <span class="node-icon">🎨</span>
+                        <span class="node-name">Оформление дерева</span>
+                        <span class="node-badge">Board</span>
+                    </div>
                 </div>
             </div>
 
@@ -231,6 +287,20 @@
 
     <!-- Рабочая область -->
     <div id="workspace">
+        <!-- Панель инструментов холста (Раунд 54, поправлена в Раунде 56 -
+             позиция и ориентация, план 1.6.0 п.1) - вертикально, как в
+             Blender, прижата к правому краю сайдбара (см. left:288px в
+             styles.css - раньше left:16px попадал внутрь самого сайдбара,
+             и панель была не видна, перекрыта им). Специально ВНУТРИ
+             #workspace, а не отдельным фиксированным элементом где-то ещё -
+             #workspace целиком прячется при переключении на Доску
+             (boardManager.js), и вместе с ним прячется панель, без
+             отдельной синхронизации видимости в JS. -->
+        <div id="canvasToolbar" class="canvas-toolbar">
+            <button class="canvas-tool-btn" id="toolCutConnections" title="Обрезать связи - протяните через провода, чтобы разорвать">✂️</button>
+            <button class="canvas-tool-btn" id="toolAddProxy" title="Добавить точку - кликните на холсте, чтобы разместить">⚪</button>
+            <button class="canvas-tool-btn" id="toolMarqueeSelect" title="Выделение рамкой - протяните рамку, чтобы выделить несколько нод для одновременного перемещения">🔲</button>
+        </div>
         <div class="nodes-container" id="nodesContainer">
             <!-- Сюда будут добавляться ноды -->
         </div>
@@ -251,6 +321,14 @@
             <button onclick="window.calculateAll()" class="topbar-btn primary" title="Пересчитать">🔄<span class="btn-label">Вычислить</span></button>
             <button onclick="window.saveProject?.()" class="topbar-btn" title="Сохранить проект">💾<span class="btn-label">Сохранить</span></button>
             <button onclick="window.loadProject?.()" class="topbar-btn" title="Загрузить проект">📂<span class="btn-label">Загрузить</span></button>
+        </div>
+
+        <div class="topbar-history">
+            <!-- Undo/Redo (план 1.6.0, п.4) - кнопки на месте, но пока
+                 намеренно не подключены (disabled) - см. комментарий в
+                 styles.css, .topbar-btn:disabled -->
+            <button class="topbar-btn icon-only" title="Отменить - появится в одной из следующих версий" disabled>↶</button>
+            <button class="topbar-btn icon-only" title="Повторить - появится в одной из следующих версий" disabled>↷</button>
         </div>
 
         <div class="topbar-zoom">

@@ -16,7 +16,7 @@
 // ниже). Один список на всех, чтобы не повторять его в каждой строке.
 const TABLE_WIDGET_TYPES = [
     'table', 'tableInject', 'tableRemove', 'tableFormat',
-    'tableMergeColumns', 'tableJoin', 'tableFilter'
+    'tableMergeColumns', 'tableJoin', 'tableFilter', 'tableUnique', 'tree', 'treeFormat', 'jsonImport'
 ];
 
 export class LayoutManager {
@@ -244,11 +244,12 @@ export class LayoutManager {
                     scaleValue: n.scaleValue,
                     sourceLayoutId: n.sourceLayoutId,
                     sourceNodeId: n.sourceNodeId,
-                    items: n.type === 'listInput' && n.items
+                    items: ['listInput', 'listConvert'].includes(n.type) && n.items
                         ? n.items.map(i => ({ name: i.name, value: i.value }))
                         : undefined,
                     nameColumnWidth: n.type === 'listInput' ? n.nameColumnWidth : undefined,
                     valueColumnWidth: n.type === 'listInput' ? n.valueColumnWidth : undefined,
+                    dataType: n.type === 'listInput' ? n.dataType : undefined,
                     // Формат отображения значения (см. BaseNode.getValueFormat) -
                     // необязателен, выставляется явно только теми нодами,
                     // которым это важно
@@ -270,12 +271,13 @@ export class LayoutManager {
                     boardShowRowNumbers: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardShowRowNumbers : undefined,
                     boardSortColumn: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortColumn : undefined,
                     boardSortDirection: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortDirection : undefined,
-                    // Зебра/линии (Раунд 44) - ТОЛЬКО у TableFormatNode -
-                    // остальные табличные ноды намеренно не хламятся
-                    // оформлением, см. докстринг tableFormatNode.js
-                    boardZebra: n.type === 'tableFormat' ? n.boardZebra : undefined,
-                    boardShowRowLines: n.type === 'tableFormat' ? n.boardShowRowLines : undefined,
-                    boardShowColumnLines: n.type === 'tableFormat' ? n.boardShowColumnLines : undefined,
+                    // Зебра/линии (Раунд 44, расширено на TreeFormatNode в
+                    // Раунде 56) - ТОЛЬКО у "форматирующих" нод -
+                    // остальные табличные/древесные ноды намеренно не
+                    // хламятся оформлением, см. докстринг tableFormatNode.js
+                    boardZebra: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardZebra : undefined,
+                    boardShowRowLines: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardShowRowLines : undefined,
+                    boardShowColumnLines: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardShowColumnLines : undefined,
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
                     sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
@@ -312,24 +314,44 @@ export class LayoutManager {
                     // xlsxImportNode.js) - после загрузки проекта нужно заново
                     // выбрать файл, чтобы сменить лист/столбцы, но сам импорт
                     // переживает сохранение/загрузку как обычные данные ноды
-                    fileName: n.type === 'xlsxImport' ? n.fileName : undefined,
+                    // fileName - ОБЩИЙ ключ на XlsxImportNode и ImageNode
+                    // (оба "выбор файла", оба хранят его имя) - ОДНА
+                    // строка с объединённым условием, а не две отдельные
+                    // с одинаковым ключом: JS в object-литерале молча
+                    // берёт ПОСЛЕДНЕЕ значение при дублировании ключа -
+                    // ровно та ловушка, что уже один раз ловилась на
+                    // wrapHeight (см. комментарий у него ниже)
+                    fileName: ['xlsxImport', 'image', 'jsonImport'].includes(n.type) ? n.fileName : undefined,
                     selectedSheet: n.type === 'xlsxImport' ? n.selectedSheet : undefined,
                     selectedColumns: n.type === 'xlsxImport' ? [...n.selectedColumns] : undefined,
                     headerRow: n.type === 'xlsxImport' ? n.headerRow : undefined,
                     importedHeaders: n.type === 'xlsxImport' ? [...n.importedHeaders] : undefined,
                     importedRows: n.type === 'xlsxImport' ? n.importedRows.map(r => [...r]) : undefined,
 
+                    // ImageNode: сама картинка целиком (base64 data URL) -
+                    // см. докстринг imageNode.js про то, почему тут (в
+                    // отличие от XlsxImportNode) сериализуются именно
+                    // сырые данные файла, а не какой-то разобранный результат
+                    // (fileName - см. общий ключ выше, у selectedSheet и т.п.)
+                    dataUrl: n.type === 'image' ? n.dataUrl : undefined,
+                    objectFit: n.type === 'image' ? n.objectFit : undefined,
+
+                    // JsonImportNode: сырой текст файла целиком (тот же
+                    // принцип, что у ImageNode.dataUrl выше - см. докстринг
+                    // jsonImportNode.js, fileName - общий ключ выше)
+                    jsonText: n.type === 'jsonImport' ? n.jsonText : undefined,
+
                     // TableInjectNode: операция вставки + номер строки
-                    operation: (n.type === 'tableInject' || n.type === 'tableRemove') ? n.operation : undefined,
+                    operation: ['tableInject', 'tableRemove', 'booleanOp'].includes(n.type) ? n.operation : undefined,
                     rowIndex: (n.type === 'tableInject' || n.type === 'tableRemove') ? n.rowIndex : undefined,
                     // TableRemoveNode: доп. параметры для режимов "Диапазон"/"Первые N"/"Последние N"
                     rangeStart: n.type === 'tableRemove' ? n.rangeStart : undefined,
                     rangeEnd: n.type === 'tableRemove' ? n.rangeEnd : undefined,
                     count: n.type === 'tableRemove' ? n.count : undefined,
-                    // TableFormatNode: переопределения оформления по столбцу
-                    // (формат/ширина/знаки/итог/цвет) - см. докстринг
-                    // this.columnStyles в конструкторе, tableFormatNode.js
-                    columnStyles: n.type === 'tableFormat' && n.columnStyles
+                    // TableFormatNode/TreeFormatNode: переопределения
+                    // оформления по столбцу/полю (формат/ширина/знаки/итог/
+                    // цвет) - см. докстринг this.columnStyles в конструкторах
+                    columnStyles: ['tableFormat', 'treeFormat'].includes(n.type) && n.columnStyles
                         ? n.columnStyles.map(s => ({ ...s }))
                         : undefined,
 
@@ -358,6 +380,41 @@ export class LayoutManager {
                     // tableFilterNode.js - список значений или сравнение)
                     columnFilters: n.type === 'tableFilter' && n.columnFilters
                         ? [...n.columnFilters]
+                        : undefined,
+
+                    // TableUniqueNode: ключевой столбец + include/агрегация
+                    // по каждому остальному столбцу - см. докстринг
+                    // tableUniqueNode.js
+                    keyColumn: n.type === 'tableUnique' ? n.keyColumn : undefined,
+                    columnConfig: n.type === 'tableUnique' && n.columnConfig
+                        ? n.columnConfig.map(c => ({ ...c }))
+                        : undefined,
+
+                    // ListConvertNode: режим преобразования + выбранные
+                    // столбцы + сигнатура последнего преобразования (чтобы
+                    // после загрузки проекта не пересобрать список заново
+                    // поверх сохранённых ручных правок при первом же
+                    // calculate()) - см. докстринг listConvertNode.js
+                    mode: n.type === 'listConvert' ? n.mode : undefined,
+                    singleColumn: n.type === 'listConvert' ? n.singleColumn : undefined,
+                    pairNameColumn: n.type === 'listConvert' ? n.pairNameColumn : undefined,
+                    pairValueColumn: n.type === 'listConvert' ? n.pairValueColumn : undefined,
+                    _lastConversionSignature: n.type === 'listConvert' ? n._lastConversionSignature : undefined,
+
+                    // TreeNode: имена веток (по индексу входа) + агрегация
+                    // по каждому совпавшему полю (по имени заголовка) -
+                    // см. докстринг treeNode.js
+                    branchNames: n.type === 'tree' && n.branchNames
+                        ? { ...n.branchNames }
+                        : undefined,
+                    columnAggregation: n.type === 'tree' && n.columnAggregation
+                        ? { ...n.columnAggregation }
+                        : undefined,
+
+                    // TreeViewerNode: какие ветки свёрнуты (путь узла -> false) -
+                    // см. докстринг treeViewerNode.js
+                    expandedState: n.type === 'treeViewer' && n.expandedState
+                        ? { ...n.expandedState }
                         : undefined
                 }))
             }))

@@ -217,6 +217,13 @@ export class TableViewerNode extends BaseNode {
             let cmp;
             if (typeof va === 'number' && typeof vb === 'number') {
                 cmp = va - vb;
+            } else if (typeof va === 'boolean' && typeof vb === 'boolean') {
+                // Раунд 49 - раньше это тоже падало в ветку ниже
+                // (String(true).localeCompare(String(false))) - работало
+                // только по случайному совпадению ("false" < "true"
+                // алфавитно), явное сравнение надёжнее и не зависит от
+                // того, как называются булевы значения в других языках
+                cmp = va === vb ? 0 : (va ? 1 : -1);
             } else {
                 cmp = String(va ?? '').localeCompare(String(vb ?? ''));
             }
@@ -285,8 +292,15 @@ export class TableViewerNode extends BaseNode {
         this.tableData.columns.forEach((col, colIdx) => {
             const isText = col.format === 'text';
             const isSortActive = this.sortColumnIndex === colIdx;
+            // Раунд 49 - см. тот же приём в TableWidgetRenderer - булев
+            // столбец определяем по факту булевых значений в нём (не по
+            // col.format, обычно 'text' для таких столбцов), и центрируем
+            // шапку, чтобы она не "убегала" влево от центрированных
+            // чекбоксов-ячеек под ней
+            const isBoolColumn = col.format === 'boolean' || col.values.some(v => typeof v === 'boolean');
+            const justify = isBoolColumn ? 'center' : (isText ? 'flex-start' : 'flex-end');
 
-            const th = this.buildCell(colWidths[colIdx], isText ? 'left' : 'right', `
+            const th = this.buildCell(colWidths[colIdx], isBoolColumn ? 'center' : (isText ? 'left' : 'right'), `
                 padding: 4px 8px 4px 4px;
                 color: var(--md-text-secondary);
                 font-weight: 500;
@@ -294,7 +308,7 @@ export class TableViewerNode extends BaseNode {
                 cursor: pointer;
                 display: flex;
                 align-items: center;
-                justify-content: ${isText ? 'flex-start' : 'flex-end'};
+                justify-content: ${justify};
                 gap: 4px;
             `);
             th.title = col.header;
@@ -345,6 +359,7 @@ export class TableViewerNode extends BaseNode {
         const numCell = this.buildCell(numColWidth, 'right', `
             padding: 3px 6px;
             color: var(--md-text-disabled);
+            font-size: 9px;
             font-variant-numeric: tabular-nums;
             visibility: ${this.showRowNumbers ? 'visible' : 'hidden'};
         `);
@@ -356,9 +371,15 @@ export class TableViewerNode extends BaseNode {
             const isText = col.format === 'text';
             const v = col.values[srcRowIndex];
             const hasValue = v !== undefined && v !== null && v !== '';
+            // Раунд 56 - не только "значение УЖЕ булево" (typeof), но и
+            // "столбец ЯВНО объявлен логическим" (col.format === 'boolean',
+            // TableFormatNode) - тогда чекбоксом рисуем ЛЮБОЕ значение,
+            // приведённое к true/false через Helpers.coerceBool() (число
+            // 0/1, текст "да"/"нет" и т.п. - не только настоящий JS-bool)
+            const isBoolValue = typeof v === 'boolean' || col.format === 'boolean';
             const isStripe = displayIndex % 2 === 0;
 
-            const cell = this.buildCell(colWidths[colIdx], isText ? 'left' : 'right', `
+            const cell = this.buildCell(colWidths[colIdx], isBoolValue ? 'center' : (isText ? 'left' : 'right'), `
                 position: relative;
                 padding: 3px 10px 3px 4px;
                 color: var(--md-text);
@@ -367,7 +388,21 @@ export class TableViewerNode extends BaseNode {
                 ${isStripe ? 'background: rgba(255,255,255,0.02);' : ''}
             `);
 
-            if (hasValue && col.format === 'percent') {
+            if (isBoolValue) {
+                // Раунд 49 - булево значение показываем чекбоксом, а не
+                // текстом "true"/"false" (Helpers.formatByType просто
+                // делает String(v) для нечисловых значений - для bool
+                // это буквально "true"/"false", нечитаемо на глаз рядом
+                // с остальными столбцами). Только просмотр - таблица тут
+                // обычно уже вычисленный/импортированный результат, а не
+                // прямой пользовательский ввод.
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'table-cell-checkbox';
+                checkbox.checked = hasValue ? Helpers.coerceBool(v) : false;
+                checkbox.disabled = true;
+                cell.appendChild(checkbox);
+            } else if (hasValue && col.format === 'percent') {
                 const pct = Math.max(0, Math.min(100, v));
                 const bar = document.createElement('div');
                 bar.className = 'table-viewer-cell-bar';
@@ -381,12 +416,17 @@ export class TableViewerNode extends BaseNode {
                     z-index: 0;
                 `;
                 cell.appendChild(bar);
-            }
 
-            const textSpan = document.createElement('span');
-            textSpan.style.cssText = 'position: relative; z-index: 1;';
-            textSpan.textContent = hasValue ? Helpers.formatByType(v, col.format, col.decimals) : '—';
-            cell.appendChild(textSpan);
+                const textSpan = document.createElement('span');
+                textSpan.style.cssText = 'position: relative; z-index: 1;';
+                textSpan.textContent = Helpers.formatByType(v, col.format, col.decimals);
+                cell.appendChild(textSpan);
+            } else {
+                const textSpan = document.createElement('span');
+                textSpan.style.cssText = 'position: relative; z-index: 1;';
+                textSpan.textContent = hasValue ? Helpers.formatByType(v, col.format, col.decimals) : '—';
+                cell.appendChild(textSpan);
+            }
 
             row.appendChild(cell);
         });

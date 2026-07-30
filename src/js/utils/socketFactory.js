@@ -47,17 +47,21 @@ export const SocketFactory = {
      * @param {boolean} [options.isList=false] - LIST-сокет (квадратный, синий)
      * @param {boolean} [options.isString=false] - String-сокет (круглый, синий #64b5f6)
      * @param {boolean} [options.isData=false] - Data-сокет / таблица (ромб, оранжевый)
+     * @param {boolean} [options.isBool=false] - Bool-сокет (ромб, розовый -
+     *        та же форма, что у Data, отдельный цвет, чтобы не путать на глаз)
+     * @param {boolean} [options.isImage=false] - Image-сокет (ромб, бирюзовый -
+     *        та же форма, что у Data/Bool, третий цвет в той же "семье ромбов")
      * @param {boolean} [options.isAny=false] - универсальный сокет (круг с
      *        пунктирной границей, фиолетовый #ab47bc) - совместим с любым
      *        другим родом сокета
      * @param {string|null} [options.outputType=null] - 'result' | 'count' | 'list' | null.
      *        'count' даёт зелёный кружок (socket-count), остальное - обычный
-     *        серый кружок (socket-number), если isList/isString/isData/isAny
+     *        серый кружок (socket-number), если isList/isString/isData/isBool/isImage/isAny
      *        не переопределяют форму.
      * @param {string|null} [options.title=null] - всплывающая подсказка
      * @returns {HTMLDivElement}
      */
-    createSocket({ nodeId, socketType, index = 0, isList = false, isString = false, isData = false, isAny = false, outputType = null, title = null } = {}) {
+    createSocket({ nodeId, socketType, index = 0, isList = false, isString = false, isData = false, isBool = false, isImage = false, isAny = false, outputType = null, title = null } = {}) {
         const socket = document.createElement('div');
 
         // Единый "род" сокета - определяет и класс/цвет, и совместимость
@@ -73,6 +77,12 @@ export const SocketFactory = {
         } else if (isData) {
             kind = 'data';
             classes += ' socket-data';
+        } else if (isBool) {
+            kind = 'bool';
+            classes += ' socket-bool';
+        } else if (isImage) {
+            kind = 'image';
+            classes += ' socket-image';
         } else if (isAny) {
             kind = 'any';
             classes += ' socket-any';

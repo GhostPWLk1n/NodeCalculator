@@ -15,6 +15,10 @@ import { Helpers } from '../utils/helpers.js';
 export class Renderer {
     constructor() {
         this.connectionLines = [];
+        // Раунд 50 - счётчик id для градиентов линий соединений (см.
+        // buildConnectionGradient()), сбрасывается в начале каждого
+        // drawAllConnections()
+        this._gradientSeq = 0;
     }
 
     // ============================================
@@ -130,6 +134,8 @@ export class Renderer {
             case 'list': return '#4fc3f7';
             case 'string': return '#64b5f6';
             case 'data': return '#ff8a65';
+            case 'bool': return '#f06292';
+            case 'image': return '#26c6da';
             case 'any': return '#ab47bc';
             case 'count': return '#a5d6a7';
             default: return '#90caf9';
@@ -141,7 +147,14 @@ export class Renderer {
     // Разделение нужно, потому что попасть правой кнопкой мыши точно по
     // 2.5px линии неудобно - hitArea шире и прозрачна, реальный клик
     // ловит именно она; path остаётся чисто декоративной (pointer-events:none).
-    createConnectionPath(x1, y1, x2, y2, meta = {}, conn = null) {
+    //
+    // Раунд 50 - линия ДВУХЦВЕТНАЯ по длине (SVG <linearGradient>,
+    // gradientUnits="userSpaceOnUse" по фактическим координатам концов
+    // линии): левый конец (startMeta - сокет ИСТОЧНИКА) в цвет ИСТОЧНИКА,
+    // правый (endMeta - сокет ПОЛУЧАТЕЛЯ) - получателя. Раньше линия была
+    // одноцветной по роду ТОЛЬКО исходного сокета - endMeta вообще не
+    // передавался и не использовался.
+    createConnectionPath(x1, y1, x2, y2, startMeta = {}, endMeta = {}, conn = null) {
         const d = this.buildPathD(x1, y1, x2, y2);
 
         const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -157,11 +170,15 @@ export class Renderer {
         path.setAttribute('class', 'connection-path');
         path.setAttribute('fill', 'none');
         // Ошибка на уровне конкретного соединения (см.
-        // connectionManager.setConnectionError) перебивает обычный цвет
-        // по роду сокета - актуально для сокетов-прокси 'any', когда
-        // соединение технически разрешено, но нода-потребитель не смогла
-        // обработать то, что реально пришло
-        path.setAttribute('stroke', conn?.hasError ? '#ef5350' : this.strokeColorFor(meta));
+        // connectionManager.setConnectionError) перебивает обычный
+        // градиент по роду сокетов - однозначный сплошной красный, чтобы
+        // ошибку невозможно было принять за "просто ещё один цвет"
+        if (conn?.hasError) {
+            path.setAttribute('stroke', '#ef5350');
+        } else {
+            const gradientId = this.buildConnectionGradient(x1, y1, x2, y2, startMeta, endMeta);
+            path.setAttribute('stroke', gradientId ? `url(#${gradientId})` : this.strokeColorFor(startMeta));
+        }
         path.setAttribute('stroke-width', '2.5');
         path.setAttribute('stroke-linecap', 'round');
         path.setAttribute('opacity', '0.85');
@@ -201,6 +218,51 @@ export class Renderer {
         }
 
         return { hitArea, path };
+    }
+
+    // Создаёт <linearGradient> в <defs> общего SVG-слоя (см.
+    // ensureLinesSvg()) и возвращает его id для использования как
+    // stroke="url(#id)". gradientUnits="userSpaceOnUse" - координаты
+    // стопов ПРИВЯЗАНЫ к реальным координатам линии (x1,y1 -> x2,y2), а
+    // не к условному bounding-box'у по умолчанию - иначе градиент лёг бы
+    // по диагонали BBox самой "лапши", а не вдоль её направления. id
+    // уникален на каждый вызов (this._gradientSeq) - defs целиком
+    // очищается в начале каждого drawAllConnections(), синхронно со
+    // старыми path/hitArea, так что переиспользовать/стабилизировать id
+    // между перерисовками не нужно - только упростило бы жизнь ценой
+    // лишней сложности без реальной пользы (лишних gradient-узлов не
+    // накапливается, т.к. вся defs очищается целиком на каждый redraw).
+    buildConnectionGradient(x1, y1, x2, y2, startMeta, endMeta) {
+        const svg = this.ensureLinesSvg();
+        if (!svg) return null;
+
+        let defs = svg.querySelector('defs');
+        if (!defs) {
+            defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            svg.insertBefore(defs, svg.firstChild);
+        }
+
+        const id = `conn-grad-${this._gradientSeq++}`;
+        const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+        gradient.setAttribute('id', id);
+        gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        gradient.setAttribute('x1', x1);
+        gradient.setAttribute('y1', y1);
+        gradient.setAttribute('x2', x2);
+        gradient.setAttribute('y2', y2);
+
+        const stopStart = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+        stopStart.setAttribute('offset', '0%');
+        stopStart.setAttribute('stop-color', this.strokeColorFor(startMeta));
+        gradient.appendChild(stopStart);
+
+        const stopEnd = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+        stopEnd.setAttribute('offset', '100%');
+        stopEnd.setAttribute('stop-color', this.strokeColorFor(endMeta));
+        gradient.appendChild(stopEnd);
+
+        defs.appendChild(gradient);
+        return id;
     }
 
     // Временная линия (тянется за курсором при создании соединения)
@@ -250,6 +312,11 @@ export class Renderer {
         // Убираем только "постоянные" линии, временную (при перетаскивании) не трогаем
         svg.querySelectorAll('path.connection-path:not(.temp-path)').forEach(p => p.remove());
         svg.querySelectorAll('path.connection-hitarea').forEach(p => p.remove());
+        // Градиенты (Раунд 50) пересоздаются с нуля на каждый вызов -
+        // см. докстринг buildConnectionGradient() про то, почему id не
+        // переиспользуются между перерисовками
+        svg.querySelector('defs')?.replaceChildren();
+        this._gradientSeq = 0;
         this.connectionLines = [];
 
         connections.forEach(conn => {
@@ -260,7 +327,7 @@ export class Renderer {
             const endPos = this.getSocketPosition(conn.targetNodeId, 'input', targetIndex);
             if (!startPos || !endPos) return;
 
-            const { hitArea, path } = this.createConnectionPath(startPos.x, startPos.y, endPos.x, endPos.y, startPos, conn);
+            const { hitArea, path } = this.createConnectionPath(startPos.x, startPos.y, endPos.x, endPos.y, startPos, endPos, conn);
             svg.appendChild(hitArea);
             svg.appendChild(path);
             this.connectionLines.push(path);
@@ -316,6 +383,14 @@ export class Renderer {
             bgColor = '#ff8a65';
             borderColor = '#ff8a65';
             shadowColor = 'rgba(255, 138, 101, 0.3)';
+        } else if (socket.classList.contains('socket-bool')) {
+            bgColor = '#f06292';
+            borderColor = '#f06292';
+            shadowColor = 'rgba(240, 98, 146, 0.3)';
+        } else if (socket.classList.contains('socket-image')) {
+            bgColor = '#26c6da';
+            borderColor = '#26c6da';
+            shadowColor = 'rgba(38, 198, 218, 0.3)';
         } else if (socket.classList.contains('socket-any')) {
             bgColor = '#ab47bc';
             borderColor = '#ab47bc';

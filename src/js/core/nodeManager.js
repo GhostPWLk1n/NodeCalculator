@@ -18,6 +18,16 @@ export class NodeManager {
         this.nodeIdCounter = 0;
         this.nodeTypes = new Map();
         this.selectedNode = null;
+        // Множественное выделение рамкой (Раунд 58, план 1.6.0 п.3) -
+        // ОТДЕЛЬНО от selectedNode (тот открывает панель инспектора для
+        // ОДНОЙ ноды - множественное выделение специально НЕ открывает
+        // панель, это про групповое ПЕРЕМЕЩЕНИЕ, не про редактирование
+        // настроек сразу нескольких разнотипных нод, для этого нет
+        // общей схемы полей). См. selectMultipleNodes()/clearMultiSelection().
+        this.multiSelectedIds = new Set();
+        // Стартовые позиции ВСЕХ выделенных нод в момент начала
+        // перетаскивания - см. startDragNode()/main.js mousemove
+        this.dragGroupStart = null;
         this.contextMenuTarget = null;
         this.isDragging = false;
         this.draggedNode = null;
@@ -137,6 +147,12 @@ export class NodeManager {
         if (node.type === 'string') {
             el.classList.add('string-node-compact');
         }
+        if (node.type === 'boolean') {
+            el.classList.add('boolean-node-compact');
+        }
+        if (node.type === 'proxy') {
+            el.classList.add('proxy-node-compact');
+        }
         if (node.collapsed) {
             el.classList.add('collapsed');
         }
@@ -174,16 +190,21 @@ export class NodeManager {
         // tableViewerNode.js), та же самая ручка тянет и высоту тоже -
         // единственная точка ресайза для такой ноды, без отдельного
         // внутреннего хэндла, который раньше дублировал эту же ручку.
-        const supportsFreeResize = typeof node.applyFreeResize === 'function';
-        const resizeHandle = document.createElement('div');
-        resizeHandle.className = supportsFreeResize ? 'node-resize-handle free-resize' : 'node-resize-handle';
-        resizeHandle.title = supportsFreeResize ? 'Изменить размер' : 'Изменить ширину';
-        el.appendChild(resizeHandle);
-        resizeHandle.addEventListener('mousedown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            this.startResize(e, node);
-        });
+        // "Точка" (proxy) ручку вообще не получает - у неё нет ни
+        // ширины, ни высоты, которые имело бы смысл тянуть (см.
+        // proxyNode.js - минимальный render() без .node-content).
+        if (node.type !== 'proxy') {
+            const supportsFreeResize = typeof node.applyFreeResize === 'function';
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = supportsFreeResize ? 'node-resize-handle free-resize' : 'node-resize-handle';
+            resizeHandle.title = supportsFreeResize ? 'Изменить размер' : 'Изменить ширину';
+            el.appendChild(resizeHandle);
+            resizeHandle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                this.startResize(e, node);
+            });
+        }
         
         // Настраиваем обработчики событий
         this.setupNodeEventHandlers(node, el);
@@ -269,6 +290,27 @@ export class NodeManager {
         if (window.inspectorManager) {
             window.inspectorManager.close();
         }
+    }
+
+    // Применяет результат рамочного выделения (Раунд 58) - заменяет
+    // ТЕКУЩЕЕ множественное выделение целиком (не добавляет к нему -
+    // Shift/Ctrl-модификаторы "добавить к выделению" осознанно не
+    // реализованы в этом раунде, см. "Заметки на будущее").
+    selectMultipleNodes(nodeIds) {
+        this.clearMultiSelection();
+        nodeIds.forEach(id => {
+            this.multiSelectedIds.add(id);
+            const el = document.querySelector(`[data-node-id="${id}"]`);
+            if (el) el.classList.add('multi-selected');
+        });
+    }
+
+    clearMultiSelection() {
+        this.multiSelectedIds.forEach(id => {
+            const el = document.querySelector(`[data-node-id="${id}"]`);
+            if (el) el.classList.remove('multi-selected');
+        });
+        this.multiSelectedIds.clear();
     }
 
     // Акцентный цвет ноды (--node-accent + класс has-custom-color) -
@@ -358,6 +400,22 @@ export class NodeManager {
         this.draggedNode = node;
         this.isDragging = true;
         el.classList.add('dragging');
+
+        // Групповое перетаскивание (Раунд 58) - если тянем ноду, входящую
+        // в текущее рамочное выделение (больше одной ноды в нём),
+        // запоминаем стартовые позиции ВСЕХ выделенных нод - на mousemove
+        // (main.js) к ним применяется ТА ЖЕ дельта, что и у "ведущей"
+        // (напрямую перетаскиваемой) ноды.
+        if (this.multiSelectedIds.has(nodeId) && this.multiSelectedIds.size > 1) {
+            this.dragGroupStart = { leadX: node.x, leadY: node.y, positions: {} };
+            this.multiSelectedIds.forEach(id => {
+                const n = this.getNode(id);
+                if (n) this.dragGroupStart.positions[id] = { x: n.x, y: n.y };
+            });
+        } else {
+            this.dragGroupStart = null;
+        }
+
         document.getElementById('drag-info').classList.add('show');
         document.getElementById('drag-info').textContent = `🔄 Перемещение ноды ${nodeId}`;
     }

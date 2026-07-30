@@ -46,6 +46,14 @@ export class ListInputNode extends BaseNode {
         this.nameColumnWidth = config.nameColumnWidth ?? null;
         this.valueColumnWidth = config.valueColumnWidth ?? null;
 
+        // Тип данных значения (Раунд 56) - 'number'|'string'|'boolean' -
+        // меняет ТИП поля ввода в строке (число/текст/чекбокс) и формат
+        // столбца, если этот список попадёт в TableNode - см.
+        // getValueFormat()/renderRows()/getDashboardWidget() ниже. Формат
+        // деньги/проценты (valueFormat) имеет смысл ТОЛЬКО при
+        // dataType==='number' - для строки/булева просто игнорируется.
+        this.dataType = config.dataType || 'number';
+
         this.listData = new ListData();
         this.updateListData();
     }
@@ -143,19 +151,13 @@ export class ListInputNode extends BaseNode {
                 this.recalculate();
             });
 
-            const valueInput = document.createElement('input');
-            valueInput.type = 'number';
-            valueInput.step = 'any';
-            valueInput.className = 'list-input-value';
-            valueInput.value = item.value;
-            valueInput.placeholder = '0';
-            if (this.valueColumnWidth) valueInput.style.flex = `0 0 ${this.valueColumnWidth}px`;
-            valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
-            valueInput.addEventListener('input', (e) => {
-                const val = parseFloat(e.target.value);
-                item.value = isNaN(val) ? 0 : val;
+            const valueInput = this.buildValueInput(item, (newValue) => {
+                item.value = newValue;
                 this.recalculate();
             });
+            if (this.valueColumnWidth && valueInput.tagName === 'INPUT') {
+                valueInput.style.flex = `0 0 ${this.valueColumnWidth}px`;
+            }
 
             row.appendChild(nameInput);
             row.appendChild(valueInput);
@@ -175,6 +177,66 @@ export class ListInputNode extends BaseNode {
         });
     }
 
+    // Строит поле ввода значения ПОД ТЕКУЩИЙ this.dataType - число/текст/
+    // чекбокс (Раунд 56). onChange получает уже ПРИВЕДЁННОЕ к нужному типу
+    // значение - вызывающий код (renderRows()/getDashboardWidget()) просто
+    // присваивает его как есть, без разбора типа на своей стороне.
+    buildValueInput(item, onChange) {
+        if (this.dataType === 'boolean') {
+            const wrap = document.createElement('label');
+            wrap.className = 'list-input-value list-input-value-boolean';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = Helpers.coerceBool(item.value);
+            checkbox.addEventListener('mousedown', (e) => e.stopPropagation());
+            checkbox.addEventListener('change', (e) => onChange(e.target.checked));
+            wrap.appendChild(checkbox);
+            return wrap;
+        }
+
+        if (this.dataType === 'string') {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'list-input-value';
+            input.value = typeof item.value === 'string' ? item.value : String(item.value ?? '');
+            input.placeholder = 'Значение';
+            input.addEventListener('mousedown', (e) => e.stopPropagation());
+            input.addEventListener('input', (e) => onChange(e.target.value));
+            return input;
+        }
+
+        // 'number' - по умолчанию, как и было раньше
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = 'any';
+        input.className = 'list-input-value';
+        input.value = typeof item.value === 'number' ? item.value : 0;
+        input.placeholder = '0';
+        input.addEventListener('mousedown', (e) => e.stopPropagation());
+        input.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            onChange(isNaN(val) ? 0 : val);
+        });
+        return input;
+    }
+
+    // Приводит ВСЕ уже введённые значения к новому типу при смене
+    // dataType в панели - иначе, скажем, переключение с "Число" на
+    // "Логическое" оставило бы в this.items сырые числа, а тело/виджет
+    // ноды уже рисовали бы чекбоксы поверх них без пересчёта
+    coerceItemsToDataType() {
+        this.items.forEach(item => {
+            if (this.dataType === 'boolean') {
+                item.value = Helpers.coerceBool(item.value);
+            } else if (this.dataType === 'string') {
+                item.value = typeof item.value === 'string' ? item.value : String(item.value ?? '');
+            } else {
+                const num = typeof item.value === 'number' ? item.value : parseFloat(item.value);
+                item.value = isNaN(num) ? 0 : num;
+            }
+        });
+    }
+
     // Применяет текущую ширину полей имени/значения к УЖЕ отрисованным
     // строкам без пересоздания DOM - вызывается из боковой панели, чтобы
     // изменение ширины было видно сразу.
@@ -190,10 +252,11 @@ export class ListInputNode extends BaseNode {
     }
 
     addRow(container) {
+        const defaultValue = this.dataType === 'boolean' ? false : (this.dataType === 'string' ? '' : 0);
         this.items.push({
             id: Helpers.generateId(),
             name: `Элемент ${this.items.length + 1}`,
-            value: 0
+            value: defaultValue
         });
         this.renderRows(container);
         this.recalculate();
@@ -213,17 +276,31 @@ export class ListInputNode extends BaseNode {
         }
     }
 
+    // Формат для чисел (деньги/проценты/авто) выбирается в панели
+    // (this.valueFormat) и имеет смысл ТОЛЬКО при dataType==='number' -
+    // для текста/булевых значений формат жёстко следует из dataType,
+    // выбор в панели для них скрыт (см. getInspectorSchema())
+    getValueFormat() {
+        if (this.dataType === 'string') return 'text';
+        if (this.dataType === 'boolean') return 'boolean';
+        return this.valueFormat || 'number';
+    }
+
     updateListData() {
         const format = this.getValueFormat();
         this.listData = new ListData(
             this.items.map(item => ({
                 name: item.name || 'unknown',
-                value: typeof item.value === 'number' ? item.value : 0,
+                value: item.value,
                 format
             })),
             {
                 title: this.customName || 'Список',
-                total: this.items.reduce((sum, item) => sum + (item.value || 0), 0),
+                // "Итого" имеет смысл только для чисел - для текста/
+                // булевых значений суммировать нечего (Раунд 56)
+                total: this.dataType === 'number'
+                    ? this.items.reduce((sum, item) => sum + (typeof item.value === 'number' ? item.value : 0), 0)
+                    : 0,
                 isFullList: true,
                 format
             }
@@ -232,7 +309,9 @@ export class ListInputNode extends BaseNode {
 
     calculate(nodeManager) {
         this.updateListData();
-        return this.listData.total;
+        // Для чисел - сумма (как и раньше); для текста/булевых значений
+        // сумма бессмысленна - отдаём количество элементов (Раунд 56)
+        return this.dataType === 'number' ? this.listData.total : this.items.length;
     }
 
     updateDisplay(element) {
@@ -283,9 +362,24 @@ export class ListInputNode extends BaseNode {
                         const nameCell = document.createElement('td');
                         nameCell.textContent = item.name || '';
                         const valueCell = document.createElement('td');
-                        valueCell.textContent = typeof item.value === 'number'
-                            ? Helpers.formatByType(item.value, format)
-                            : String(item.value ?? '');
+
+                        // Раунд 56 - вид значения зависит от dataType, а не
+                        // просто от того, число это или нет
+                        if (node.dataType === 'boolean') {
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.className = 'table-cell-checkbox';
+                            checkbox.checked = Helpers.coerceBool(item.value);
+                            checkbox.disabled = true;
+                            valueCell.appendChild(checkbox);
+                        } else if (node.dataType === 'string') {
+                            valueCell.textContent = String(item.value ?? '');
+                        } else {
+                            valueCell.textContent = typeof item.value === 'number'
+                                ? Helpers.formatByType(item.value, format)
+                                : String(item.value ?? '');
+                        }
+
                         row.appendChild(nameCell);
                         row.appendChild(valueCell);
                         table.appendChild(row);
@@ -321,20 +415,45 @@ export class ListInputNode extends BaseNode {
                     nameCell.appendChild(nameInput);
 
                     const valueCell = document.createElement('td');
-                    const valueInput = document.createElement('input');
-                    valueInput.type = 'number';
-                    valueInput.step = 'any';
-                    valueInput.className = 'board-widget-list-input board-widget-list-input-value';
-                    valueInput.value = typeof item.value === 'number' ? item.value : 0;
-                    valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
-                    valueInput.addEventListener('click', (e) => e.stopPropagation());
-                    valueInput.addEventListener('input', (e) => {
-                        const val = parseFloat(e.target.value);
-                        item.value = isNaN(val) ? 0 : val;
+                    const applyValueChange = (newValue) => {
+                        item.value = newValue;
                         if (ctx.onEdit) emitChange();
-                        else { node.items[idx].value = item.value; node.recalculate(); }
-                    });
-                    valueCell.appendChild(valueInput);
+                        else { node.items[idx].value = newValue; node.recalculate(); }
+                    };
+
+                    // Раунд 56 - тип поля редактирования зависит от dataType
+                    if (node.dataType === 'boolean') {
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'board-widget-list-input-value';
+                        checkbox.checked = Helpers.coerceBool(item.value);
+                        checkbox.addEventListener('mousedown', (e) => e.stopPropagation());
+                        checkbox.addEventListener('click', (e) => e.stopPropagation());
+                        checkbox.addEventListener('change', (e) => applyValueChange(e.target.checked));
+                        valueCell.appendChild(checkbox);
+                    } else if (node.dataType === 'string') {
+                        const valueInput = document.createElement('input');
+                        valueInput.type = 'text';
+                        valueInput.className = 'board-widget-list-input board-widget-list-input-value';
+                        valueInput.value = typeof item.value === 'string' ? item.value : String(item.value ?? '');
+                        valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                        valueInput.addEventListener('click', (e) => e.stopPropagation());
+                        valueInput.addEventListener('input', (e) => applyValueChange(e.target.value));
+                        valueCell.appendChild(valueInput);
+                    } else {
+                        const valueInput = document.createElement('input');
+                        valueInput.type = 'number';
+                        valueInput.step = 'any';
+                        valueInput.className = 'board-widget-list-input board-widget-list-input-value';
+                        valueInput.value = typeof item.value === 'number' ? item.value : 0;
+                        valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                        valueInput.addEventListener('click', (e) => e.stopPropagation());
+                        valueInput.addEventListener('input', (e) => {
+                            const val = parseFloat(e.target.value);
+                            applyValueChange(isNaN(val) ? 0 : val);
+                        });
+                        valueCell.appendChild(valueInput);
+                    }
 
                     row.appendChild(nameCell);
                     row.appendChild(valueCell);
@@ -352,17 +471,42 @@ export class ListInputNode extends BaseNode {
         const fields = super.getInspectorSchema();
 
         fields.push({
-            key: 'valueFormat',
-            label: 'Формат значений',
+            key: 'dataType',
+            label: 'Тип данных значения',
             type: 'select',
             options: [
-                { value: '', label: 'Число' },
-                { value: 'currency', label: 'Деньги' },
-                { value: 'percent', label: 'Проценты' }
+                { value: 'number', label: 'Число' },
+                { value: 'string', label: 'Строка' },
+                { value: 'boolean', label: 'Логическое' }
             ],
-            get: () => this.valueFormat || '',
-            set: (v) => { this.valueFormat = v || null; this.updateListData(); }
+            get: () => this.dataType,
+            set: (v) => {
+                this.dataType = v;
+                this.coerceItemsToDataType();
+                this.updateListData();
+                const el = document.querySelector(`[data-node-id="${this.id}"]`);
+                const rowsContainer = el?.querySelector('.list-input-rows');
+                if (rowsContainer) this.renderRows(rowsContainer);
+                if (window.nodeManager) window.nodeManager.calculateAll();
+            }
         });
+
+        // Формат деньги/проценты имеет смысл ТОЛЬКО для чисел - для
+        // строки/булева значения он просто не показывается (Раунд 56)
+        if (this.dataType === 'number') {
+            fields.push({
+                key: 'valueFormat',
+                label: 'Формат значений',
+                type: 'select',
+                options: [
+                    { value: '', label: 'Число' },
+                    { value: 'currency', label: 'Деньги' },
+                    { value: 'percent', label: 'Проценты' }
+                ],
+                get: () => this.valueFormat || '',
+                set: (v) => { this.valueFormat = v || null; this.updateListData(); }
+            });
+        }
 
         fields.push({ type: 'section', label: 'Размер ячеек' });
 

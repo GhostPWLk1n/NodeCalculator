@@ -38,19 +38,59 @@ import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
  * this.columnFilters синхронизируется по длине с текущим набором
  * столбцов на каждый calculate() - лишние условия обрезаются,
  * недостающие столбцы получают условие "" (без ограничения).
+ *
+ * СПИСОК ВМЕСТО ТЕКСТА (Раунд 57, логика переработана в Раунде 59) - у
+ * каждого столбца ЕСТЬ СВОЙ динамический LIST-вход (this.inputSockets =
+ * [0, 1, 2, ...] - 0 это сама таблица, 1..N по одному на каждый столбец).
+ * Подключённый список задаёт "таблицу членства" ИМЯ -> ИСТИНА/ЛОЖЬ, а НЕ
+ * просто перечень допустимых значений:
+ *
+ *   - Каждый элемент списка - пара {name, value}. `value` СТРОГО
+ *     приводится к bool (_strictCoerceBool()) - реальный boolean, числа
+ *     0/1, или текст "да"/"нет"/"true"/"false"/"yes"/"no"/"истина"/"ложь"
+ *     (регистронезависимо). Любое ДРУГОЕ значение (нераспознанная
+ *     строка, число не 0/1 и т.п.) - ОШИБКА, а не тихое предположение.
+ *   - Значение ячейки СРАВНИВАЕТСЯ С ИМЕНЕМ элемента (не со значением) -
+ *     если совпало И у этого элемента value=true (после приведения) -
+ *     строка проходит по этому столбцу. Если совпало, но value=false -
+ *     явно НЕ проходит. Если имя вообще не встретилось в списке - тоже
+ *     НЕ проходит (список должен явно перечислять и то, что оставляем,
+ *     и то, что отсеиваем, а не только "включённое").
+ *   - Если ХОТЯ БЫ ОДИН элемент подключённого списка не приводится к
+ *     bool - условие для ЭТОГО столбца НЕ применяется вовсе (пропускает
+ *     всё, как будто список не подключён), а на ноде появляется бейдж
+ *     ошибки (`filterListTypeError`) с именами проблемных столбцов -
+ *     см. calculate().
+ *
+ * Подключённый список для столбца ПОЛНОСТЬЮ ПЕРЕБИВАЕТ текстовое условие
+ * для этого же столбца - оба одновременно не применяются, чтобы не
+ * путать, какое условие реально сработало.
+ * Сокеты синхронизируются по количеству столбцов входной таблицы -
+ * тот же приём отложенного пересоздания DOM (setTimeout + rerender()),
+ * что уже используется у `OperationNode`/`BooleanOperationNode`
+ * (docs/NODE_API.md, раздел 9).
  */
 export class TableFilterNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
-        this.inputs = 1;
-        this.inputSockets = [0];
+        // 0 - таблица, 1..N - по одному LIST-входу на каждый столбец
+        // (см. докстринг класса). this.inputs - обычное число, уже
+        // сериализуется генерически для ЛЮБОЙ ноды (n.inputs) - массив
+        // inputSockets НЕ сериализуется нигде в проекте (тот же принцип,
+        // что у OperationNode/BooleanOperationNode) - при загрузке
+        // проекта восстанавливается из inputs, а точный набор столбцов
+        // сам "самоисцеляется" на первом же calculate() после загрузки
+        this.inputs = config.inputs || 1;
+        this.inputSockets = Array.from({ length: this.inputs }, (_, i) => i);
         this.outputs = 1;
-        this.width = config.width || 200;
+        this.width = config.width || 210;
 
         // Условие для каждого столбца входной таблицы - см. докстринг класса
         this.columnFilters = Array.isArray(config.columnFilters) ? config.columnFilters : [];
 
         this._sourceName = null;
+        this._filterColumnHeaders = []; // для подписей сокетов в теле ноды
+        this._isRerendering = false;
         this.tableData = new TableData();
 
         // Виджет Доски (см. utils/tableWidgetRenderer.js) - только номера
@@ -63,7 +103,7 @@ export class TableFilterNode extends BaseNode {
     createContent() {
         const content = document.createElement('div');
         content.className = 'node-content';
-        content.style.cssText = 'width: 100%; min-width: 170px;';
+        content.style.cssText = 'width: 100%; min-width: 190px;';
 
         const inRow = document.createElement('div');
         inRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
@@ -88,6 +128,31 @@ export class TableFilterNode extends BaseNode {
         statusRow.appendChild(statusLabel);
         content.appendChild(statusRow);
 
+        // === СПИСКИ ДЛЯ УСЛОВИЙ (Раунд 57) - по одному LIST-входу на
+        // каждый столбец, см. докстринг класса ===
+        if (this._filterColumnHeaders.length > 0) {
+            const listsHeader = document.createElement('div');
+            listsHeader.style.cssText = 'padding-top:6px; margin-top:4px; border-top:1px solid var(--md-divider); color:var(--md-text-disabled); font-size:9px; text-transform:uppercase; letter-spacing:0.03em;';
+            listsHeader.textContent = 'Списки условий (необязательно)';
+            content.appendChild(listsHeader);
+
+            const listsContainer = document.createElement('div');
+            listsContainer.className = 'node-inputs-container';
+            listsContainer.style.cssText = `
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                padding-left: 21px;
+                padding-right: 4px;
+                margin-left: -21px;
+                margin-top: 4px;
+            `;
+            this._filterColumnHeaders.forEach((header, i) => {
+                listsContainer.appendChild(this._createFilterListRow(i, header));
+            });
+            content.appendChild(listsContainer);
+        }
+
         const outRow = document.createElement('div');
         outRow.style.cssText = `
             display: flex;
@@ -109,6 +174,46 @@ export class TableFilterNode extends BaseNode {
         content.appendChild(outRow);
 
         return content;
+    }
+
+    _createFilterListRow(columnIndex, header) {
+        const row = document.createElement('div');
+        row.className = 'node-input';
+        row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:2px 0;';
+
+        const socketIndex = columnIndex + 1; // 0 занят таблицей
+        const isConnected = this.isListSocketConnected(socketIndex);
+
+        const socket = SocketFactory.createSocket({
+            nodeId: this.id, socketType: 'input', index: socketIndex, isList: true,
+            title: `Список "имя:истина/ложь" для столбца "${header}" - перебивает текстовое условие в панели. Значение должно приводиться к bool, иначе ошибка.`
+        });
+        if (isConnected) {
+            socket.classList.add('socket-connected');
+            socket.style.background = '#4fc3f7';
+            socket.style.borderColor = '#4fc3f7';
+            socket.style.boxShadow = '0 0 12px rgba(79, 195, 247, 0.3)';
+        }
+        row.appendChild(socket);
+
+        const label = document.createElement('label');
+        label.textContent = header;
+        label.style.cssText = `
+            color: ${isConnected ? 'var(--md-text)' : 'var(--md-text-secondary)'};
+            font-size: 11px;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        `;
+        row.appendChild(label);
+
+        return row;
+    }
+
+    isListSocketConnected(socketIndex) {
+        const connections = window.connectionManager?.getConnections() || [];
+        return connections.some(c => c.targetNodeId === this.id && c.targetSocket === socketIndex);
     }
 
     _statusText() {
@@ -161,6 +266,78 @@ export class TableFilterNode extends BaseNode {
         return list.some(item => TableFilterNode._valueEquals(cellValue, item));
     }
 
+    // Авто-подстройка DOM под изменившееся число сокетов (см. calculate() -
+    // вызывается ОТЛОЖЕННО через setTimeout, не прямо во время пересчёта
+    // графа) - тот же приём, что у OperationNode/BooleanOperationNode
+    // (docs/NODE_API.md, раздел 9)
+    rerender() {
+        if (this._isRerendering) return;
+        this._isRerendering = true;
+
+        const el = document.querySelector(`[data-node-id="${this.id}"]`);
+        if (el) {
+            el.remove();
+            if (window.nodeManager) {
+                window.nodeManager.renderNode(this);
+                if (window.renderer) {
+                    window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+                }
+            }
+        }
+
+        setTimeout(() => { this._isRerendering = false; }, 100);
+    }
+
+    // Раунд 59 - строгое приведение к bool специально для списков-условий
+    // (в отличие от Helpers.coerceBool() - тот МЯГКИЙ, никогда не падает,
+    // любую нераспознанную строку тихо считает false). Тут наоборот:
+    // нераспознанное значение - ЯВНАЯ ошибка (null), а не тихое
+    // предположение - иначе случайно подключённый список "не про то"
+    // (например, список цен) молча превратился бы в мусорный фильтр.
+    static _strictCoerceBool(value) {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') {
+            if (value === 0) return false;
+            if (value === 1) return true;
+            return null; // любое другое число - неоднозначно, не 0/1
+        }
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            if (['true', '1', 'да', 'yes', 'истина'].includes(v)) return true;
+            if (['false', '0', 'нет', 'no', 'ложь'].includes(v)) return false;
+        }
+        return null;
+    }
+
+    // Строит "таблицу членства" имя -> true/false из подключённого списка
+    // (Раунд 59) - каждый элемент списка {name, value} говорит "у значения
+    // ИМЯ результат ЗНАЧЕНИЕ (после строгого приведения к bool)". Если
+    // ХОТЯ БЫ ОДИН элемент не приводится к bool - hasError:true, и это
+    // условие для столбца НЕ применяется вовсе (см. calculate()) - ошибка
+    // сообщается бейджем, а не тихо "предполагаем что-то".
+    static _buildMembershipMap(srcNode) {
+        const items = srcNode?.listData?.items || [];
+        const map = new Map();
+        let hasError = false;
+        items.forEach(item => {
+            const b = TableFilterNode._strictCoerceBool(item.value);
+            if (b === null) {
+                hasError = true;
+            } else {
+                map.set(String(item.name ?? ''), b);
+            }
+        });
+        return { map, hasError };
+    }
+
+    // Проходит, только если ЗНАЧЕНИЕ ЯЧЕЙКИ совпадает (как имя) с записью
+    // в таблице членства И эта запись - true. Нет в списке ИЛИ явно false -
+    // не проходит (см. докстринг класса)
+    static _matchesMembership(cellValue, membershipMap) {
+        const key = String(cellValue ?? '');
+        return membershipMap.get(key) === true;
+    }
+
     calculate(nodeManager) {
         const connections = window.connectionManager?.getConnections() || [];
         const conn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === 0);
@@ -176,11 +353,51 @@ export class TableFilterNode extends BaseNode {
         // тот же приём, что у columnStyles в TableFormatNode (Раунд 44)
         while (this.columnFilters.length < baseTable.columns.length) this.columnFilters.push('');
         this.columnFilters.length = baseTable.columns.length;
+        this._filterColumnHeaders = baseTable.columns.map(c => c.header);
+
+        // Раунд 57 - синхронизация LIST-сокетов (1 на столбец) по
+        // количеству столбцов - см. докстринг класса. Меняем метаданные
+        // СРАЗУ (расчёт связей ниже уже использует актуальный набор), а
+        // DOM подгоняем ОТЛОЖЕННО (rerender() в setTimeout ниже) - тот же
+        // принцип, что у checkAndAddEmptySlot() в OperationNode.
+        const desiredSockets = [0, ...baseTable.columns.map((_, i) => i + 1)];
+        const socketsChanged = JSON.stringify(this.inputSockets) !== JSON.stringify(desiredSockets);
+        this.inputSockets = desiredSockets;
+        this.inputs = desiredSockets.length;
 
         if (baseTable.columns.length === 0) {
             this.tableData = baseTable;
             this.value = 0;
+            this.clearBadge('filterListTypeError');
+            if (socketsChanged) setTimeout(() => this.rerender(), 100);
             return this.value;
+        }
+
+        // Для каждого столбца - "таблица членства" ИЗ ПОДКЛЮЧЁННОГО LIST-
+        // входа, если он есть (перебивает текстовое условие целиком), иначе
+        // null (используем обычное текстовое условие ниже) - см. докстринг
+        // класса и _buildMembershipMap() про строгое приведение к bool
+        const errorColumns = [];
+        const listMemberships = baseTable.columns.map((col, c) => {
+            const listConn = connections.find(cn => cn.targetNodeId === this.id && cn.targetSocket === c + 1);
+            const listSrc = listConn ? nodeManager.getNode(listConn.sourceNodeId) : null;
+            if (!listSrc) return null;
+
+            const { map, hasError } = TableFilterNode._buildMembershipMap(listSrc);
+            if (hasError) {
+                errorColumns.push(col.header);
+                return { error: true };
+            }
+            return { map };
+        });
+
+        if (errorColumns.length > 0) {
+            this.addBadge('filterListTypeError', {
+                type: 'error',
+                text: `Список для "${errorColumns.join(', ')}" содержит значения, не приводимые к булеву - условие не применено`
+            });
+        } else {
+            this.clearBadge('filterListTypeError');
         }
 
         const rowCount = baseTable.rowCount;
@@ -188,6 +405,15 @@ export class TableFilterNode extends BaseNode {
         for (let r = 0; r < rowCount; r++) {
             let passes = true;
             for (let c = 0; c < baseTable.columns.length; c++) {
+                const membership = listMemberships[c];
+                if (membership) {
+                    if (membership.error) continue; // ошибка конвертации - не ограничиваем этим столбцом
+                    if (!TableFilterNode._matchesMembership(baseTable.columns[c].values[r], membership.map)) {
+                        passes = false;
+                        break;
+                    }
+                    continue;
+                }
                 const filterStr = (this.columnFilters[c] || '').trim();
                 if (!filterStr) continue;
                 if (!TableFilterNode._matchesFilter(baseTable.columns[c].values[r], filterStr)) {
@@ -206,6 +432,9 @@ export class TableFilterNode extends BaseNode {
 
         this.tableData = new TableData(columns, { ...baseTable.metadata });
         this.value = this.tableData.rowCount;
+
+        if (socketsChanged) setTimeout(() => this.rerender(), 100);
+
         return this.value;
     }
 
@@ -228,6 +457,32 @@ export class TableFilterNode extends BaseNode {
 
         const statusLabel = element.querySelector('.table-filter-status-label');
         if (statusLabel) statusLabel.textContent = this._statusText();
+
+        // Подсветка подключённых LIST-сокетов по столбцам (Раунд 57) -
+        // сам набор строк не пересоздаём тут (это делает rerender(),
+        // только когда меняется КОЛИЧЕСТВО столбцов), просто обновляем
+        // визуальное состояние "подключено/нет" на уже существующих
+        const rows = element.querySelectorAll('.node-inputs-container .node-input');
+        rows.forEach((row, i) => {
+            const socketIndex = i + 1;
+            const isConnected = this.isListSocketConnected(socketIndex);
+            const socket = row.querySelector('.socket');
+            const label = row.querySelector('label');
+            if (socket) {
+                if (isConnected) {
+                    socket.classList.add('socket-connected');
+                    socket.style.background = '#4fc3f7';
+                    socket.style.borderColor = '#4fc3f7';
+                    socket.style.boxShadow = '0 0 12px rgba(79, 195, 247, 0.3)';
+                } else {
+                    socket.classList.remove('socket-connected');
+                    socket.style.background = '';
+                    socket.style.borderColor = '';
+                    socket.style.boxShadow = '';
+                }
+            }
+            if (label) label.style.color = isConnected ? 'var(--md-text)' : 'var(--md-text-secondary)';
+        });
     }
 
     getInspectorSchema() {
@@ -236,14 +491,15 @@ export class TableFilterNode extends BaseNode {
         fields.push({ type: 'section', label: 'Условия по столбцам' });
         fields.push({
             type: 'section',
-            label: 'Список через запятую ("0, 1, 5") или сравнение (">30", "!=0") - пусто = без условия'
+            label: 'Список через запятую ("0, 1, 5") или сравнение (">30", "!=0") - пусто = без условия. Подключённый список (сокет в теле ноды) полностью перебивает текст здесь.'
         });
 
         this.columnFilters.forEach((filterStr, i) => {
             const header = this.tableData.columns[i]?.header;
+            const isOverridden = this.isListSocketConnected(i + 1);
             fields.push({
                 key: `filterCol${i}`,
-                label: header || `Столбец ${i + 1}`,
+                label: (header || `Столбец ${i + 1}`) + (isOverridden ? ' — переопределено подключённым списком' : ''),
                 type: 'text',
                 get: () => this.columnFilters[i] || '',
                 set: (v) => { this.columnFilters[i] = v || ''; }
