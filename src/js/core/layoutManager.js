@@ -399,6 +399,7 @@ export class LayoutManager {
                     singleColumn: n.type === 'listConvert' ? n.singleColumn : undefined,
                     pairNameColumn: n.type === 'listConvert' ? n.pairNameColumn : undefined,
                     pairValueColumn: n.type === 'listConvert' ? n.pairValueColumn : undefined,
+                    dataFormat: n.type === 'listConvert' ? n.dataFormat : undefined,
                     _lastConversionSignature: n.type === 'listConvert' ? n._lastConversionSignature : undefined,
 
                     // TreeNode: имена веток (по индексу входа) + агрегация

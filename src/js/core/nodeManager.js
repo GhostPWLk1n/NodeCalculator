@@ -327,32 +327,41 @@ export class NodeManager {
         }
     }
     
-    deleteNode() {
-        if (this.contextMenuTarget === null) return;
-        const id = this.contextMenuTarget;
+    // Общая логика удаления ОДНОЙ ноды по id - вынесена из deleteNode()
+    // (Раунд 64), чтобы её же переиспользовать для удаления по клавише
+    // Delete (см. deleteSelectedNodes() ниже) - без специфики контекстного
+    // меню (та осталась только в самом deleteNode()).
+    deleteNodeById(id) {
         const el = document.querySelector(`[data-node-id="${id}"]`);
         if (el) el.remove();
         this.nodes = this.nodes.filter(n => n.id !== id);
-        
-        // Если удаляемая нода была выбрана - закрываем боковую панель
+
         if (this.selectedNode && this.selectedNode.id === id) {
             this.selectedNode = null;
             if (window.inspectorManager) {
                 window.inspectorManager.close();
             }
         }
-        
-        // Удаляем соединения
+        this.multiSelectedIds.delete(id);
+
         if (window.connectionManager) {
             const connections = window.connectionManager.getConnections();
-            window.connectionManager.connections = connections.filter(c => 
+            window.connectionManager.connections = connections.filter(c =>
                 c.sourceNodeId !== id && c.targetNodeId !== id
             );
-            if (window.renderer) {
-                window.renderer.drawAllConnections(window.connectionManager.connections);
-            }
         }
-        
+    }
+
+    deleteNode() {
+        if (this.contextMenuTarget === null) return;
+        const id = this.contextMenuTarget;
+        this.deleteNodeById(id);
+
+        if (window.renderer) {
+            window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+        }
+        if (window.nodeManager) window.nodeManager.calculateAll();
+
         document.getElementById('contextMenu').style.display = 'none';
         this.contextMenuTarget = null;
         
@@ -360,6 +369,34 @@ export class NodeManager {
         setTimeout(() => {
             document.getElementById('status').textContent = 'Готово';
         }, 1500);
+    }
+
+    // Удаление по клавише Delete (Раунд 64) - множественное выделение
+    // рамкой (см. selectMultipleNodes(), Раунд 58) имеет приоритет: если
+    // выделено несколько нод - удаляются ВСЕ разом; иначе - обычная
+    // одна выбранная нода (this.selectedNode, панель инспектора).
+    deleteSelectedNodes() {
+        const idsToDelete = this.multiSelectedIds.size > 0
+            ? [...this.multiSelectedIds]
+            : (this.selectedNode ? [this.selectedNode.id] : []);
+
+        if (idsToDelete.length === 0) return;
+
+        idsToDelete.forEach(id => this.deleteNodeById(id));
+        this.clearMultiSelection();
+
+        if (window.renderer) {
+            window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+        }
+        this.calculateAll();
+
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+            statusEl.textContent = idsToDelete.length > 1
+                ? `🗑️ Удалено нод: ${idsToDelete.length}`
+                : '🗑️ Нода удалена';
+            setTimeout(() => { statusEl.textContent = 'Готово'; }, 1500);
+        }
     }
     
     duplicateNode() {

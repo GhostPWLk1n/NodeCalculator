@@ -357,6 +357,19 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// Delete - удаляет выделенную ноду(ы) (Раунд 64) - множественное
+// выделение рамкой (Раунд 58) имеет приоритет над обычным одиночным
+// выбором, см. nodeManager.deleteSelectedNodes(). Пропускаем, если
+// фокус в поле ввода (имя ноды, значение ячейки и т.п.) - иначе Delete
+// при обычном редактировании текста стирал бы саму ноду вместо символа.
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Delete') return;
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
+
+    window.nodeManager?.deleteSelectedNodes();
+});
+
 // ============================================
 // ПОИСК НОД В САЙДБАРЕ (Раунд 53)
 // ============================================

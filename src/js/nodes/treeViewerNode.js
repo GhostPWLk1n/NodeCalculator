@@ -36,12 +36,14 @@ import { SocketFactory } from '../utils/socketFactory.js';
  * могут иметь разный набор совпавших полей, но в реальном использовании
  * (одна и та же структура таблиц на всех уровнях) они обычно совпадают.
  *
- * ЛИСТЬЯ (Раунд 57) - ветка, которая НЕ является вложенным `TreeNode`
- * (обычная таблица/список), тоже может раскрываться - показывая
- * СОБСТВЕННЫЕ строки исходной таблицы, а не только уже посчитанный
- * родителем итог по ней (см. _walkLeafRows()). Имя строки листа - из
- * ПЕРВОГО текстового столбца исходной таблицы, если есть, иначе
- * "Строка N". Строки листа - конечные, дальше не разворачиваются.
+ * ЛИСТЬЯ (Раунд 57, расширено в Раунде 63) - ветка, которая НЕ является
+ * вложенным `TreeNode` (обычная таблица ИЛИ список), тоже может
+ * раскрываться - показывая СОБСТВЕННЫЕ строки исходных данных, а не
+ * только уже посчитанный родителем итог по ней (см. _walkLeafRows()/
+ * _walkLeafListRows()). Имя строки листа-таблицы - из ПЕРВОГО текстового
+ * столбца исходной таблицы, если есть, иначе "Строка N"; имя строки
+ * листа-списка - `item.name` каждого элемента. Строки листа - конечные,
+ * дальше не разворачиваются.
  */
 export class TreeViewerNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
@@ -110,8 +112,17 @@ export class TreeViewerNode extends BaseNode {
                 const leafTable = (!isNestedTree && branch.srcNode?.tableData?.columns?.length > 0)
                     ? branch.srcNode.tableData
                     : null;
+                // Раунд 63 - ветка-СПИСОК (ListInputNode/ListConvertNode
+                // подключены НАПРЯМУЮ как ветка, без промежуточной таблицы) -
+                // тоже раскрывается, тем же принципом, что и таблица - иначе
+                // структуры, собранные ВРУЧНУЮ через "Дерево" (список
+                // как лист, а не только таблица), было бы нельзя развернуть
+                const leafList = (!isNestedTree && !leafTable && branch.srcNode?.listData?.items?.length > 0)
+                    ? branch.srcNode
+                    : null;
                 const hasLeafRows = !!(leafTable && leafTable.rowCount > 0);
-                const hasChildren = isNestedTree || hasLeafRows;
+                const hasLeafList = !!leafList;
+                const hasChildren = isNestedTree || hasLeafRows || hasLeafList;
 
                 const values = (parentTable?.columns || [])
                     .filter(c => c.header !== 'Ветка')
@@ -125,6 +136,8 @@ export class TreeViewerNode extends BaseNode {
                         walk(branch.srcNode.branches, branch.srcNode.tableData, depth + 1, path);
                     } else if (hasLeafRows) {
                         this._walkLeafRows(leafTable, depth + 1, path, rows);
+                    } else if (hasLeafList) {
+                        this._walkLeafListRows(leafList, depth + 1, path, rows);
                     }
                 }
             });
@@ -156,6 +169,28 @@ export class TreeViewerNode extends BaseNode {
             });
             rows.push({ path, depth, name, values, hasChildren: false, expanded: true, isLeafRow: true });
         }
+    }
+
+    // Разворачивает лист-СПИСОК (Раунд 63) в отдельные строки - каждый
+    // элемент списка {name, value} становится своей записью. У списка,
+    // в отличие от таблицы, нет НАБОРА именованных столбцов - только ОДНО
+    // значение на элемент, поэтому оно проставляется в столбец корня,
+    // ИМЯ которого совпадает с тем, как эта ветка "видна" родителю (см.
+    // TreeNode._getBranchColumns() - список заворачивается в столбец по
+    // имени ноды) - в остальных столбцах строки пусто.
+    _walkLeafListRows(srcNode, depth, pathPrefix, rows) {
+        const rootHeaders = this._getFieldHeaders();
+        const columnName = srcNode.customName || srcNode.getDisplayName?.() || 'Значение';
+        const colIndex = rootHeaders.findIndex(col => col.header === columnName);
+
+        srcNode.listData.items.forEach((item, r) => {
+            const path = `${pathPrefix}/listleaf${r}`;
+            const name = item.name !== undefined && item.name !== null && item.name !== ''
+                ? String(item.name)
+                : `Строка ${r + 1}`;
+            const values = rootHeaders.map((col, i) => (i === colIndex ? item.value : undefined));
+            rows.push({ path, depth, name, values, hasChildren: false, expanded: true, isLeafRow: true });
+        });
     }
 
     renderTree(container) {

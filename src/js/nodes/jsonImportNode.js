@@ -38,6 +38,15 @@ import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
  *     элемент становится СВОЕЙ веткой (рекурсивно). Имя ветки - значение
  *     поля `name`/`title`/`id`/`key` элемента, если оно есть и это
  *     строка/число, иначе порядковый номер (с 1).
+ *   - ДВОЙНОЕ КОДИРОВАНИЕ (Раунд 63) - если значение (само значение
+ *     верхнего уровня, элемент массива или значение поля объекта) -
+ *     СТРОКА, которая САМА является валидным JSON (после `trim()`
+ *     начинается с `{`/`[` и успешно парсится) - она РАЗВОРАЧИВАЕТСЯ и
+ *     обрабатывается как вложенная структура, а не оседает текстовым
+ *     полем. Частый экспортный паттерн у систем, хранящих сериализованный
+ *     JSON текстом - например, когда ВЕСЬ файл целиком представляет
+ *     собой JSON-строку (внешние кавычки), внутри которой лежит
+ *     настоящий объект - см. `_tryParseJsonString()`.
  *
  * Ветки - НЕ отдельные ноды графа, а простые вложенные объекты вида
  * `{name, srcNode: {tableData, branches}}` - `TreeViewerNode` не требует
@@ -177,13 +186,47 @@ export class JsonImportNode extends BaseNode {
         return String(index + 1);
     }
 
+    // "Двойное кодирование" (Раунд 63) - значение-СТРОКА, которая САМА
+    // является валидным JSON (после trim начинается с { или [ и успешно
+    // парсится) - частый паттерн у систем, хранящих сериализованный JSON
+    // текстом (в т.ч. весь файл целиком может быть такой строкой - именно
+    // так устроен реальный файл, на котором это найдено: корневое
+    // значение файла - JSON-строка, а НАСТОЯЩИЙ объект лежит ВНУТРИ неё).
+    // Возвращает РАЗОБРАННОЕ значение или undefined, если это не JSON.
+    static _tryParseJsonString(value) {
+        if (typeof value !== 'string') return undefined;
+        const trimmed = value.trim();
+        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed !== null && typeof parsed === 'object') return parsed;
+        } catch {
+            // похоже на JSON по первому символу, но не распарсилось -
+            // это просто текст, начинающийся с { или [, не наша забота
+        }
+        return undefined;
+    }
+
     // Рекурсивный разбор одного JSON-значения в {tableData, branches} -
     // см. докстринг класса про правила
     static _convertJsonValue(value, fallbackName) {
+        // Раунд 63 - если ЭТО САМО значение - строка с вложенным JSON,
+        // разворачиваем её ПЕРЕД дальнейшей классификацией (объект/
+        // массив/примитив) - без этой проверки корневая строка целого
+        // файла (двойное кодирование) осела бы одной текстовой ячейкой
+        // вместо раскрываемого дерева
+        const selfNested = JsonImportNode._tryParseJsonString(value);
+        if (selfNested !== undefined) value = selfNested;
+
         if (Array.isArray(value)) {
             if (value.length === 0) return { tableData: new TableData(), branches: [] };
 
-            const allPrimitive = value.every(v => v === null || typeof v !== 'object');
+            const isComplexItem = (item) => {
+                if (item !== null && typeof item === 'object') return true;
+                return JsonImportNode._tryParseJsonString(item) !== undefined;
+            };
+
+            const allPrimitive = value.every(v => !isComplexItem(v));
             if (allPrimitive) {
                 return {
                     tableData: new TableData([
@@ -193,10 +236,14 @@ export class JsonImportNode extends BaseNode {
                 };
             }
 
-            const branches = value.map((item, i) => ({
-                name: JsonImportNode._extractItemName(item, i),
-                srcNode: JsonImportNode._convertJsonValue(item, String(i + 1))
-            }));
+            const branches = value.map((item, i) => {
+                const nested = JsonImportNode._tryParseJsonString(item);
+                const actualItem = nested !== undefined ? nested : item;
+                return {
+                    name: JsonImportNode._extractItemName(actualItem, i),
+                    srcNode: JsonImportNode._convertJsonValue(actualItem, String(i + 1))
+                };
+            });
             return { tableData: new TableData(), branches };
         }
 
@@ -204,8 +251,14 @@ export class JsonImportNode extends BaseNode {
             const primitiveEntries = [];
             const complexEntries = [];
             Object.entries(value).forEach(([k, v]) => {
-                if (v !== null && typeof v === 'object') complexEntries.push([k, v]);
-                else primitiveEntries.push([k, v]);
+                const nested = JsonImportNode._tryParseJsonString(v);
+                if (nested !== undefined) {
+                    complexEntries.push([k, nested]);
+                } else if (v !== null && typeof v === 'object') {
+                    complexEntries.push([k, v]);
+                } else {
+                    primitiveEntries.push([k, v]);
+                }
             });
 
             const tableData = primitiveEntries.length > 0

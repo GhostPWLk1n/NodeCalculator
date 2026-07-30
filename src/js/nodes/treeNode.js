@@ -267,10 +267,21 @@ export class TreeNode extends BaseNode {
             return src.tableData.columns;
         }
         if (src.listData?.items?.length > 0) {
+            const items = src.listData.items;
+            // Раунд 63 - формат берём из самих данных, а не жёстко
+            // 'number' (как было раньше) - список-ветка может быть
+            // текстовым/булевым (ListInputNode.dataType, Раунд 56, или
+            // ListConvertNode.dataFormat, Раунд 62) - молчаливое
+            // "number" затирало бы это и ломало бы чекбоксы/текст в
+            // "Просмотре дерева" при ручной сборке структуры из таких нод
+            const format = items[0]?.format
+                || src.listData.metadata?.format
+                || (items.every(i => typeof i.value === 'boolean') ? 'boolean'
+                    : items.every(i => typeof i.value === 'number') ? 'number' : 'text');
             return [{
                 header: src.customName || src.getDisplayName?.() || 'Значение',
-                values: src.listData.items.map(i => i.value),
-                format: 'number'
+                values: items.map(i => i.value),
+                format
             }];
         }
         return [];

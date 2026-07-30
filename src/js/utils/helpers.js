@@ -101,6 +101,51 @@ export const Helpers = {
         return !!value;
     },
 
+    /**
+     * Строгое приведение к bool - в отличие от coerceBool() выше (мягкое,
+     * никогда не падает, любую нераспознанную строку тихо считает false),
+     * тут нераспознанное значение - ЯВНАЯ неудача (null), а не тихое
+     * предположение. Изначально появилось в TableFilterNode (Раунд 59)
+     * для списков-условий отсеивания, затем понадобилось и в
+     * ListConvertNode (Раунд 62, принудительный формат данных) - вынесено
+     * сюда как общее место, а не дублируется в двух нодах.
+     * @param {*} value
+     * @returns {boolean|null} null - не удалось однозначно распознать
+     */
+    strictCoerceBool(value) {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') {
+            if (value === 0) return false;
+            if (value === 1) return true;
+            return null; // любое другое число - неоднозначно, не 0/1
+        }
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            if (['true', '1', 'да', 'yes', 'истина'].includes(v)) return true;
+            if (['false', '0', 'нет', 'no', 'ложь'].includes(v)) return false;
+        }
+        return null;
+    },
+
+    /**
+     * Строгое приведение к числу (Раунд 62, ListConvertNode) - тот же
+     * принцип, что и у strictCoerceBool() выше: null, если однозначно не
+     * получается, а не "предположим 0" молча.
+     * @param {*} value
+     * @returns {number|null}
+     */
+    strictCoerceNumber(value) {
+        if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+        if (typeof value === 'boolean') return value ? 1 : 0;
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed === '') return null;
+            const n = Number(trimmed); // Number(), не parseFloat() - не пропускает "5abc" как 5
+            if (!Number.isNaN(n)) return n;
+        }
+        return null;
+    },
+
     formatByType(value, formatId, decimals = null) {
         // Нечисловое значение (например, текстовый столбец с именами строк) -
         // форматы денег/процентов к нему неприменимы, показываем как есть

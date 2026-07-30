@@ -67,6 +67,16 @@ export class ListConvertNode extends BaseNode {
         this.pairNameColumn = config.pairNameColumn ?? 0; // режим 3
         this.pairValueColumn = config.pairValueColumn ?? 0; // режим 3
 
+        // Принудительный формат значений (Раунд 62) - 'auto'|'boolean'|
+        // 'number'|'text'. По умолчанию 'auto' - тип поля ввода/значения
+        // определяется ПО ФАКТИЧЕСКОМУ типу пришедшего значения (как и
+        // было раньше). Явно выбранный формат ВАЖЕН для чекбоксов - можно
+        // заставить нечисловые/небулевы исходные данные показываться
+        // чекбоксом. См. _coerceValueToFormat() про правило конфликта
+        // (не конвертируется однозначно - Boolean->false, Number->0,
+        // Text->'').
+        this.dataFormat = config.dataFormat || 'auto';
+
         this.items = config.items && config.items.length
             ? config.items.map(item => ({ id: Helpers.generateId(), name: item.name, value: item.value }))
             : [];
@@ -78,6 +88,7 @@ export class ListConvertNode extends BaseNode {
         this._sourceKind = null; // 'table'|'list'|null - для тела ноды/панели
         this._inputHeaders = [];
         this.listData = new ListData();
+        this._coerceAllItemsToFormat();
         this._syncListDataFromItems();
     }
 
@@ -208,24 +219,30 @@ export class ListConvertNode extends BaseNode {
     }
 
     _buildValueInput(item, onChange) {
-        if (typeof item.value === 'boolean') {
+        // Раунд 62 - тип поля определяется ПРИНУДИТЕЛЬНО (this.dataFormat),
+        // если он не 'auto' - иначе, как и раньше, по фактическому типу
+        // значения элемента (см. _effectiveFormatFor(), общая и для тела
+        // ноды, и для виджета Доски)
+        const effectiveFormat = this._effectiveFormatFor(item.value);
+
+        if (effectiveFormat === 'boolean') {
             const wrap = document.createElement('label');
             wrap.className = 'list-input-value list-input-value-boolean';
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.checked = item.value;
+            checkbox.checked = Helpers.coerceBool(item.value);
             checkbox.addEventListener('mousedown', (e) => e.stopPropagation());
             checkbox.addEventListener('change', (e) => onChange(e.target.checked));
             wrap.appendChild(checkbox);
             return wrap;
         }
 
-        if (typeof item.value === 'number') {
+        if (effectiveFormat === 'number') {
             const input = document.createElement('input');
             input.type = 'number';
             input.step = 'any';
             input.className = 'list-input-value';
-            input.value = item.value;
+            input.value = typeof item.value === 'number' ? item.value : (Helpers.strictCoerceNumber(item.value) ?? 0);
             input.addEventListener('mousedown', (e) => e.stopPropagation());
             input.addEventListener('input', (e) => {
                 const val = parseFloat(e.target.value);
@@ -260,6 +277,35 @@ export class ListConvertNode extends BaseNode {
     _recalculateFromItems() {
         this._syncListDataFromItems();
         if (window.nodeManager) window.nodeManager.calculateAll();
+    }
+
+    // Приводит ОДНО значение к принудительному формату (this.dataFormat) -
+    // 'auto' пропускает значение как есть. Правило конфликта (Раунд 62,
+    // по прямому указанию Mr.D) - если значение НЕ приводится однозначно
+    // (Helpers.strictCoerceBool()/strictCoerceNumber() вернули null) -
+    // Boolean -> false, Number -> 0, Text -> '' (пустая строка), а НЕ
+    // тихая догадка вроде Helpers.coerceBool() (тот всегда что-то
+    // возвращает, но недостаточно строг для этого явного выбора формата
+    // пользователем - если пользователь СКАЗАЛ "это булево поле", молчаливое
+    // "предположим true" на мусорных данных было бы хуже, чем явный false).
+    _coerceValueToFormat(value) {
+        if (this.dataFormat === 'boolean') {
+            const b = Helpers.strictCoerceBool(value);
+            return b === null ? false : b;
+        }
+        if (this.dataFormat === 'number') {
+            const n = Helpers.strictCoerceNumber(value);
+            return n === null ? 0 : n;
+        }
+        if (this.dataFormat === 'text') {
+            return value === null || value === undefined ? '' : String(value);
+        }
+        return value; // 'auto' - не трогаем
+    }
+
+    _coerceAllItemsToFormat() {
+        if (this.dataFormat === 'auto') return;
+        this.items.forEach(item => { item.value = this._coerceValueToFormat(item.value); });
     }
 
     _syncListDataFromItems() {
@@ -368,6 +414,7 @@ export class ListConvertNode extends BaseNode {
         // докстринг класса про сохранение ручных правок
         if (signature !== this._lastConversionSignature) {
             this.items = buildFreshItems();
+            this._coerceAllItemsToFormat();
             this._lastConversionSignature = signature;
         }
 
@@ -395,6 +442,14 @@ export class ListConvertNode extends BaseNode {
     // что у ListInputNode.getDashboardWidget() (Раунды 32/37/38) - правки
     // через ctx.onEdit пишут в DashboardNode (передаётся ПОЛНЫЙ
     // обновлённый массив), а не напрямую в this.items.
+    // Общая логика "каким полем показывать это значение" - тело ноды
+    // (_buildValueInput) и виджет Доски используют ЕЁ ЖЕ, чтобы не
+    // разойтись в поведении между графом и Доской
+    _effectiveFormatFor(value) {
+        if (this.dataFormat !== 'auto') return this.dataFormat;
+        return typeof value === 'boolean' ? 'boolean' : (typeof value === 'number' ? 'number' : 'text');
+    }
+
     getDashboardWidget(ctx = {}) {
         const node = this;
         const sourceItems = Array.isArray(ctx.overrideValue) ? ctx.overrideValue : node.items;
@@ -412,11 +467,11 @@ export class ListConvertNode extends BaseNode {
                         const nameCell = document.createElement('td');
                         nameCell.textContent = item.name || '';
                         const valueCell = document.createElement('td');
-                        if (typeof item.value === 'boolean') {
+                        if (node._effectiveFormatFor(item.value) === 'boolean') {
                             const checkbox = document.createElement('input');
                             checkbox.type = 'checkbox';
                             checkbox.className = 'table-cell-checkbox';
-                            checkbox.checked = item.value;
+                            checkbox.checked = Helpers.coerceBool(item.value);
                             checkbox.disabled = true;
                             valueCell.appendChild(checkbox);
                         } else {
@@ -460,21 +515,22 @@ export class ListConvertNode extends BaseNode {
                         else { node.items[idx].value = newValue; node._recalculateFromItems(); }
                     };
 
-                    if (typeof item.value === 'boolean') {
+                    const effectiveFormat = node._effectiveFormatFor(item.value);
+                    if (effectiveFormat === 'boolean') {
                         const checkbox = document.createElement('input');
                         checkbox.type = 'checkbox';
                         checkbox.className = 'board-widget-list-input-value';
-                        checkbox.checked = item.value;
+                        checkbox.checked = Helpers.coerceBool(item.value);
                         checkbox.addEventListener('mousedown', (e) => e.stopPropagation());
                         checkbox.addEventListener('click', (e) => e.stopPropagation());
                         checkbox.addEventListener('change', (e) => applyValueChange(e.target.checked));
                         valueCell.appendChild(checkbox);
-                    } else if (typeof item.value === 'number') {
+                    } else if (effectiveFormat === 'number') {
                         const valueInput = document.createElement('input');
                         valueInput.type = 'number';
                         valueInput.step = 'any';
                         valueInput.className = 'board-widget-list-input board-widget-list-input-value';
-                        valueInput.value = item.value;
+                        valueInput.value = typeof item.value === 'number' ? item.value : (Helpers.strictCoerceNumber(item.value) ?? 0);
                         valueInput.addEventListener('mousedown', (e) => e.stopPropagation());
                         valueInput.addEventListener('click', (e) => e.stopPropagation());
                         valueInput.addEventListener('input', (e) => {
@@ -505,6 +561,32 @@ export class ListConvertNode extends BaseNode {
 
     getInspectorSchema() {
         const fields = super.getInspectorSchema();
+
+        // Раунд 62 - формат значений НЕ зависит от источника (актуален и
+        // для списка-источника, и для строк, введённых вручную без
+        // подключения вовсе) - поэтому ДО развилки по _sourceKind ниже
+        fields.push({ type: 'section', label: 'Формат значений' });
+        fields.push({
+            key: 'dataFormat',
+            label: 'Принудительный формат (важно для чекбоксов)',
+            type: 'select',
+            options: [
+                { value: 'auto', label: 'Авто (по фактическому типу)' },
+                { value: 'boolean', label: 'Логический (чекбокс)' },
+                { value: 'number', label: 'Число' },
+                { value: 'text', label: 'Текст' }
+            ],
+            get: () => this.dataFormat,
+            set: (v) => {
+                this.dataFormat = v;
+                this._coerceAllItemsToFormat();
+                this._syncListDataFromItems();
+                const el = document.querySelector(`[data-node-id="${this.id}"]`);
+                const rowsContainer = el?.querySelector('.list-input-rows');
+                if (rowsContainer) this.renderRows(rowsContainer);
+                if (window.nodeManager) window.nodeManager.calculateAll();
+            }
+        });
 
         if (this._sourceKind !== 'table') {
             fields.push({

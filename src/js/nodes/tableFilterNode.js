@@ -11,6 +11,7 @@
  */
 
 import { BaseNode } from './baseNode.js';
+import { Helpers } from '../utils/helpers.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
@@ -46,7 +47,8 @@ import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
  * просто перечень допустимых значений:
  *
  *   - Каждый элемент списка - пара {name, value}. `value` СТРОГО
- *     приводится к bool (_strictCoerceBool()) - реальный boolean, числа
+ *     приводится к bool (`Helpers.strictCoerceBool()`, вынесена в общее
+ *     место в Раунде 62) - реальный boolean, числа
  *     0/1, или текст "да"/"нет"/"true"/"false"/"yes"/"no"/"истина"/"ложь"
  *     (регистронезависимо). Любое ДРУГОЕ значение (нераспознанная
  *     строка, число не 0/1 и т.п.) - ОШИБКА, а не тихое предположение.
@@ -288,27 +290,6 @@ export class TableFilterNode extends BaseNode {
         setTimeout(() => { this._isRerendering = false; }, 100);
     }
 
-    // Раунд 59 - строгое приведение к bool специально для списков-условий
-    // (в отличие от Helpers.coerceBool() - тот МЯГКИЙ, никогда не падает,
-    // любую нераспознанную строку тихо считает false). Тут наоборот:
-    // нераспознанное значение - ЯВНАЯ ошибка (null), а не тихое
-    // предположение - иначе случайно подключённый список "не про то"
-    // (например, список цен) молча превратился бы в мусорный фильтр.
-    static _strictCoerceBool(value) {
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number') {
-            if (value === 0) return false;
-            if (value === 1) return true;
-            return null; // любое другое число - неоднозначно, не 0/1
-        }
-        if (typeof value === 'string') {
-            const v = value.trim().toLowerCase();
-            if (['true', '1', 'да', 'yes', 'истина'].includes(v)) return true;
-            if (['false', '0', 'нет', 'no', 'ложь'].includes(v)) return false;
-        }
-        return null;
-    }
-
     // Строит "таблицу членства" имя -> true/false из подключённого списка
     // (Раунд 59) - каждый элемент списка {name, value} говорит "у значения
     // ИМЯ результат ЗНАЧЕНИЕ (после строгого приведения к bool)". Если
@@ -320,7 +301,7 @@ export class TableFilterNode extends BaseNode {
         const map = new Map();
         let hasError = false;
         items.forEach(item => {
-            const b = TableFilterNode._strictCoerceBool(item.value);
+            const b = Helpers.strictCoerceBool(item.value);
             if (b === null) {
                 hasError = true;
             } else {
