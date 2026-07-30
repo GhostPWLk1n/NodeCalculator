@@ -6,14 +6,14 @@
  * @file    treeFormatNode.js
  * @brief   Обработчик: оформление свода "Дерева" (формат/ширина/цвет полей), с сохранением иерархии
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
-import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
+import { TreeWidgetRenderer } from '../utils/treeWidgetRenderer.js';
 
 /**
  * TreeFormatNode ("Оформление дерева") - Раунд 56, план 1.6.0 п.8 (по
@@ -48,15 +48,23 @@ export class TreeFormatNode extends BaseNode {
         // тот же принцип, что у TableFormatNode.columnStyles
         this.columnStyles = Array.isArray(config.columnStyles) ? config.columnStyles : [];
 
-        // Виджет Доски (см. utils/tableWidgetRenderer.js) - показывает
-        // ПЛОСКИЙ свод (как TableFormatNode) - для показа именно
-        // ИЕРАРХИИ на Доске понадобится отдельная задача, не в этом раунде
+        // Виджет Доски - см. Раунд 71 ниже (this.dashboardExpandedState) -
+        // настоящее раскрываемое дерево, не плоский свод. Часть этих
+        // полей (boardShowRowNumbers/boardSortColumn/boardSortDirection)
+        // была актуальна только для прежнего плоского TableWidgetRenderer
+        // и сейчас не читается новым TreeWidgetRenderer - оставлены как
+        // есть (безвредные неиспользуемые поля) ради простоты миграции,
+        // не в счёт зебры/линий ниже - те по-прежнему применяются.
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
         this.boardZebra = config.boardZebra ?? false;
         this.boardShowRowLines = config.boardShowRowLines ?? true;
         this.boardShowColumnLines = config.boardShowColumnLines ?? false;
+        // Раунд 71 - виджет Доски теперь настоящее раскрываемое дерево
+        // (TreeWidgetRenderer) - см. подробности в treeNode.js/
+        // treeWidgetRenderer.js
+        this.dashboardExpandedState = config.dashboardExpandedState || {};
     }
 
     createContent() {
@@ -152,26 +160,41 @@ export class TreeFormatNode extends BaseNode {
             return this.value;
         }
 
-        const columns = baseTable.columns.map(col => ({
-            header: col.header,
-            format: col.format,
-            values: col.values
-        }));
+        // Багфикс: докстринг класса с самого начала обещал, что служебный
+        // столбец "Ветка" (имя ветки, всегда первый у TreeNode.tableData)
+        // НЕ входит в список оформляемых полей - но код ниже маппил ВСЕ
+        // столбцы baseTable без исключения, поэтому columnStyles[0] на
+        // самом деле применялся к "Ветке", а не к первому РЕАЛЬНОМУ полю -
+        // панель показывала "Поле 1 — Ветка" и любая правка (формат/итог/
+        // цвет/ширина), которую пользователь ожидал увидеть на своём
+        // первом настоящем столбце, вместо этого улетала на служебное имя
+        // ветки. Теперь "Ветка" явно исключена из _applyColumnStyles() и
+        // передаётся насквозь как есть, первой колонкой, без оформления -
+        // ровно так, как и было изначально задокументировано.
+        const branchColumn = baseTable.columns.find(col => col.header === 'Ветка');
+        const styleableColumns = baseTable.columns
+            .filter(col => col.header !== 'Ветка')
+            .map(col => ({ header: col.header, format: col.format, values: col.values }));
 
-        this.tableData = new TableData(this._applyColumnStyles(columns), { ...baseTable.metadata });
+        const formattedColumns = branchColumn
+            ? [branchColumn, ...this._applyColumnStyles(styleableColumns)]
+            : this._applyColumnStyles(styleableColumns);
+
+        this.tableData = new TableData(formattedColumns, { ...baseTable.metadata });
         this.value = this.tableData.rowCount;
         return this.value;
     }
 
-    // Виджет Доски - плоский свод, код общий с остальными табличными
-    // нодами (см. utils/tableWidgetRenderer.js)
+    // Виджет Доски - Раунд 71: настоящее раскрываемое дерево с
+    // применённым оформлением (this.tableData уже несёт форматы/цвета из
+    // columnStyles - см. calculate()), не плоский свод.
     getDashboardWidget() {
         const node = this;
         return {
-            type: 'table',
+            type: 'tree',
             title: this.customName || null,
             render: (container) => {
-                container.appendChild(TableWidgetRenderer.build(node));
+                container.appendChild(TreeWidgetRenderer.build(node));
             }
         };
     }
@@ -186,8 +209,14 @@ export class TreeFormatNode extends BaseNode {
 
         fields.push({ type: 'section', label: 'Оформление по полю' });
 
+        // Смещение +1: this.tableData.columns[0] - служебная "Ветка"
+        // (передаётся насквозь без оформления, см. calculate()), поэтому
+        // columnStyles[i] соответствует columns[i+1], а не columns[i]
+        // напрямую - иначе подпись поля в панели снова указывала бы не
+        // на тот столбец (тот же баг, что уже исправлен в calculate()).
+        const headerOffset = (this.tableData.columns[0]?.header === 'Ветка') ? 1 : 0;
         this.columnStyles.forEach((style, i) => {
-            const header = this.tableData.columns[i]?.header;
+            const header = this.tableData.columns[i + headerOffset]?.header;
             fields.push({ type: 'section', label: `Поле ${i + 1}${header ? ' — ' + header : ''}` });
 
             fields.push({
@@ -247,7 +276,7 @@ export class TreeFormatNode extends BaseNode {
             });
         });
 
-        fields.push({ type: 'section', label: 'Оформление на Доске (плоский свод)' });
+        fields.push({ type: 'section', label: 'Оформление на Доске (дерево)' });
 
         fields.push({
             key: 'boardZebra',

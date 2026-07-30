@@ -6,7 +6,7 @@
  * @file    constants.js
  * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -57,7 +57,8 @@ export const Constants = {
         gantt: 'Диаграмма Ганта',
         dashboard: 'Дашборд',
         exportXlsx: 'Экспорт в Excel',
-        exportJson: 'Экспорт JSON'
+        exportJson: 'Экспорт JSON',
+        treeToTable: 'Дерево → Таблица'
     },
 
     // Форматы отображения числового значения. Источник данных может

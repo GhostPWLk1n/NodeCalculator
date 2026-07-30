@@ -6,7 +6,7 @@
  * @file    listConvertNode.js
  * @brief   "Преобразование списка" - контейнер преобразования Таблица/Список -> редактируемый Список
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -274,9 +274,23 @@ export class ListConvertNode extends BaseNode {
         this._recalculateFromItems();
     }
 
+    // Багфикс: addRow()/removeRow() меняют высоту ноды (строк стало
+    // больше/меньше), а значит и позицию outRow/выходного сокета внизу
+    // ноды. calculateAll() -> renderer.updateAllDisplays() обновляет
+    // только ТЕКСТ в уже существующем DOM, но НЕ перерисовывает сами
+    // SVG-линии соединений (за это отвечает отдельный
+    // renderer.drawAllConnections() - вызывается явно, не изнутри
+    // calculateAll()). Без этого вызова провод к выходу оставался
+    // нарисован на старой позиции - визуально "отрывался" от
+    // сдвинувшегося сокета при каждом добавлении/удалении строки. Тот
+    // же приём, что уже применён в OperationNode.rerender() для
+    // аналогичного случая (динамические сокеты меняют размер ноды).
     _recalculateFromItems() {
         this._syncListDataFromItems();
         if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) {
+            window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+        }
     }
 
     // Приводит ОДНО значение к принудительному формату (this.dataFormat) -

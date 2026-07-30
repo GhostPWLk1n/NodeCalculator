@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -45,6 +45,7 @@ import { ImageNode } from './nodes/imageNode.js';
 import { ProxyNode } from './nodes/proxyNode.js';
 import { TreeNode } from './nodes/treeNode.js';
 import { TreeFormatNode } from './nodes/treeFormatNode.js';
+import { TreeToTableNode } from './nodes/treeToTableNode.js';
 import { TreeViewerNode } from './nodes/treeViewerNode.js';
 import { TableInjectNode } from './nodes/tableInjectNode.js';
 import { TableRemoveNode } from './nodes/tableRemoveNode.js';
@@ -134,6 +135,7 @@ nodeManager.registerNodeType('image', ImageNode);
 nodeManager.registerNodeType('proxy', ProxyNode);
 nodeManager.registerNodeType('tree', TreeNode);
 nodeManager.registerNodeType('treeFormat', TreeFormatNode);
+nodeManager.registerNodeType('treeToTable', TreeToTableNode);
 nodeManager.registerNodeType('treeViewer', TreeViewerNode);
 nodeManager.registerNodeType('tableInject', TableInjectNode);
 nodeManager.registerNodeType('tableRemove', TableRemoveNode);

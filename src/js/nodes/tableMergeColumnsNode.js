@@ -6,7 +6,7 @@
  * @file    tableMergeColumnsNode.js
  * @brief   Обработчик: объединяет несколько столбцов таблицы в один (сумма/конкатенация)
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

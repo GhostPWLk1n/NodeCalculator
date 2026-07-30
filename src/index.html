@@ -145,6 +145,11 @@
                         <span class="node-name">Преобразование списка</span>
                         <span class="node-badge">Операция</span>
                     </div>
+                    <div class="node-item" data-type="treeToTable" onclick="window.addNode('treeToTable', 400, 300)">
+                        <span class="node-icon">🌳</span>
+                        <span class="node-name">Дерево → Таблица</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                 </div>
             </div>
             
@@ -189,11 +194,6 @@
                     <div class="node-item" data-type="tableRemove" onclick="window.addNode('tableRemove', 400, 300)">
                         <span class="node-icon">➖</span>
                         <span class="node-name">Изъятие из таблицы</span>
-                        <span class="node-badge">Данные</span>
-                    </div>
-                    <div class="node-item" data-type="tableFormat" onclick="window.addNode('tableFormat', 400, 300)">
-                        <span class="node-icon">🎨</span>
-                        <span class="node-name">Оформление таблицы</span>
                         <span class="node-badge">Данные</span>
                     </div>
                     <div class="node-item" data-type="tableMergeColumns" onclick="window.addNode('tableMergeColumns', 400, 300)">
@@ -274,10 +274,30 @@
                         <span class="node-name">Дашборд</span>
                         <span class="node-badge">Board</span>
                     </div>
+                </div>
+            </div>
+
+            <!-- Раунд 70 - "Оформление" выделено в отдельную категорию
+                 сайдбара (по просьбе Mr.D): раньше TableFormatNode жила в
+                 "Таблицы", TreeFormatNode - в "Доски" - обе решают одну и
+                 ту же задачу (формат/ширина/итог/цвет по полям), логичнее
+                 рядом друг с другом, а не в разных, тематически не
+                 связанных разделах. Сами ноды остаются РАЗНЫМИ классами
+                 (не объединены в одну с переключателем режима) - по
+                 решению Mr.D, у них разный источник данных (обычная
+                 Data-таблица vs свод "Дерева" с сохранением иерархии). -->
+            <div class="sidebar-section">
+                <div class="section-title">🎨 Оформление</div>
+                <div class="node-list">
+                    <div class="node-item" data-type="tableFormat" onclick="window.addNode('tableFormat', 400, 300)">
+                        <span class="node-icon">🎨</span>
+                        <span class="node-name">Оформление таблицы</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
                     <div class="node-item" data-type="treeFormat" onclick="window.addNode('treeFormat', 400, 300)">
                         <span class="node-icon">🎨</span>
                         <span class="node-name">Оформление дерева</span>
-                        <span class="node-badge">Board</span>
+                        <span class="node-badge">Данные</span>
                     </div>
                 </div>
             </div>

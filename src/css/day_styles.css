@@ -885,7 +885,7 @@ body {
 .node.number-node-compact .number-node-socket-container {
     display: flex;
     align-items: center;
-    margin-left: 4px;
+    margin-left: auto;
 }
 
 .node.number-node-compact .node-content {
@@ -899,7 +899,7 @@ body {
 .number-node-socket-container {
     display: flex;
     align-items: center;
-    margin-left: 4px;
+    margin-left: auto;
 }
 
 .number-input-compact::-webkit-inner-spin-button,
@@ -1042,7 +1042,7 @@ body {
 .string-node-socket-container {
     display: flex;
     align-items: center;
-    margin-left: 4px;
+    margin-left: auto;
 }
 
 .node.string-node-compact .socket.output-socket {
@@ -1134,7 +1134,7 @@ body {
 .boolean-node-socket-container {
     display: flex;
     align-items: center;
-    margin-left: 4px;
+    margin-left: auto;
 }
 
 .node.boolean-node-compact .socket.output-socket {
@@ -1884,6 +1884,40 @@ body {
 .tree-viewer-row-leaf .tree-viewer-name-text {
     font-style: italic;
     color: var(--md-text-secondary);
+}
+
+/* Раунд 70 - см. подробный комментарий в styles.css */
+.tree-viewer-row-root > .tree-viewer-name-cell .tree-viewer-name-text {
+    color: var(--md-primary);
+    font-weight: 600;
+}
+
+.tree-viewer-row-branch > .tree-viewer-name-cell .tree-viewer-name-text {
+    color: var(--md-text);
+    font-weight: 500;
+}
+
+.tree-viewer-row-leaf > .tree-viewer-name-cell .tree-viewer-name-text {
+    color: var(--md-text-secondary);
+    font-weight: 400;
+}
+
+.tree-viewer-guide {
+    display: inline-block;
+    width: 16px;
+    align-self: stretch;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.tree-viewer-guide::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--md-divider);
 }
 
 .tree-viewer-name-cell {
@@ -3038,4 +3072,136 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
         box-shadow: none !important;
         transform: none !important;
     }
+}
+
+/* ============================================
+   ВИДЖЕТ ДОСКИ "ДЕРЕВО" (Раунд 71) - парность с styles.css
+   ============================================ */
+.board-widget-tree {
+    font-size: 13px;
+}
+
+.board-widget-tree-empty {
+    color: var(--md-text-disabled);
+    font-size: 12px;
+    text-align: center;
+    padding: 10px 0;
+}
+
+.board-widget-tree-header-row,
+.board-widget-tree-row {
+    display: flex;
+    align-items: stretch;
+}
+
+.board-widget-tree-row {
+    border-bottom: 1px solid var(--md-divider);
+}
+
+.board-widget-tree-no-row-lines .board-widget-tree-row {
+    border-bottom: none;
+}
+
+.board-widget-tree-header-row {
+    background: rgba(0, 0, 0, 0.02);
+    border-bottom: 1px solid var(--md-divider);
+}
+
+.board-widget-tree-zebra .board-widget-tree-row-odd {
+    background: rgba(0, 0, 0, 0.015);
+}
+
+.board-widget-tree-col-lines .board-widget-tree-value-cell {
+    border-left: 1px solid var(--md-divider);
+}
+
+.board-widget-tree-row-root > .board-widget-tree-name-cell .board-widget-tree-name-text {
+    color: var(--board-widget-accent, var(--md-primary));
+    font-weight: 600;
+}
+
+.board-widget-tree-row-branch > .board-widget-tree-name-cell .board-widget-tree-name-text {
+    color: var(--md-text);
+    font-weight: 500;
+}
+
+.board-widget-tree-row-leaf > .board-widget-tree-name-cell .board-widget-tree-name-text {
+    color: var(--md-text-secondary);
+    font-style: italic;
+}
+
+.board-widget-tree-name-cell {
+    flex: 1 1 auto;
+    min-width: 100px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px;
+    color: var(--md-text);
+    overflow: hidden;
+}
+
+.board-widget-tree-header-cell {
+    color: var(--md-text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+}
+
+.board-widget-tree-value-cell {
+    flex: 0 0 80px;
+    padding: 5px 8px;
+    color: var(--md-text);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.board-widget-tree-value-cell-center {
+    text-align: center;
+}
+
+.board-widget-tree-toggle {
+    width: 16px;
+    flex-shrink: 0;
+    text-align: center;
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.board-widget-tree-toggle:hover {
+    color: var(--md-primary);
+}
+
+.board-widget-tree-toggle-spacer {
+    width: 16px;
+    flex-shrink: 0;
+}
+
+.board-widget-tree-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.board-widget-tree-guide {
+    display: inline-block;
+    width: 16px;
+    align-self: stretch;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.board-widget-tree-guide::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--md-divider);
 }

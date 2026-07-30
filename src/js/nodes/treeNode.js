@@ -6,14 +6,14 @@
  * @file    treeNode.js
  * @brief   "Дерево" - собирает таблицы/списки в именованные ветки, считает итоги по совпадающим полям
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
-import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
+import { TreeWidgetRenderer } from '../utils/treeWidgetRenderer.js';
 
 /**
  * TreeNode ("Дерево") - план 1.6.0, п.8. По описанию Mr.D - "фактически
@@ -84,6 +84,12 @@ export class TreeNode extends BaseNode {
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
+        // Раунд 71 - виджет Доски теперь рисует настоящее раскрываемое
+        // дерево (TreeWidgetRenderer), а не плоский свод через
+        // TableWidgetRenderer - state развёрнутости/свёрнутости веток
+        // хранится здесь же, мутируется кликом прямо на виджете (см.
+        // treeWidgetRenderer.js). Путь -> false, если свёрнут.
+        this.dashboardExpandedState = config.dashboardExpandedState || {};
     }
 
     createContent() {
@@ -392,15 +398,18 @@ export class TreeNode extends BaseNode {
         return this.customName || 'Дерево';
     }
 
-    // Виджет Доски (см. dashboardNode.js/boardManager.js) - код общий, см.
-    // utils/tableWidgetRenderer.js.
+    // Виджет Доски (см. dashboardNode.js/boardManager.js) - Раунд 71:
+    // настоящее раскрываемое дерево (TreeWidgetRenderer), не плоский
+    // свод - по прямой жалобе Mr.D ("в дашбордах дерево по-прежнему
+    // рисуется просто как таблица"). TableWidgetRenderer больше не
+    // используется здесь (остаётся у остальных Data-нод).
     getDashboardWidget() {
         const node = this;
         return {
-            type: 'table',
+            type: 'tree',
             title: this.customName || null,
             render: (container) => {
-                container.appendChild(TableWidgetRenderer.build(node));
+                container.appendChild(TreeWidgetRenderer.build(node));
             }
         };
     }

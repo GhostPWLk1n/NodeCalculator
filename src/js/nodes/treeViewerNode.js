@@ -6,7 +6,7 @@
  * @file    treeViewerNode.js
  * @brief   Просмотр иерархии "Дерева" - раскрываемые/сворачиваемые вложенные ветки
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -226,11 +226,27 @@ export class TreeViewerNode extends BaseNode {
         const rows = this._buildRows();
         rows.forEach(row => {
             const rowEl = document.createElement('div');
-            rowEl.className = row.isLeafRow ? 'tree-viewer-row tree-viewer-row-leaf' : 'tree-viewer-row';
+            // Роль строки для стилизации (Раунд 70, по просьбе Mr.D -
+            // "сейчас всё одного цвета, непонятно где корень/ветка/лист"):
+            //   root   - depth===0 (непосредственная ветка корня)
+            //   branch - depth>0 и есть дети (вложенное поддерево)
+            //   leaf   - строка листа (isLeafRow) ИЛИ ветка без детей
+            const role = row.isLeafRow ? 'leaf' : (row.depth === 0 ? 'root' : (row.hasChildren ? 'branch' : 'leaf'));
+            rowEl.className = `tree-viewer-row tree-viewer-row-${role}`;
+            rowEl.dataset.depth = String(row.depth);
 
             const nameCell = document.createElement('div');
             nameCell.className = 'tree-viewer-name-cell';
-            nameCell.style.paddingLeft = `${row.depth * 16 + 6}px`;
+
+            // Направляющие линии отступа (Раунд 70) - одна на уровень
+            // вложенности, вместо голого paddingLeft: помогает считать
+            // глубину на глаз в широком дереве, тот же приём, что в
+            // файловых деревьях IDE (VS Code и т.п.)
+            for (let d = 0; d < row.depth; d++) {
+                const guide = document.createElement('span');
+                guide.className = 'tree-viewer-guide';
+                nameCell.appendChild(guide);
+            }
 
             if (row.hasChildren) {
                 const toggle = document.createElement('span');

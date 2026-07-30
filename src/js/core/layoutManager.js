@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.7.0
+ * @version 1.7.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -16,7 +16,7 @@
 // ниже). Один список на всех, чтобы не повторять его в каждой строке.
 const TABLE_WIDGET_TYPES = [
     'table', 'tableInject', 'tableRemove', 'tableFormat',
-    'tableMergeColumns', 'tableJoin', 'tableFilter', 'tableUnique', 'tree', 'treeFormat', 'jsonImport'
+    'tableMergeColumns', 'tableJoin', 'tableFilter', 'tableUnique', 'tree', 'treeFormat', 'jsonImport', 'treeToTable'
 ];
 
 export class LayoutManager {
@@ -275,9 +275,9 @@ export class LayoutManager {
                     // Раунде 56) - ТОЛЬКО у "форматирующих" нод -
                     // остальные табличные/древесные ноды намеренно не
                     // хламятся оформлением, см. докстринг tableFormatNode.js
-                    boardZebra: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardZebra : undefined,
-                    boardShowRowLines: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardShowRowLines : undefined,
-                    boardShowColumnLines: ['tableFormat', 'treeFormat'].includes(n.type) ? n.boardShowColumnLines : undefined,
+                    boardZebra: ['tableFormat', 'treeFormat', 'treeToTable'].includes(n.type) ? n.boardZebra : undefined,
+                    boardShowRowLines: ['tableFormat', 'treeFormat', 'treeToTable'].includes(n.type) ? n.boardShowRowLines : undefined,
+                    boardShowColumnLines: ['tableFormat', 'treeFormat', 'treeToTable'].includes(n.type) ? n.boardShowColumnLines : undefined,
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
                     sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
@@ -354,6 +354,11 @@ export class LayoutManager {
                     columnStyles: ['tableFormat', 'treeFormat'].includes(n.type) && n.columnStyles
                         ? n.columnStyles.map(s => ({ ...s }))
                         : undefined,
+
+                    // TreeToTableNode: компоновка развёртки + глубина
+                    // (Раунд 70) - см. докстринг treeToTableNode.js
+                    layoutMode: n.type === 'treeToTable' ? n.layoutMode : undefined,
+                    maxDepth: n.type === 'treeToTable' ? n.maxDepth : undefined,
 
                     // TableMergeColumnsNode: какие столбцы объединяем, как, куда
                     sourceColumns: n.type === 'tableMergeColumns' ? [...n.sourceColumns] : undefined,
