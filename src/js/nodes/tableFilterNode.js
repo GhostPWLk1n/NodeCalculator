@@ -6,7 +6,7 @@
  * @file    tableFilterNode.js
  * @brief   Обработчик: отсеивает строки таблицы по условиям на столбцы (список значений или сравнение)
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -39,6 +39,17 @@ import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
  * this.columnFilters синхронизируется по длине с текущим набором
  * столбцов на каждый calculate() - лишние условия обрезаются,
  * недостающие столбцы получают условие "" (без ограничения).
+ *
+ * РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ (добавлено в версии 1.7.6):
+ *   - Для каждого столбца можно включить режим регулярных выражений
+ *     (this.useRegex[i] - boolean). В этом режиме условие интерпретируется
+ *     как регулярное выражение (без учёта регистра по умолчанию).
+ *   - Поддерживаются флаги: можно добавить в конце выражения после
+ *     закрывающего слеша, например: jho*i или ^test$m
+ *   - Для инвертирования результата используйте оператор "!=" перед
+ *     регулярным выражением, например: !=jho*i или !="jho*i"
+ *   - Для фильтрации пустых значений: != "" (исключает пустые строки)
+ *     или = "" (оставляет только пустые строки)
  *
  * СПИСОК ВМЕСТО ТЕКСТА (Раунд 57, логика переработана в Раунде 59) - у
  * каждого столбца ЕСТЬ СВОЙ динамический LIST-вход (this.inputSockets =
@@ -89,6 +100,9 @@ export class TableFilterNode extends BaseNode {
 
         // Условие для каждого столбца входной таблицы - см. докстринг класса
         this.columnFilters = Array.isArray(config.columnFilters) ? config.columnFilters : [];
+        
+        // Флаги использования регулярных выражений для каждого столбца
+        this.useRegex = Array.isArray(config.useRegex) ? config.useRegex : [];
 
         this._sourceName = null;
         this._filterColumnHeaders = []; // для подписей сокетов в теле ноды
@@ -220,8 +234,10 @@ export class TableFilterNode extends BaseNode {
 
     _statusText() {
         const activeCount = this.columnFilters.filter(f => (f || '').trim()).length;
+        const regexCount = this.useRegex.filter(r => r === true).length;
+        const regexInfo = regexCount > 0 ? ` (regex: ${regexCount})` : '';
         return activeCount
-            ? `→ ${this.value ?? 0} строк прошло (условий: ${activeCount})`
+            ? `→ ${this.value ?? 0} строк прошло (условий: ${activeCount}${regexInfo})`
             : '→ без условий - пропускает всё';
     }
 
@@ -256,14 +272,71 @@ export class TableFilterNode extends BaseNode {
         return String(cellValue ?? '').trim().toLowerCase() === trimmed.toLowerCase();
     }
 
+    // Обработка регулярных выражений с поддержкой флагов
+    static _matchesRegex(cellValue, patternStr) {
+        try {
+            // Проверяем, является ли строка регулярным выражением в формате /pattern/flags
+            const regexMatch = /^\/(.+)\/([gimuy]*)$/.exec(patternStr.trim());
+            let regex;
+            if (regexMatch) {
+                // Пользователь указал флаги
+                regex = new RegExp(regexMatch[1], regexMatch[2] || 'i');
+            } else {
+                // Просто текст - экранируем специальные символы и создаём RegExp
+                const escaped = patternStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                regex = new RegExp(escaped, 'i');
+            }
+            
+            const cellStr = String(cellValue ?? '');
+            return regex.test(cellStr);
+        } catch (e) {
+            // Если регулярное выражение невалидно, возвращаем false
+            console.warn('Invalid regex pattern:', patternStr, e);
+            return false;
+        }
+    }
+
     // Авто-определение вида условия - сравнение (по оператору в начале
     // строки) или перечень значений через запятую - см. докстринг класса
-    static _matchesFilter(cellValue, filterStr) {
-        const compMatch = /^(>=|<=|!=|<>|>|<|={1,2})\s*(.+)$/.exec(filterStr.trim());
+    static _matchesFilter(cellValue, filterStr, useRegex = false) {
+        const trimmed = filterStr.trim();
+        
+        // Если включён режим регулярных выражений
+        if (useRegex) {
+            // Проверяем, есть ли оператор инвертирования перед регулярным выражением
+            const invertMatch = /^(!=|<>)\s*(.+)$/.exec(trimmed);
+            if (invertMatch) {
+                // Инвертированное регулярное выражение (не должно совпадать)
+                const pattern = invertMatch[2].trim();
+                // Специальная обработка для пустых значений
+                if (pattern === '""' || pattern === "''") {
+                    return cellValue !== '' && cellValue !== null && cellValue !== undefined;
+                }
+                return !TableFilterNode._matchesRegex(cellValue, pattern);
+            }
+            
+            // Обычное регулярное выражение
+            const eqMatch = /^(=|==)?\s*(.+)$/.exec(trimmed);
+            if (eqMatch) {
+                const pattern = eqMatch[2].trim();
+                // Специальная обработка для пустых значений
+                if (pattern === '""' || pattern === "''") {
+                    return cellValue === '' || cellValue === null || cellValue === undefined;
+                }
+                return TableFilterNode._matchesRegex(cellValue, pattern);
+            }
+            
+            // Если не удалось распарсить, пробуем как простое регулярное выражение
+            return TableFilterNode._matchesRegex(cellValue, trimmed);
+        }
+        
+        // Обычный режим (без регулярных выражений)
+        const compMatch = /^(>=|<=|!=|<>|>|<|={1,2})\s*(.+)$/.exec(trimmed);
         if (compMatch) {
             return TableFilterNode._compareValue(cellValue, compMatch[1], compMatch[2]);
         }
-        const list = filterStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        
+        const list = trimmed.split(',').map(s => s.trim()).filter(s => s.length > 0);
         if (list.length === 0) return true;
         return list.some(item => TableFilterNode._valueEquals(cellValue, item));
     }
@@ -334,6 +407,11 @@ export class TableFilterNode extends BaseNode {
         // тот же приём, что у columnStyles в TableFormatNode (Раунд 44)
         while (this.columnFilters.length < baseTable.columns.length) this.columnFilters.push('');
         this.columnFilters.length = baseTable.columns.length;
+        
+        // Синхронизация флагов регулярных выражений
+        while (this.useRegex.length < baseTable.columns.length) this.useRegex.push(false);
+        this.useRegex.length = baseTable.columns.length;
+        
         this._filterColumnHeaders = baseTable.columns.map(c => c.header);
 
         // Раунд 57 - синхронизация LIST-сокетов (1 на столбец) по
@@ -397,7 +475,11 @@ export class TableFilterNode extends BaseNode {
                 }
                 const filterStr = (this.columnFilters[c] || '').trim();
                 if (!filterStr) continue;
-                if (!TableFilterNode._matchesFilter(baseTable.columns[c].values[r], filterStr)) {
+                if (!TableFilterNode._matchesFilter(
+                    baseTable.columns[c].values[r], 
+                    filterStr, 
+                    this.useRegex[c] || false
+                )) {
                     passes = false;
                     break;
                 }
@@ -472,19 +554,51 @@ export class TableFilterNode extends BaseNode {
         fields.push({ type: 'section', label: 'Условия по столбцам' });
         fields.push({
             type: 'section',
-            label: 'Список через запятую ("0, 1, 5") или сравнение (">30", "!=0") - пусто = без условия. Подключённый список (сокет в теле ноды) полностью перебивает текст здесь.'
+            label: 'Список через запятую ("0, 1, 5") или сравнение (">30", "!=0") - пусто = без условия. Подключённый список (сокет в теле ноды) полностью перебивает текст здесь. Включите Regex для поиска по фрагменту.'
         });
 
         this.columnFilters.forEach((filterStr, i) => {
             const header = this.tableData.columns[i]?.header;
             const isOverridden = this.isListSocketConnected(i + 1);
+            const colName = header || `Столбец ${i + 1}`;
+            
+            // Группа для каждого столбца
+            fields.push({
+                key: `filterGroup_${i}`,
+                type: 'section',
+                label: colName + (isOverridden ? ' — переопределено подключённым списком' : '')
+            });
+
+            // Поле ввода условия
             fields.push({
                 key: `filterCol${i}`,
-                label: (header || `Столбец ${i + 1}`) + (isOverridden ? ' — переопределено подключённым списком' : ''),
+                label: 'Условие',
                 type: 'text',
                 get: () => this.columnFilters[i] || '',
                 set: (v) => { this.columnFilters[i] = v || ''; }
             });
+
+            // Кнопка-переключатель для регулярных выражений
+            fields.push({
+                key: `regexToggle${i}`,
+                label: 'Регулярное выражение',
+                type: 'checkbox',
+                disabled: isOverridden,
+                get: () => this.useRegex[i] || false,
+                set: (v) => { 
+                    this.useRegex[i] = !!v; 
+                    // При изменении режима автоматически пересчитываем
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                }
+            });
+
+            // Подсказка для регулярных выражений
+            if (this.useRegex[i]) {
+                fields.push({
+                    type: 'section',
+                    label: '💡 Примеры: /jho*/i - поиск по фрагменту, !=/jho*/i - исключить фрагмент, ="" - только пустые, !="" - исключить пустые'
+                });
+            }
         });
 
         return fields;

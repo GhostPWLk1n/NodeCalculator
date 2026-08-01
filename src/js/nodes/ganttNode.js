@@ -6,17 +6,37 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
+import { Helpers } from '../utils/helpers.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
+import { HolidayParser } from '../utils/holidayParser.js';
 
 const ROW_HEIGHT = 26;      // px на строку задачи
 const MAX_VISIBLE_ROWS = 6; // после скольки задач включается вертикальный скролл
 const LABEL_WIDTH = 84;     // px, колонка с названиями задач
+const HOURS_COL_WIDTH = 34; // px, колонка "ч.ч." (Раунд 78)
+const WORKDAYS_COL_WIDTH = 34; // px, колонка "Раб.дн." (Раунд 81)
+// Багфикс (Раунд 81, по замечанию Mr.D): пересчёт дни<->часы вёлся
+// через КАЛЕНДАРНЫЕ 24ч/сутки - для рабочего планирования это неверно,
+// нужен человеко-день (стандартный рабочий день, 8ч). Единая константа
+// вместо магического числа 24 в пяти разных местах файла.
+const HOURS_PER_WORKDAY = 8;
+
+// Раунд 78 - "Праздники" переехал на ФИКСИРОВАННЫЙ индекс сокета,
+// отдельно от растущего диапазона источников задач (см. this.inputSockets
+// в конструкторе - теперь их может быть несколько, для группировки
+// нескольких источников/других диаграмм Ганта). Если бы индекс праздников
+// оставался "следующим свободным" после источников задач, он бы
+// сдвигался при каждом добавлении нового слота источника - и тихо
+// разрывал уже сохранённое соединение при следующей загрузке проекта.
+// 50 - заведомо выше любого реалистичного числа источников (maxInputs),
+// коллизия исключена.
+const HOLIDAY_SOCKET_INDEX = 50;
 
 // Масштаб линейки: и ширина одного дня в px (плотность), и шаг делений.
 // Данные внутри по-прежнему считаются в днях (см. calculate()) - режим
@@ -85,14 +105,24 @@ function isWeekend(date) {
     return day === 0 || day === 6;
 }
 
+// Раунд 73 - выходной ИЛИ праздник (holidaySet - Set<string> ISO-дат
+// 'YYYY-MM-DD' из HolidayParser.extract(), может быть undefined/пустым -
+// тогда ведёт себя как обычный isWeekend). Единая точка входа для всех
+// мест, которые раньше проверяли только isWeekend() - подсветка на
+// диаграмме, автоматический пропуск при расстановке задач.
+function isNonWorkingDay(date, holidaySet) {
+    if (isWeekend(date)) return true;
+    return !!(holidaySet && holidaySet.size > 0 && holidaySet.has(formatISODate(date)));
+}
+
 // Если calendar-смещение offsetDays (от anchor) попадает на выходной -
 // сдвигает его вперёд до ближайшего рабочего дня. Используется и для
 // автоматической расстановки (курсор), и для перетащенных мышью задач
 // (см. attachBarDrag) - там raw-смещение хранится как есть в taskDates,
 // а "прилипание" к рабочему дню происходит здесь, при каждом calculate().
-function nextWorkingOffset(anchor, offsetDays) {
+function nextWorkingOffset(anchor, offsetDays, holidaySet) {
     let offset = offsetDays;
-    while (isWeekend(addDays(anchor, offset))) {
+    while (isNonWorkingDay(addDays(anchor, offset), holidaySet)) {
         offset += 1;
     }
     return offset;
@@ -105,12 +135,12 @@ function nextWorkingOffset(anchor, offsetDays) {
 // календарного диапазона - задача просто визуально "перепрыгивает" через
 // уик-энд, как в большинстве Gantt-инструментов). Дробный последний день
 // (например, 4 часа = 1/6 дня) учитывается частично, без округления.
-function spanWorkingDays(anchor, startOffsetDays, durationDays) {
+function spanWorkingDays(anchor, startOffsetDays, durationDays, holidaySet) {
     if (durationDays <= 0) return startOffsetDays;
     let offset = startOffsetDays;
     let remaining = durationDays;
     while (remaining > 0) {
-        if (isWeekend(addDays(anchor, offset))) {
+        if (isNonWorkingDay(addDays(anchor, offset), holidaySet)) {
             offset += 1;
             continue;
         }
@@ -154,13 +184,26 @@ function spanWorkingDays(anchor, startOffsetDays, durationDays) {
 export class GanttNode extends BaseNode {
     constructor(id, type, x, y, config = {}) {
         super(id, type, x, y, config);
-        this.inputs = 1;
-        this.inputSockets = [0];
+        // Раунд 78 - несколько источников задач одновременно (по запросу
+        // Mr.D: "подключить в одну диаграмму Ганта несколько других") -
+        // тот же паттерн авто-роста слотов, что у OperationNode/
+        // CalendarNode. "Праздники" НЕ входит в этот список - у него
+        // фиксированный HOLIDAY_SOCKET_INDEX, не зависящий от их числа
+        // (см. константу выше).
+        this.maxInputs = 6;
+        this.inputs = config.inputs || 1;
+        this.inputSockets = Array.from({ length: this.inputs }, (_, i) => i);
+        this._isRerendering = false;
         this.outputs = 1;
         this.width = config.width || 320;
 
         this.startDate = config.startDate || new Date().toISOString().slice(0, 10);
-        this.periodPreset = PERIOD_PRESETS[config.periodPreset] ? config.periodPreset : 'month';
+        this.periodPreset = PERIOD_PRESETS[config.periodPreset] ? config.periodPreset : 'custom';
+        // Раунд 77 - "Своя" протяжённость в календарных днях (по прямому
+        // запросу Mr.D, по умолчанию 60 - ни один из готовых пресетов
+        // (30/90/182/365) этому не соответствует). Используется, когда
+        // periodPreset === 'custom' - см. totalDays в createGanttArea().
+        this.customPeriodDays = Math.max(1, config.customPeriodDays ?? 60);
         this.durationUnit = config.durationUnit === 'hours' ? 'hours' : 'days';
         // Режим расчёта длительности: 'calendar' (как раньше - длительность
         // это просто N календарных дней подряд, включая выходные) или
@@ -186,8 +229,40 @@ export class GanttNode extends BaseNode {
         // имени задачи - заполняется автоматически (последовательная
         // расстановка) и/или перетаскиванием полосы мышью
         this.taskDates = config.taskDates ? { ...config.taskDates } : {};
+        // Раунд 81 - ручное растягивание полосы мышью (не только
+        // перетаскивание позиции) переопределяет ДЛИТЕЛЬНОСТЬ задачи, по
+        // тому же ключу taskKey, что и позицию (this.taskDates выше).
+        // Без этого поля растянуть полосу было бы нечем - длительность
+        // всегда пересчитывалась бы заново из источника на каждый
+        // calculateAll(), стирая только что сделанное изменение.
+        this.taskDurationOverrides = config.taskDurationOverrides ? { ...config.taskDurationOverrides } : {};
+        // Раунд 83 (по запросу Mr.D, п.3) - задел на будущее: столбец
+        // "Ответственный" уже есть в выходной таблице (buildOutputTable()),
+        // но UI для его редактирования и раскраска по ответственному
+        // (обсуждается отдельным раундом) - ещё нет. Ключ - taskKey, тот
+        // же, что у taskDates/taskDurationOverrides.
+        this.taskResponsible = config.taskResponsible ? { ...config.taskResponsible } : {};
+        // Раунд 81 (по запросу Mr.D) - независимые флаги видимости двух
+        // колонок слева от шкалы. По умолчанию обе включены (как уже
+        // было раньше для "ч.ч." - ничего не ломаем для существующих
+        // проектов).
+        this.showDurationColumn = config.showDurationColumn ?? true;
+        this.showWorkingDaysColumn = config.showWorkingDaysColumn ?? true;
 
-        this.tasks = [];               // вычисленные задачи для рендера
+        this.tasks = [];               // вычисленные задачи для рендера (плоский список, groupIndex/taskKey у каждой при группировке)
+        // Раунд 78 - null, если подключён ровно один источник (обычное
+        // поведение, как раньше) | массив {name, tasks} при 2+ источниках -
+        // см. calculate()/createGanttArea(). Раунд 79 - заливка всей
+        // строки цветом группы убрана (по замечанию Mr.D "не то, что я
+        // имел в виду") - см. buildGroupHeaderRow().
+        this.taskGroups = null;
+        // Раунд 79 - какие группы свёрнуты (скрыты их строки задач) -
+        // ключ: groupIndex (строкой, т.к. ключи объектов в JS всегда
+        // строки). Чисто визуальное состояние - не влияет на расчёт/
+        // расстановку задач внутри свёрнутой группы, только на рендер.
+        this.collapsedGroups = config.collapsedGroups && typeof config.collapsedGroups === 'object'
+            ? { ...config.collapsedGroups }
+            : {};
         this.tableData = new TableData();
         this.sourceMode = 'list';      // 'list' | 'table' - откуда взялись данные в последнем calculate()
         this._sourceName = null;
@@ -195,6 +270,10 @@ export class GanttNode extends BaseNode {
         // ручку ноды по вертикали (см. beginFreeResize/applyFreeResize) -
         // null = высота подбирается автоматически по числу задач
         this.wrapHeight = config.wrapHeight ?? null;
+        // Раунд 73 - набор дат-праздников из подключённого сокета 1 (см.
+        // calculate()) - Set<string> ISO-дат, пустой до первого пересчёта
+        this.holidaySet = new Set();
+        this._holidaySourceName = null;
     }
 
     createContent() {
@@ -202,30 +281,66 @@ export class GanttNode extends BaseNode {
         content.className = 'node-content';
         content.style.cssText = 'width: 100%; min-width: 150px;';
 
-        // --- строка 1: источник данных (список задач ИЛИ готовая таблица плана) ---
-        const sourceRow = document.createElement('div');
-        sourceRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
-        const sourceSocket = SocketFactory.createSocket({
-            nodeId: this.id, socketType: 'input', index: 0, isAny: true,
-            title: 'Список задач (имя = задача, значение = длительность) или готовая таблица плана (столбцы "Начало"/"Окончание")'
+        // --- источники задач (Раунд 78, несколько одновременно - см.
+        // конструктор про авто-рост слотов). Один ряд на сокет; при 2+
+        // подключённых источниках диаграмма разбивает задачи на группы,
+        // см. calculate()/createGanttArea() ---
+        const sourcesWrap = document.createElement('div');
+        sourcesWrap.className = 'gantt-sources-wrap';
+        sourcesWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px;';
+        this.inputSockets.forEach(socketIndex => {
+            const sourceRow = document.createElement('div');
+            sourceRow.className = 'gantt-source-row';
+            sourceRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
+            const sourceSocket = SocketFactory.createSocket({
+                nodeId: this.id, socketType: 'input', index: socketIndex, isAny: true,
+                title: 'Список задач (имя = задача, значение = длительность), готовая таблица плана (столбцы "Начало"/"Окончание") или другая Диаграмма Ганта - при нескольких подключённых источниках разобьются на группы'
+            });
+            sourceRow.appendChild(sourceSocket);
+            const sourceLabel = document.createElement('span');
+            sourceLabel.className = 'gantt-source-label';
+            sourceLabel.dataset.socketIndex = String(socketIndex);
+            sourceLabel.style.cssText = `
+                color: var(--md-text-secondary);
+                font-size: 11px;
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            `;
+            sourceLabel.textContent = this._sourceStatusText(socketIndex);
+            sourceRow.appendChild(sourceLabel);
+            sourcesWrap.appendChild(sourceRow);
         });
-        sourceRow.appendChild(sourceSocket);
-        const sourceLabel = document.createElement('span');
-        sourceLabel.className = 'gantt-source-label';
-        sourceLabel.style.cssText = `
-            color: var(--md-text-secondary);
-            font-size: 11px;
+        content.appendChild(sourcesWrap);
+
+        // --- праздники, необязательный сокет на фиксированном индексе
+        // (Раунд 73, индекс переехал на фиксированный в Раунде 78) ---
+        // Подключается CalendarNode ИЛИ JsonImportNode с производственным
+        // календарём напрямую (без промежуточных нод) - см. докстринг
+        // utils/holidayParser.js о том, как распознаётся формат.
+        const holidayRow = document.createElement('div');
+        holidayRow.style.cssText = 'display:flex; align-items:center; gap:6px; margin-top:2px;';
+        const holidaySocket = SocketFactory.createSocket({
+            nodeId: this.id, socketType: 'input', index: HOLIDAY_SOCKET_INDEX, isAny: true,
+            title: 'Праздники (необязательно) - CalendarNode или Импорт JSON с производственным календарём'
+        });
+        holidayRow.appendChild(holidaySocket);
+        const holidayLabel = document.createElement('span');
+        holidayLabel.className = 'gantt-holiday-label';
+        holidayLabel.style.cssText = `
+            color: var(--md-text-disabled);
+            font-size: 10px;
             flex: 1;
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         `;
-        sourceLabel.textContent = this._sourceName
-            ? (this.sourceMode === 'table' ? `таблица: ${this._sourceName}` : this._sourceName)
-            : 'не подключено';
-        sourceRow.appendChild(sourceLabel);
-        content.appendChild(sourceRow);
+        holidayLabel.textContent = this._holidayStatusText();
+        holidayRow.appendChild(holidayLabel);
+        content.appendChild(holidayRow);
 
         // --- диаграмма ---
         const ganttSlot = document.createElement('div');
@@ -266,7 +381,9 @@ export class GanttNode extends BaseNode {
     // === Диаграмма: линейка дат + строки задач с перетаскиваемыми полосами ===
 
     createGanttArea() {
-        const totalDays = PERIOD_PRESETS[this.periodPreset]?.days || 30;
+        const totalDays = this.periodPreset === 'custom'
+            ? this.customPeriodDays
+            : (PERIOD_PRESETS[this.periodPreset]?.days || 30);
         const dayWidth = RULER_SCALES[this.rulerScale]?.dayWidth || RULER_SCALES.days.dayWidth;
         const timelineWidth = totalDays * dayWidth;
         const anchor = parseISODate(this.startDate) || new Date();
@@ -276,7 +393,9 @@ export class GanttNode extends BaseNode {
         // leftWidth - суммарный отступ ДО начала временной шкалы (номер +
         // имя задачи) - используется везде, где раньше стоял голый LABEL_WIDTH.
         const numColWidth = Math.max(20, String(Math.max(this.tasks.length, 1)).length * 7 + 12);
-        const leftWidth = numColWidth + LABEL_WIDTH;
+        const leftWidth = numColWidth + LABEL_WIDTH
+            + (this.showDurationColumn ? HOURS_COL_WIDTH : 0)
+            + (this.showWorkingDaysColumn ? WORKDAYS_COL_WIDTH : 0);
 
         const outer = document.createElement('div');
         outer.className = 'gantt-outer-scroll';
@@ -358,9 +477,34 @@ export class GanttNode extends BaseNode {
                 rowsInner.appendChild(this.buildGridLines(leftWidth, totalDays, timelineWidth, dayWidth));
             }
 
-            this.tasks.forEach((task, i) => {
-                rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, i));
-            });
+            // Раунд 78 - строка "Итого" всегда первая: суммарная
+            // протяжённость (часы) всех задач + общая полоса-обзор от
+            // самого раннего старта до самого позднего конца.
+            rowsInner.appendChild(this.buildTotalRow(numColWidth, timelineWidth, dayWidth, anchor));
+
+            if (this.taskGroups) {
+                let taskNumber = 1; // сквозная нумерация ЗАДАЧ (не строк) через все группы
+                this.taskGroups.forEach((group, groupIndex) => {
+                    const collapsed = !!this.collapsedGroups[groupIndex];
+                    rowsInner.appendChild(this.buildGroupHeaderRow(group, groupIndex, numColWidth, timelineWidth, dayWidth, collapsed, anchor));
+                    if (!collapsed) {
+                        group.tasks.forEach(task => {
+                            rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, null, anchor));
+                            taskNumber++;
+                        });
+                    } else {
+                        // Свёрнута - задачи по-прежнему расписаны и есть в
+                        // this.tasks/выходной таблице, просто не рисуются -
+                        // но сквозную нумерацию всё равно продолжаем, чтобы
+                        // номера видимых задач не "прыгали" при разворачивании
+                        taskNumber += group.tasks.length;
+                    }
+                });
+            } else {
+                this.tasks.forEach((task, i) => {
+                    rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, i + 1, null, anchor));
+                });
+            }
 
             rowsWrap.appendChild(rowsInner);
         }
@@ -673,6 +817,10 @@ export class GanttNode extends BaseNode {
             const date = addDays(anchor, d);
             const dow = date.getDay();
             const isWeekend = dow === 0 || dow === 6;
+            // Раунд 73 - праздник, который сам по себе НЕ выходной (будни,
+            // отмеченные в подключённом календаре) - отдельный цвет
+            // (янтарный), чтобы отличать от обычных выходных (красный)
+            const isHoliday = !isWeekend && this.holidaySet && this.holidaySet.has(formatISODate(date));
             const cell = document.createElement('div');
             cell.style.cssText = `
                 position: absolute;
@@ -684,8 +832,8 @@ export class GanttNode extends BaseNode {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                color: ${isWeekend ? 'var(--md-error, #ef5350)' : 'var(--md-text-secondary)'};
-                font-weight: ${isWeekend ? '600' : '400'};
+                color: ${isWeekend ? 'var(--md-error, #ef5350)' : (isHoliday ? 'var(--md-warning, #ffb74d)' : 'var(--md-text-secondary)')};
+                font-weight: ${(isWeekend || isHoliday) ? '600' : '400'};
             `;
             cell.textContent = WEEKDAY_LABELS[dow];
             track.appendChild(cell);
@@ -694,24 +842,30 @@ export class GanttNode extends BaseNode {
         return row;
     }
 
-    // Подложка выходных дней - не ярко, но заметно (та же плотность
-    // прозрачности, что и у зебры строк) - растягивается через ВСЮ
-    // высоту диаграммы (шапка + строки задач), а не только шапку
+    // Подложка нерабочих дней - выходные (красный) И праздники из
+    // подключённого календаря (янтарный, Раунд 73) - не ярко, но заметно
+    // (та же плотность прозрачности, что и у зебры строк) - растягивается
+    // через ВСЮ высоту диаграммы (шапка + строки задач), а не только шапку.
+    // Имя метода осталось прежним (buildWeekendHighlights) - переименование
+    // потребовало бы правки всех вызовов ради чисто косметической точности.
     buildWeekendHighlights(leftWidth, totalDays, timelineWidth, dayWidth, anchor) {
         const overlay = document.createElement('div');
         overlay.className = 'gantt-weekend-highlights';
         overlay.style.cssText = `position:absolute; left:${leftWidth}px; top:0; bottom:0; width:${timelineWidth}px; pointer-events:none;`;
 
         for (let d = 0; d < totalDays; d++) {
-            const dow = addDays(anchor, d).getDay();
-            if (dow === 0 || dow === 6) {
+            const date = addDays(anchor, d);
+            const dow = date.getDay();
+            const isWeekendDay = dow === 0 || dow === 6;
+            const isHoliday = !isWeekendDay && this.holidaySet && this.holidaySet.has(formatISODate(date));
+            if (isWeekendDay || isHoliday) {
                 const seg = document.createElement('div');
                 seg.style.cssText = `
                     position: absolute;
                     left: ${d * dayWidth}px;
                     top: 0; bottom: 0;
                     width: ${dayWidth}px;
-                    background: rgba(239, 83, 80, 0.06);
+                    background: ${isWeekendDay ? 'var(--gantt-weekend-tint, rgba(239, 83, 80, 0.06))' : 'var(--gantt-holiday-tint, rgba(255, 183, 77, 0.08))'};
                 `;
                 overlay.appendChild(seg);
             }
@@ -742,14 +896,22 @@ export class GanttNode extends BaseNode {
         return lines;
     }
 
-    buildTaskRow(task, numColWidth, timelineWidth, dayWidth, index) {
+    // taskNumber - 1-based номер ЗАДАЧИ (сквозной через все группы, не
+    // "номер строки" - строки-заголовки групп/"Итого" не в счёт, см.
+    // createGanttArea()). rowBackground - раньше (Раунд 78) сюда
+    // передавался цвет подложки группы; убран по замечанию Mr.D в
+    // Раунде 79 ("заливка цветом всей строки как сейчас не нужна") -
+    // параметр остался (всегда null на практике) просто как задел на
+    // случай будущей потребности в переопределении фона строки, сейчас
+    // везде работает обычная зебра.
+    buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, rowBackground, anchor) {
         const row = document.createElement('div');
         row.className = 'gantt-task-row';
         row.style.cssText = `
             display: flex;
             align-items: center;
             height: ${ROW_HEIGHT}px;
-            ${index % 2 === 0 ? 'background: rgba(255,255,255,0.02);' : ''}
+            background: ${rowBackground || (taskNumber % 2 === 0 ? 'rgba(255,255,255,0.02)' : '')};
         `;
 
         // Столбец номера строки (как в Excel/tableViewerNode.js) - чисто
@@ -765,7 +927,7 @@ export class GanttNode extends BaseNode {
             padding-right: 4px;
             font-variant-numeric: tabular-nums;
         `;
-        numCell.textContent = String(index + 1);
+        numCell.textContent = String(taskNumber);
         row.appendChild(numCell);
 
         const label = document.createElement('div');
@@ -784,12 +946,53 @@ export class GanttNode extends BaseNode {
         label.title = task.name;
         row.appendChild(label);
 
+        // Столбец "ч.ч." (Раунд 78, по запросу Mr.D) - длительность
+        // задачи в ЧАСАХ, независимо от this.durationUnit (тот влияет
+        // только на то, как ЧИТАЕТСЯ входной список - durationDays уже
+        // всегда в днях внутри, см. calculate()). Раунд 81 - теперь
+        // можно скрыть флагом this.showDurationColumn.
+        if (this.showDurationColumn) {
+            const hoursCell = document.createElement('div');
+            hoursCell.className = 'gantt-hours-cell';
+            hoursCell.style.cssText = `
+                width: ${HOURS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            hoursCell.textContent = Helpers.formatNumber(task.durationDays * HOURS_PER_WORKDAY);
+            row.appendChild(hoursCell);
+        }
+
+        // Столбец "Раб.дн." (Раунд 81, п.3) - рабочих дней ВНУТРИ
+        // диапазона именно этой задачи (не общего диапазона проекта -
+        // та величина для "Итого"/группы, см. buildTotalRow()/
+        // buildGroupHeaderRow()).
+        if (this.showWorkingDaysColumn) {
+            const workdaysCell = document.createElement('div');
+            workdaysCell.className = 'gantt-workdays-cell';
+            workdaysCell.style.cssText = `
+                width: ${WORKDAYS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            workdaysCell.textContent = String(this._countWorkingDaysInRange(anchor, task.startOffsetDays, task.durationDays));
+            row.appendChild(workdaysCell);
+        }
+
         const track = document.createElement('div');
         track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
 
         const bar = document.createElement('div');
         bar.className = 'gantt-bar';
-        bar.dataset.taskName = task.name;
+        bar.dataset.taskName = task.taskKey || task.name;
         bar.style.cssText = `
             position: absolute;
             top: 4px; bottom: 4px;
@@ -799,9 +1002,378 @@ export class GanttNode extends BaseNode {
             border-radius: 3px;
             cursor: grab;
         `;
-        bar.title = `${task.name}: ${task.durationDays} дн.`;
+        bar.title = `${task.name}: ${task.durationDays} дн. (${Helpers.formatNumber(task.durationDays * HOURS_PER_WORKDAY)} ч.) - потяните за края, чтобы растянуть`;
         this.attachBarDrag(bar, task, dayWidth);
+
+        // Раунд 81 (по запросу Mr.D: "нужна возможность их графического
+        // редактирования (растягивания)") - узкие ручки по краям полосы,
+        // тянут ДЛИТЕЛЬНОСТЬ (и, для левого края, заодно и старт) - см.
+        // attachBarResize(). mousedown на ручке ОБЯЗАН звать
+        // stopPropagation() - иначе всплыл бы и до обработчика самого
+        // bar (attachBarDrag выше), и одно и то же нажатие запустило бы
+        // сразу оба жеста (сдвиг + растягивание) одновременно.
+        const leftHandle = document.createElement('div');
+        leftHandle.className = 'gantt-bar-resize-handle gantt-bar-resize-left';
+        leftHandle.style.cssText = 'position:absolute; left:0; top:0; bottom:0; width:6px; cursor:ew-resize;';
+        this.attachBarResize(leftHandle, task, dayWidth, 'left');
+        bar.appendChild(leftHandle);
+
+        const rightHandle = document.createElement('div');
+        rightHandle.className = 'gantt-bar-resize-handle gantt-bar-resize-right';
+        rightHandle.style.cssText = 'position:absolute; right:0; top:0; bottom:0; width:6px; cursor:ew-resize;';
+        this.attachBarResize(rightHandle, task, dayWidth, 'right');
+        bar.appendChild(rightHandle);
+
         track.appendChild(bar);
+
+        row.appendChild(track);
+        return row;
+    }
+
+    // Строка-заголовок группы (Раунд 78, переработано в Раунде 79 по
+    // замечаниям Mr.D):
+    //   - НЕТ заливки цветом всей строки/подложки под задачи - только
+    //     нейтральный (не цветной) разделитель сверху/снизу строки
+    //     заголовка, как и был.
+    //   - Стрелка ▾/▸ - сворачивает/разворачивает группу (только визуально,
+    //     на расчёт задач внутри не влияет - см. collapsedGroups).
+    //   - Итог по группе (та же _formatTotalCell(), что и у общего
+    //     "Итого") - в столбце ч.ч./дн., как у обычных строк.
+    //   - "Цветовая индексация" - ОДНА полоса в области шкалы, СТРОГО от
+    //     начала первой задачи группы до конца последней (не через весь
+    //     таймлайн) - и она же перетаскиваемая: схватить и потянуть эту
+    //     полосу двигает ВСЮ группу целиком (см. attachGroupDrag()).
+    //     Отдельные задачи внутри группы остаются перетаскиваемыми по
+    //     отдельности - это СОВСЕМ ДРУГОЙ DOM-элемент (полоса задачи в
+    //     buildTaskRow), конфликта между "потащить группу" и "потащить
+    //     задачу" нет чисто механически - мышь всегда попадает только в
+    //     ОДИН из двух элементов одновременно.
+    buildGroupHeaderRow(group, groupIndex, numColWidth, timelineWidth, dayWidth, collapsed, anchor) {
+        const row = document.createElement('div');
+        row.className = 'gantt-group-header-row';
+        row.style.cssText = `
+            display: flex;
+            align-items: center;
+            height: ${ROW_HEIGHT}px;
+            border-top: 1px solid var(--md-divider);
+            border-bottom: 1px solid var(--md-divider);
+            font-weight: 600;
+        `;
+
+        // Стрелка сворачивания - делит место со столбцом номера строки
+        const toggle = document.createElement('div');
+        toggle.className = 'gantt-group-toggle';
+        toggle.style.cssText = `
+            width: ${numColWidth}px;
+            flex-shrink: 0;
+            text-align: center;
+            font-size: 10px;
+            color: var(--md-text-secondary);
+            cursor: pointer;
+            user-select: none;
+        `;
+        toggle.textContent = collapsed ? '▸' : '▾';
+        toggle.title = collapsed ? 'Развернуть группу' : 'Свернуть группу';
+        toggle.addEventListener('mousedown', (e) => e.stopPropagation());
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.collapsedGroups[groupIndex] = !collapsed;
+            this._rerenderGanttSlot();
+        });
+        row.appendChild(toggle);
+
+        const label = document.createElement('div');
+        label.className = 'gantt-group-header-label';
+        label.style.cssText = `
+            width: ${LABEL_WIDTH}px;
+            flex-shrink: 0;
+            font-size: 11px;
+            color: var(--md-text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding-right: 6px;
+        `;
+        label.textContent = group.name;
+        label.title = group.name;
+        row.appendChild(label);
+
+        if (this.showDurationColumn) {
+            const totalCell = document.createElement('div');
+            totalCell.style.cssText = `
+                width: ${HOURS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            totalCell.textContent = this._formatTotalCell(group.tasks);
+            row.appendChild(totalCell);
+        }
+
+        if (this.showWorkingDaysColumn) {
+            const workdaysCell = document.createElement('div');
+            workdaysCell.style.cssText = `
+                width: ${WORKDAYS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            let workdaysTotal = 0;
+            if (group.tasks.length > 0) {
+                const gMinStart = Math.min(...group.tasks.map(t => t.startOffsetDays));
+                const gMaxEnd = Math.max(...group.tasks.map(t => t.startOffsetDays + t.durationDays));
+                workdaysTotal = this._countWorkingDaysInRange(anchor, gMinStart, gMaxEnd - gMinStart);
+            }
+            workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
+            workdaysCell.title = 'Рабочих дней в диапазоне группы';
+            row.appendChild(workdaysCell);
+        }
+
+        const track = document.createElement('div');
+        track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
+
+        if (group.tasks.length > 0) {
+            const minStart = Math.min(...group.tasks.map(t => t.startOffsetDays));
+            const maxEnd = Math.max(...group.tasks.map(t => t.startOffsetDays + t.durationDays));
+            const indicator = document.createElement('div');
+            indicator.className = 'gantt-group-indicator';
+            // Багфикс по замечанию Mr.D: раньше каждая группа красилась
+            // СВОИМ оттенком (groupTint(), цикл по hue) - "разными
+            // цветами", хотя нужен был один нейтральный вид, отличный от
+            // цвета САМИХ задач (--md-primary, сплошная заливка) и
+            // одновременно похожий по почерку на общее "Итого" (контур +
+            // лёгкая заливка), но не сливающийся с ним визуально. Теперь -
+            // ОДИН и тот же голубой контур+заливка для ВСЕХ групп
+            // (--gantt-group-indicator-border/-fill, theme-aware
+            // переменные в styles.css/day_styles.css) - "Итого" остаётся
+            // серым (нейтральным), группа - голубая (тоже нейтральная по
+            // смыслу, не "цветовая метка конкретной группы").
+            indicator.style.cssText = `
+                position: absolute;
+                top: 5px; bottom: 5px;
+                left: ${minStart * dayWidth}px;
+                width: ${Math.max(4, (maxEnd - minStart) * dayWidth)}px;
+                background: var(--gantt-group-indicator-fill, rgba(144, 202, 249, 0.18));
+                border: 1px solid var(--gantt-group-indicator-border, var(--md-primary));
+                border-radius: 3px;
+                cursor: grab;
+            `;
+            indicator.title = `${group.name}: ${this._formatTotalCell(group.tasks)} - перетащите, чтобы сдвинуть всю группу`;
+            this.attachGroupDrag(indicator, group, dayWidth);
+            track.appendChild(indicator);
+        }
+
+        row.appendChild(track);
+        return row;
+    }
+
+    // Перетаскивание ПОЛОСЫ ГРУППЫ (indicator в buildGroupHeaderRow) -
+    // сдвигает КАЖДУЮ задачу группы на одну и ту же дельту разом. Та же
+    // механика, что и attachBarDrag() у отдельной задачи (собственные
+    // document-level слушатели на время драга), только в конце пишет
+    // дельту сразу во все taskKey группы, а не в один.
+    attachGroupDrag(indicatorEl, group, dayWidth) {
+        indicatorEl.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const zoom = window.getZoomLevel ? window.getZoomLevel() : 1;
+            const startX = e.clientX;
+            const startLeft = parseFloat(indicatorEl.style.left) || 0;
+            indicatorEl.style.cursor = 'grabbing';
+
+            const onMove = (ev) => {
+                const deltaPx = (ev.clientX - startX) / zoom;
+                const deltaDays = Math.round(deltaPx / dayWidth);
+                indicatorEl.style.left = (startLeft + deltaDays * dayWidth) + 'px';
+                indicatorEl.dataset.pendingDeltaDays = String(deltaDays);
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                indicatorEl.style.cursor = 'grab';
+                const deltaDays = parseInt(indicatorEl.dataset.pendingDeltaDays || '0', 10);
+                delete indicatorEl.dataset.pendingDeltaDays;
+                if (deltaDays !== 0) {
+                    group.tasks.forEach(task => {
+                        const current = this.taskDates[task.taskKey] ?? task.startOffsetDays;
+                        this.taskDates[task.taskKey] = Math.max(0, current + deltaDays);
+                    });
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                    if (window.renderer) window.renderer.updateAllDisplays();
+                }
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    // Лёгкая перерисовка ТОЛЬКО области диаграммы (не всей ноды и не
+    // пересчёт графа) - для чисто визуальных переключений вроде
+    // сворачивания группы, где данные не меняются. Тот же приём, что
+    // _rebuildGrid() у CalendarNode.
+    _rerenderGanttSlot() {
+        const el = document.querySelector(`[data-node-id="${this.id}"] .gantt-container-slot`);
+        if (!el) return;
+        el.innerHTML = '';
+        el.appendChild(this.createGanttArea());
+    }
+
+    // Строка "Итого" (Раунд 78, по запросу Mr.D) - всегда первая, вне
+    // групп. ч.ч. - сумма длительности ВСЕХ задач (во всех группах, если
+    // группировка активна). Полоса - лёгкий контур от самого раннего
+    // старта до самого позднего конца (общая протяжённость проекта на
+    // временной шкале), не заливка - чтобы не путать с настоящей
+    // задачей визуально.
+    // Раунд 79 - сумма длительности списка задач, в единице, заданной
+    // this.durationUnit ('days' -> дн., 'hours' -> ч. - по прямому
+    // запросу Mr.D: "если Единица Длительности стоит как Дни, то Итого
+    // тоже должно отображаться в днях"). Используется и для общего
+    // "Итого" (buildTotalRow), и для итога по каждой группе
+    // (buildGroupHeaderRow) - единая точка форматирования.
+    _formatTotalCell(tasks) {
+        if (this.durationUnit === 'hours') {
+            const hours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
+            return `${Helpers.formatNumber(hours)}ч`;
+        }
+        const days = tasks.reduce((sum, t) => sum + t.durationDays, 0);
+        return `${Helpers.formatNumber(days)}дн`;
+    }
+
+    // Раунд 81 (по запросу Mr.D, п.3-4) - число РАБОЧИХ дней (не
+    // выходные/праздники, см. isNonWorkingDay()/this.holidaySet) внутри
+    // календарного диапазона [startOffsetDays, startOffsetDays+durationDays).
+    // Используется и на уровне отдельной задачи (её собственный диапазон),
+    // и на уровне "Итого"/группы (диапазон ОТ самого раннего старта ДО
+    // самого позднего конца - тот же диапазон, что уже рисует полоса-обзор).
+    _countWorkingDaysInRange(anchor, startOffsetDays, durationDays) {
+        let count = 0;
+        const wholeDays = Math.ceil(durationDays);
+        for (let d = 0; d < wholeDays; d++) {
+            if (!isNonWorkingDay(addDays(anchor, startOffsetDays + d), this.holidaySet)) count++;
+        }
+        return count;
+    }
+
+    // Рабочих дней суммарно по списку задач - каждая задача СВОИМ
+    // диапазоном (не общим "от первой до последней" - см. докстринг
+    // выше про разницу между уровнем задачи и уровнем Итого/группы).
+    _countWorkingDaysForTasks(anchor, tasks) {
+        return tasks.reduce((sum, t) => sum + this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays), 0);
+    }
+
+    buildTotalRow(numColWidth, timelineWidth, dayWidth, anchor) {
+        const row = document.createElement('div');
+        row.className = 'gantt-total-row';
+        row.style.cssText = `
+            display: flex;
+            align-items: center;
+            height: ${ROW_HEIGHT}px;
+            background: var(--md-surface-2);
+            border-bottom: 2px solid var(--md-divider);
+            font-weight: 600;
+        `;
+
+        const spacer = document.createElement('div');
+        spacer.style.cssText = `width:${numColWidth}px; flex-shrink:0;`;
+        row.appendChild(spacer);
+
+        const label = document.createElement('div');
+        label.style.cssText = `
+            width: ${LABEL_WIDTH}px;
+            flex-shrink: 0;
+            font-size: 11px;
+            color: var(--md-text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding-right: 6px;
+        `;
+        label.textContent = 'Итого';
+        row.appendChild(label);
+
+        // Раунд 79 - если Единица длительности стоит "Дни", "Итого"
+        // тоже в днях, не в часах (по прямому запросу Mr.D) - обычный
+        // столбец задач (ч.ч.) остаётся ВСЕГДА в часах (так и просили в
+        // Раунде 78), эта развилка касается только строки "Итого".
+        //
+        // Багфикс (Раунд 82): totalCell считается ЗДЕСЬ, ДО if - нужна
+        // ещё и подсказке полосы-обзора ниже по функции, вне этого
+        // блока. Раньше была объявлена ВНУТРИ if(this.showDurationColumn)
+        // как const - недоступна за пределами своего блока (block scope),
+        // из-за чего сразу же после подключения источника с реальными
+        // задачами createGanttArea() падал с ReferenceError - а поскольку
+        // это происходило прямо в момент повторной отрисовки ноды
+        // (см. rerender() - старый DOM-элемент уже удалён к этому
+        // моменту, новый из-за исключения так и не создавался), нода
+        // визуально исчезала с холста целиком.
+        const totalCell = this._formatTotalCell(this.tasks);
+        if (this.showDurationColumn) {
+            const hoursCell = document.createElement('div');
+            hoursCell.style.cssText = `
+                width: ${HOURS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            hoursCell.textContent = totalCell;
+            row.appendChild(hoursCell);
+        }
+
+        // Раунд 81 (п.3) - "Итого рабочих дней": рабочих дней в ОБЩЕМ
+        // диапазоне от самого раннего старта до самого позднего конца
+        // (тот же диапазон, что уже занимает полоса-обзор ниже) - не
+        // сумма по каждой задаче отдельно (та величина - для колонки у
+        // ОБЫЧНЫХ строк задач, см. buildTaskRow()).
+        if (this.showWorkingDaysColumn) {
+            const workdaysCell = document.createElement('div');
+            workdaysCell.style.cssText = `
+                width: ${WORKDAYS_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text);
+                text-align: right;
+                padding-right: 6px;
+                font-variant-numeric: tabular-nums;
+            `;
+            let workdaysTotal = 0;
+            if (this.tasks.length > 0) {
+                const minStart = Math.min(...this.tasks.map(t => t.startOffsetDays));
+                const maxEnd = Math.max(...this.tasks.map(t => t.startOffsetDays + t.durationDays));
+                workdaysTotal = this._countWorkingDaysInRange(anchor, minStart, maxEnd - minStart);
+            }
+            workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
+            workdaysCell.title = 'Рабочих дней в общем диапазоне проекта';
+            row.appendChild(workdaysCell);
+        }
+
+        const track = document.createElement('div');
+        track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
+
+        if (this.tasks.length > 0) {
+            const minStart = Math.min(...this.tasks.map(t => t.startOffsetDays));
+            const maxEnd = Math.max(...this.tasks.map(t => t.startOffsetDays + t.durationDays));
+            const overview = document.createElement('div');
+            overview.style.cssText = `
+                position: absolute;
+                top: 7px; bottom: 7px;
+                left: ${minStart * dayWidth}px;
+                width: ${Math.max(4, (maxEnd - minStart) * dayWidth)}px;
+                border: 1px solid var(--md-text-secondary);
+                border-radius: 3px;
+                background: rgba(255,255,255,0.05);
+            `;
+            overview.title = `Общая протяжённость: ${Helpers.formatNumber(maxEnd - minStart)} дн. (суммарно задач: ${totalCell})`;
+            track.appendChild(overview);
+        }
 
         row.appendChild(track);
         return row;
@@ -835,7 +1407,7 @@ export class GanttNode extends BaseNode {
                 document.removeEventListener('mouseup', onUp);
                 barEl.style.cursor = 'grab';
                 if (barEl.dataset.pendingOffset !== undefined) {
-                    this.taskDates[task.name] = parseInt(barEl.dataset.pendingOffset, 10);
+                    this.taskDates[task.taskKey || task.name] = parseInt(barEl.dataset.pendingOffset, 10);
                     delete barEl.dataset.pendingOffset;
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
@@ -846,8 +1418,106 @@ export class GanttNode extends BaseNode {
         });
     }
 
+    // Растягивание полосы мышью за левый/правый край (Раунд 81, по
+    // запросу Mr.D: "нужна возможность их графического редактирования").
+    // side='right' - меняет ТОЛЬКО длительность (старт неподвижен).
+    // side='left' - двигает старт И меняет длительность в обратную
+    // сторону, чтобы конец задачи оставался на месте (обычное поведение
+    // "растянуть за левый край" в любом Gantt-инструменте). Минимум
+    // длительности - 0.5 дня (не даём схлопнуть полосу в ничто через
+    // перетаскивание за противоположный край).
+    attachBarResize(handleEl, task, dayWidth, side) {
+        handleEl.addEventListener('mousedown', (e) => {
+            e.stopPropagation(); // не даём событию всплыть до attachBarDrag на самой полосе
+            e.preventDefault();
+            const barEl = handleEl.parentElement;
+            const zoom = window.getZoomLevel ? window.getZoomLevel() : 1;
+            const startX = e.clientX;
+            const startOffset = task.startOffsetDays;
+            const startDuration = task.durationDays;
+            handleEl.style.cursor = 'ew-resize';
 
-    // Виджет Доски (см. dashboardNode.js/boardManager.js) - переиспользует
+            const onMove = (ev) => {
+                const deltaPx = (ev.clientX - startX) / zoom;
+                const deltaDays = Math.round(deltaPx / dayWidth);
+                let newOffset = startOffset;
+                let newDuration = startDuration;
+
+                if (side === 'right') {
+                    newDuration = Math.max(0.5, startDuration + deltaDays);
+                } else {
+                    // левый край не может уйти дальше конца задачи (тот
+                    // же Math.max(0.5, ...) на длительность гарантирует это)
+                    const maxDelta = startDuration - 0.5;
+                    const clampedDelta = Math.min(Math.max(deltaDays, -startOffset), maxDelta);
+                    newOffset = startOffset + clampedDelta;
+                    newDuration = startDuration - clampedDelta;
+                }
+
+                barEl.style.left = (newOffset * dayWidth) + 'px';
+                barEl.style.width = Math.max(4, newDuration * dayWidth) + 'px';
+                handleEl.dataset.pendingOffset = String(newOffset);
+                handleEl.dataset.pendingDuration = String(newDuration);
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                const pendingOffset = handleEl.dataset.pendingOffset;
+                const pendingDuration = handleEl.dataset.pendingDuration;
+                delete handleEl.dataset.pendingOffset;
+                delete handleEl.dataset.pendingDuration;
+                if (pendingOffset !== undefined && pendingDuration !== undefined) {
+                    const key = task.taskKey || task.name;
+                    const newOffset = parseFloat(pendingOffset);
+                    const newDuration = parseFloat(pendingDuration);
+                    this.taskDates[key] = newOffset;
+                    // Багфикс (Раунд 83, по жалобе Mr.D: "перемешались
+                    // фактические и рабочие дни... к дню опять
+                    // прибавляются праздники"). newDuration - это
+                    // ВИЗУАЛЬНАЯ (календарная) ширина полосы после
+                    // растягивания - то, что фактически показывает bar на
+                    // экране. Но this.taskDurationOverrides читается на
+                    // следующем calculate() как "сколько РАБОЧИХ дней
+                    // отработать" (аргумент spanWorkingDays(), которая
+                    // САМА пропускает выходные/праздники внутри диапазона).
+                    // Если положить туда календарную ширину как есть,
+                    // spanWorkingDays() пропустит выходные ВНУТРИ уже
+                    // растянутого диапазона ЕЩЁ РАЗ - календарная ширина
+                    // раздувается на каждое редактирование ("опять
+                    // прибавляются праздники"). В режиме 'working'
+                    // сохраняем не календарную ширину, а число РАБОЧИХ
+                    // дней внутри неё (_countWorkingDaysInRange) - тогда
+                    // spanWorkingDays() на следующем пересчёте
+                    // восстановит РОВНО ТОТ ЖЕ календарный диапазон, а не
+                    // расширит его. В режиме 'calendar' пропуска выходных
+                    // нет вообще - календарная ширина и есть исходная
+                    // длительность, конвертировать нечего.
+                    //
+                    // ВАЖНО: конвертация нужна, только если override
+                    // потом СНОВА пройдёт через spanWorkingDays() - это
+                    // 'list' и групповой режимы (см. calculate()). В
+                    // sourceMode==='table' override используется
+                    // НАПРЯМУЮ как календарная ширина (таблица просто
+                    // читает свои даты как есть, без пересборки через
+                    // spanWorkingDays) - конвертация там дала бы
+                    // ОБРАТНЫЙ эффект: бар визуально сжался бы до числа
+                    // рабочих дней вместо запрошенной календарной ширины.
+                    if (this.scheduleMode === 'working' && this.sourceMode !== 'table') {
+                        const anchor = parseISODate(this.startDate) || new Date();
+                        this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
+                    } else {
+                        this.taskDurationOverrides[key] = newDuration;
+                    }
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                    if (window.renderer) window.renderer.updateAllDisplays();
+                }
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+
     // createGanttArea() КАК ЕСТЬ: та же интерактивная диаграмма
     // (перетаскивание полос мышью/ручки дедлайна), что и в теле ноды
     // графа - метод самодостаточен (никаких обращений к data-node-id
@@ -888,9 +1558,25 @@ export class GanttNode extends BaseNode {
     }
 
     tasksFromTable(tableData) {
-        const nameCol = tableData.columns.find(c => c.format === 'text') || tableData.columns[0];
+        // Багфикс (Раунд 83): раньше брался ПЕРВЫЙ текстовый столбец -
+        // работало, пока "Задача" была единственным текстовым столбцом.
+        // Теперь перед ней в схеме buildOutputTable() стоит "Группа"
+        // (тоже текст) - без явного поиска по имени "Группа" ошибочно
+        // подхватывалась бы как имя задачи. Ищем именно "задач" в
+        // заголовке, с тем же запасным вариантом (первый текстовый), что
+        // и раньше - для таблиц НЕ от GanttNode, где столбец может
+        // называться иначе.
+        const nameCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('задач'))
+            || tableData.columns.find(c => c.format === 'text')
+            || tableData.columns[0];
         const startCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('начал'));
         const endCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('оконч'));
+        // "Раб.дни" - авторитетное число РАБОЧИХ дней, если источник -
+        // другая Диаграмма Ганта (её buildOutputTable() всегда пишет
+        // этот столбец) - см. докстринг _extractRawTasks() про то, зачем
+        // это нужно (баг двойного применения праздников при цепочке
+        // Гант -> Гант, Раунд 83).
+        const workdaysCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('раб'));
         if (!startCol || !endCol) return [];
 
         const anchor = parseISODate(this.startDate) || new Date();
@@ -900,10 +1586,19 @@ export class GanttNode extends BaseNode {
             const startD = parseDateRu(startCol.values[i]) || parseISODate(startCol.values[i]);
             const endD = parseDateRu(endCol.values[i]) || parseISODate(endCol.values[i]);
             if (!startD || !endD) continue;
+            const durationDays = Math.max(0, daysBetween(startD, endD));
+            const rawFromCol = workdaysCol ? Number(workdaysCol.values[i]) : NaN;
             tasks.push({
                 name,
                 startOffsetDays: daysBetween(anchor, startD),
-                durationDays: Math.max(0, daysBetween(startD, endD))
+                durationDays,
+                // Если столбца "Раб.дни" нет (обычная таблица, не от
+                // GanttNode) - лучшее, что можно сделать без доступа к
+                // календарю источника - взять ту же календарную
+                // длительность (прежнее поведение, тот же риск
+                // задвоения праздников при цепочке, что был всегда для
+                // таких таблиц - не хуже, чем раньше).
+                rawDurationDays: !isNaN(rawFromCol) ? rawFromCol : durationDays
             });
         }
         return tasks;
@@ -911,84 +1606,261 @@ export class GanttNode extends BaseNode {
 
     buildOutputTable() {
         const anchor = parseISODate(this.startDate) || new Date();
+        const groups = [];
         const names = [];
         const starts = [];
+        const workdays = [];
         const ends = [];
-        const durations = [];
+        const factDays = [];
+        const responsible = [];
 
         this.tasks.forEach(t => {
+            groups.push(t.groupName || '');
             names.push(t.name);
             starts.push(formatDateRu(addDays(anchor, t.startOffsetDays)));
+            workdays.push(this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays));
             ends.push(formatDateRu(addDays(anchor, t.startOffsetDays + t.durationDays)));
-            durations.push(t.durationDays);
+            factDays.push(t.durationDays);
+            responsible.push(this.taskResponsible[t.taskKey] || '');
         });
 
-        return new TableData([
+        // Раунд 83 (по прямому запросу Mr.D) - фиксированная схема,
+        // всегда все семь столбцов, "Группа" больше не условна (пустая
+        // строка, если группировка не активна - стабильный контракт для
+        // downstream-потребителей независимо от режима). Порядок задан
+        // явно: Группа, Задача, Начало, Раб.дни, Окончание, Факт.дни,
+        // Ответственный.
+        //
+        // "Раб.дни" - АВТОРИТЕТНОЕ число рабочих дней (без выходных/
+        // праздников) внутри диапазона [Начало, Окончание) - именно ЕГО,
+        // а не "Факт.дни", читает следующая Диаграмма Ганта при цепочке
+        // Гант -> Гант (см. tasksFromTable()/_extractRawTasks()) - иначе
+        // календарная ширина (уже включающая пропущенные выходные)
+        // подавалась бы на вход ещё раз, и праздники накладывались бы
+        // повторно (тот же класс бага, что чинили для растягивания
+        // мышью в этом раунде - см. attachBarResize()).
+        //
+        // "Ответственный" - пока пустой задел (this.taskResponsible,
+        // Раунд 83) - реализация (цвет по ответственному и т.п.)
+        // обсуждается отдельным раундом, сама колонка нужна уже сейчас,
+        // чтобы формат данных был стабилен для тех, кто уже строит
+        // цепочки поверх вывода Ганта.
+        const columns = [
+            { header: 'Группа', values: groups, format: 'text' },
             { header: 'Задача', values: names, format: 'text' },
             { header: 'Начало', values: starts, format: 'text' },
+            { header: 'Раб.дни', values: workdays, format: 'number' },
             { header: 'Окончание', values: ends, format: 'text' },
-            { header: 'Длительность, дн.', values: durations, format: 'number' }
-        ], { title: this.customName || this.getDisplayName() });
+            { header: 'Факт.дни', values: factDays, format: 'number' },
+            { header: 'Ответственный', values: responsible, format: 'text' }
+        ];
+
+        return new TableData(columns, { title: this.customName || this.getDisplayName() });
     }
 
     calculate(nodeManager) {
+        this.checkAndAddEmptySlot();
+
         const connections = window.connectionManager?.getConnections() || [];
-        const conn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === 0);
-        const src = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
 
-        this._sourceName = src ? (src.customName || src.getDisplayName?.() || 'источник') : null;
+        // Раунд 73/78 - "Праздники" на фиксированном индексе, не зависит
+        // от числа источников задач (см. HOLIDAY_SOCKET_INDEX). Любая
+        // нода, которая понимает HolidayParser.extract() - CalendarNode
+        // ИЛИ JsonImportNode с производственным календарём (см. докстринг
+        // holidayParser.js). Пустой Set, если сокет не подключён - тогда
+        // весь код ниже ведёт себя ровно как раньше (только выходные).
+        const holidayConn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === HOLIDAY_SOCKET_INDEX);
+        const holidaySrc = holidayConn ? nodeManager.getNode(holidayConn.sourceNodeId) : null;
+        this.holidaySet = HolidayParser.extract(holidaySrc);
+        this._holidaySourceName = holidaySrc ? (holidaySrc.customName || holidaySrc.getDisplayName?.() || 'источник') : null;
+        if (holidayConn && this.holidaySet.size === 0) {
+            this.addBadge('gantt-holidays-empty', { type: 'warning', text: 'Праздники подключены, но не распознаны (0 дат)' });
+        } else {
+            this.clearBadge('gantt-holidays-empty');
+        }
 
-        // Приоритет: готовая совместимая таблица - используем напрямую,
-        // без пересчёта из списка (см. докстринг класса)
-        if (src?.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData)) {
-            this.sourceMode = 'table';
-            this.tasks = this.tasksFromTable(src.tableData);
-            this.tableData = src.tableData;
+        // Раунд 78 - собираем ВСЕ подключённые источники задач (не только
+        // сокет 0) - см. конструктор про this.inputSockets.
+        const sources = this.inputSockets
+            .map(idx => connections.find(c => c.targetNodeId === this.id && c.targetSocket === idx))
+            .filter(Boolean)
+            .map(c => nodeManager.getNode(c.sourceNodeId))
+            .filter(Boolean);
+
+        this._sourceStatuses = this.inputSockets.map(idx => {
+            const conn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === idx);
+            const src = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
+            if (!src) return { socketIndex: idx, name: null };
+            const isTable = src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData);
+            return {
+                socketIndex: idx,
+                name: src.customName || src.getDisplayName?.() || 'источник',
+                mode: Array.isArray(src.tasks) ? 'gantt' : (isTable ? 'table' : 'list'),
+                count: Array.isArray(src.tasks) ? src.tasks.length : undefined
+            };
+        });
+
+        if (sources.length === 0) {
+            this.sourceMode = 'list';
+            this.taskGroups = null;
+            this.tasks = [];
+            this.tableData = this.buildOutputTable();
+            this.value = 0;
+            return this.value;
+        }
+
+        // Ровно ОДИН источник - прежнее поведение без единого изменения
+        // (совместимо с проектами, сохранёнными до Раунда 78). Группировка
+        // (полупрозрачная подложка + строка-заголовок группы) появляется
+        // ТОЛЬКО когда источников 2 или больше - см. докстринг класса.
+        if (sources.length === 1) {
+            const src = sources[0];
+            this.taskGroups = null;
+
+            if (src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData)) {
+                this.sourceMode = 'table';
+                this.tasks = this.tasksFromTable(src.tableData).map(t => {
+                    const durationDays = this.taskDurationOverrides[t.name] ?? t.durationDays;
+                    return { ...t, taskKey: t.name, durationDays };
+                });
+                this.tableData = this.buildOutputTable();
+                this.value = this.tasks.length;
+                return this.value;
+            }
+
+            this.sourceMode = 'list';
+            const items = src.listData?.items || [];
+            const anchor = parseISODate(this.startDate) || new Date();
+
+            let cursor = 0;
+            this.tasks = items.map(item => {
+                const rawDuration = Math.max(0, this.durationUnit === 'hours' ? (item.value || 0) / HOURS_PER_WORKDAY : (item.value || 0));
+                const name = item.name || 'Задача';
+                // Раунд 81 - если полосу растягивали мышью, this.taskDurationOverrides
+                // хранит длительность, ЗАДАННУЮ ПОЛЬЗОВАТЕЛЕМ - она заменяет
+                // ту, что пришла бы из источника (item.value), иначе
+                // растягивание "отменялось" бы на следующем же пересчёте.
+                const duration = this.taskDurationOverrides[name] ?? rawDuration;
+                let startOffsetDays = this.taskDates[name];
+                if (startOffsetDays === undefined) {
+                    startOffsetDays = cursor;
+                    this.taskDates[name] = startOffsetDays;
+                }
+
+                let endOffsetDays;
+                if (this.scheduleMode === 'working') {
+                    startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
+                    endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
+                } else {
+                    endOffsetDays = startOffsetDays + duration;
+                }
+
+                cursor = Math.max(cursor, endOffsetDays);
+                return { name, taskKey: name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays };
+            });
+
+            this.tableData = this.buildOutputTable();
             this.value = this.tasks.length;
             return this.value;
         }
 
-        this.sourceMode = 'list';
-        const items = src?.listData?.items || [];
+        // 2+ источника - ГРУППИРОВКА (Раунд 78, по прямому запросу Mr.D:
+        // "подключить в одну диаграмму Ганта несколько других"). Каждый
+        // источник = своя группа, расписывается НЕЗАВИСИМО от остальных
+        // (свой курсор, старт с anchor - как отдельная "дорожка"), но на
+        // общей временной шкале. Ключ в this.taskDates - "групппа:имя",
+        // не голое имя - иначе задачи с одинаковым именем в разных
+        // группах перетирали бы сохранённую позицию друг друга.
+        this.sourceMode = 'groups';
         const anchor = parseISODate(this.startDate) || new Date();
 
-        let cursor = 0;
-        this.tasks = items.map(item => {
-            const duration = Math.max(0, this.durationUnit === 'hours' ? (item.value || 0) / 24 : (item.value || 0));
-            const name = item.name || 'Задача';
-            let startOffsetDays = this.taskDates[name];
-            if (startOffsetDays === undefined) {
-                startOffsetDays = cursor;
-                this.taskDates[name] = startOffsetDays;
-            }
+        this.taskGroups = sources.map((src, groupIndex) => {
+            const groupName = src.customName || src.getDisplayName?.() || `Группа ${groupIndex + 1}`;
+            const rawTasks = this._extractRawTasks(src);
 
-            let endOffsetDays;
-            if (this.scheduleMode === 'working') {
-                // Старт мог быть сохранён (авто-курсор или перетаскивание
-                // мышью) на выходном дне - "прилипаем" к ближайшему рабочему
-                // для отрисовки, сам сохранённый taskDates не трогаем
-                startOffsetDays = nextWorkingOffset(anchor, startOffsetDays);
-                endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration);
-            } else {
-                endOffsetDays = startOffsetDays + duration;
-            }
+            let cursor = 0;
+            const tasks = rawTasks.map(rt => {
+                const key = `${groupIndex}:${rt.name}`;
+                const duration = this.taskDurationOverrides[key] ?? rt.durationDays;
+                let startOffsetDays = this.taskDates[key];
+                if (startOffsetDays === undefined) {
+                    startOffsetDays = cursor;
+                    this.taskDates[key] = startOffsetDays;
+                }
 
-            cursor = Math.max(cursor, endOffsetDays);
-            return { name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays };
+                let endOffsetDays;
+                if (this.scheduleMode === 'working') {
+                    startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
+                    endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
+                } else {
+                    endOffsetDays = startOffsetDays + duration;
+                }
+
+                cursor = Math.max(cursor, endOffsetDays);
+                return {
+                    name: rt.name,
+                    taskKey: key,
+                    durationDays: endOffsetDays - startOffsetDays,
+                    startOffsetDays,
+                    groupIndex,
+                    groupName
+                };
+            });
+
+            return { name: groupName, tasks };
         });
 
+        this.tasks = this.taskGroups.flatMap(g => g.tasks);
         this.tableData = this.buildOutputTable();
         this.value = this.tasks.length;
         return this.value;
     }
 
-    updateDisplay(element) {
-        const sourceLabel = element.querySelector('.gantt-source-label');
-        if (sourceLabel) {
-            sourceLabel.textContent = this._sourceName
-                ? (this.sourceMode === 'table' ? `таблица: ${this._sourceName}` : this._sourceName)
-                : 'не подключено';
+    // Достаёт "сырые" задачи (имя + РАБОЧАЯ длительность в днях, БЕЗ дат)
+    // из источника - будь то другая Диаграмма Ганта, совместимая таблица
+    // (Начало/Окончание) или обычный список. Эта диаграмма расписывает
+    // группу ЗАНОВО, со своим anchor/курсором - принципиально важно
+    // взять именно РАБОЧУЮ длительность (rawDurationDays - число рабочих
+    // дней, без выходных/праздников), а не календарную ширину исходной
+    // задачи (durationDays - та УЖЕ включает пропущенные внутри выходные,
+    // см. столбец "Раб.дни" в buildOutputTable()). Если бы сюда попадала
+    // календарная ширина, spanWorkingDays() на следующем пересчёте
+    // пропустила бы выходные ВНУТРИ уже растянутого диапазона ЕЩЁ РАЗ -
+    // тот же класс бага, что чинили для растягивания мышью в этом же
+    // раунде (см. attachBarResize()), только на уровне цепочки нод, а не
+    // одной ноды.
+    //
+    // Таблица - В ПРИОРИТЕТЕ над сырыми this.tasks: buildOutputTable()
+    // всегда пишет столбец "Раб.дни" (авторитетную цифру), а голые
+    // объекты в src.tasks - нет (там только календарная durationDays).
+    _extractRawTasks(src) {
+        if (src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData)) {
+            return this.tasksFromTable(src.tableData).map(t => ({ name: t.name, durationDays: t.rawDurationDays }));
         }
+        if (Array.isArray(src.tasks) && src.tasks.length > 0) {
+            // Запасной путь для источников без tableData вообще (не
+            // должно случаться для настоящей GanttNode - у неё tableData
+            // есть всегда, см. calculate()) - лучшее, что можно сделать
+            // без доступа к столбцу "Раб.дни" источника, календарная
+            // ширина как есть, тот же риск, что был всегда для таких
+            // источников.
+            return src.tasks.map(t => ({ name: t.name, durationDays: t.durationDays }));
+        }
+        const items = src.listData?.items || [];
+        return items.map(item => ({
+            name: item.name || 'Задача',
+            durationDays: Math.max(0, this.durationUnit === 'hours' ? (item.value || 0) / HOURS_PER_WORKDAY : (item.value || 0))
+        }));
+    }
+
+    updateDisplay(element) {
+        element.querySelectorAll('.gantt-source-label').forEach(label => {
+            const idx = Number(label.dataset.socketIndex);
+            label.textContent = this._sourceStatusText(idx);
+        });
+
+        const holidayLabel = element.querySelector('.gantt-holiday-label');
+        if (holidayLabel) holidayLabel.textContent = this._holidayStatusText();
 
         const slot = element.querySelector('.gantt-container-slot');
         if (slot) {
@@ -998,6 +1870,61 @@ export class GanttNode extends BaseNode {
 
         const outputCount = element.querySelector('.gantt-output-count');
         if (outputCount) outputCount.textContent = `${this.tasks.length} задач`;
+    }
+
+    _sourceStatusText(socketIndex) {
+        const status = (this._sourceStatuses || []).find(s => s.socketIndex === socketIndex);
+        if (!status || !status.name) return 'не подключено';
+        if (status.mode === 'table') return `таблица: ${status.name}`;
+        if (status.mode === 'gantt') return `Гант: ${status.name} (${status.count} задач)`;
+        return status.name;
+    }
+
+    _holidayStatusText() {
+        if (!this._holidaySourceName) return 'праздники: не подключено';
+        return `праздники: ${this._holidaySourceName} — ${this.holidaySet.size} дат`;
+    }
+
+    // Раунд 78 - те же три метода, что уже отлажены в OperationNode/
+    // CalendarNode (см. их докстринги) - тот же принцип авто-роста
+    // слотов, ничего не переизобретаем.
+    isSocketConnected(index) {
+        const connections = window.connectionManager?.getConnections() || [];
+        return connections.some(c => c.targetNodeId === this.id && c.targetSocket === index);
+    }
+
+    checkAndAddEmptySlot() {
+        if (this.collapsed) return;
+        if (this.inputSockets.length >= this.maxInputs) return;
+
+        const connections = window.connectionManager?.getConnections() || [];
+        const usedSockets = connections.filter(c => c.targetNodeId === this.id).map(c => c.targetSocket);
+        const freeSockets = this.inputSockets.filter(idx => !usedSockets.includes(idx));
+
+        if (freeSockets.length === 0) {
+            const newIndex = this.inputSockets.length;
+            this.inputSockets.push(newIndex);
+            this.inputs = this.inputSockets.length;
+            setTimeout(() => {
+                if (!this._isRerendering && !this.collapsed) this.rerender();
+            }, 50);
+        }
+    }
+
+    rerender() {
+        if (this._isRerendering) return;
+        this._isRerendering = true;
+        const el = document.querySelector(`[data-node-id="${this.id}"]`);
+        if (el) {
+            el.remove();
+            if (window.nodeManager) {
+                window.nodeManager.renderNode(this);
+                if (window.renderer) {
+                    window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+                }
+            }
+        }
+        setTimeout(() => { this._isRerendering = false; }, 100);
     }
 
     // Первая нода, помеченная новой системой бейджей (см. baseNode.js) -
@@ -1025,9 +1952,21 @@ export class GanttNode extends BaseNode {
             key: 'periodPreset',
             label: 'Период отображения',
             type: 'select',
-            options: Object.entries(PERIOD_PRESETS).map(([value, cfg]) => ({ value, label: cfg.label })),
+            options: [
+                { value: 'custom', label: 'Своя протяжённость (см. поле ниже)' },
+                ...Object.entries(PERIOD_PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))
+            ],
             get: () => this.periodPreset,
             set: (v) => { this.periodPreset = v; }
+        });
+
+        fields.push({
+            key: 'customPeriodDays',
+            label: 'Протяжённость, дней (при "Своя")',
+            type: 'number',
+            min: 1, step: 1,
+            get: () => this.customPeriodDays,
+            set: (v) => { this.customPeriodDays = Math.max(1, parseInt(v, 10) || 60); }
         });
 
         fields.push({
@@ -1069,6 +2008,25 @@ export class GanttNode extends BaseNode {
             type: 'checkbox',
             get: () => this.showGridLines,
             set: (v) => { this.showGridLines = !!v; }
+        });
+
+        // Раунд 81 (п.4, по прямому запросу Mr.D) - независимые флаги
+        // видимости двух колонок слева от шкалы (см. buildTaskRow()/
+        // buildTotalRow()/buildGroupHeaderRow()).
+        fields.push({
+            key: 'showDurationColumn',
+            label: 'Колонка "ч.ч." / Итого дней',
+            type: 'checkbox',
+            get: () => this.showDurationColumn,
+            set: (v) => { this.showDurationColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showWorkingDaysColumn',
+            label: 'Колонка "Раб.дн." / Итого рабочих дней',
+            type: 'checkbox',
+            get: () => this.showWorkingDaysColumn,
+            set: (v) => { this.showWorkingDaysColumn = !!v; }
         });
 
         fields.push({

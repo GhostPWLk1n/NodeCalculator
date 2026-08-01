@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -23,6 +23,7 @@ import { InspectorManager } from './core/inspectorManager.js';
 import { NumberNode } from './nodes/numberNode.js';
 import { BooleanNode } from './nodes/booleanNode.js';
 import { BooleanOperationNode } from './nodes/booleanOperationNode.js';
+import { InvertNode } from './nodes/invertNode.js';
 import { OperationNode } from './nodes/operationNode.js';
 import { PercentageNode } from './nodes/percentageNode.js';
 import { ScaleListNode } from './nodes/scaleListNode.js';
@@ -35,6 +36,7 @@ import { TableNode } from './nodes/tableNode.js';
 import { TableViewerNode } from './nodes/tableViewerNode.js';
 import { PercentConvertNode } from './nodes/percentConvertNode.js';
 import { GanttNode } from './nodes/ganttNode.js';
+import { CalendarNode } from './nodes/calendarNode.js';
 import { DashboardNode } from './nodes/dashboardNode.js';
 import { ChartNode } from './nodes/chartNode.js';
 import { XlsxImportNode } from './nodes/xlsxImportNode.js';
@@ -112,6 +114,7 @@ const inspectorManager = new InspectorManager();
 nodeManager.registerNodeType('number', NumberNode);
 nodeManager.registerNodeType('boolean', BooleanNode);
 nodeManager.registerNodeType('booleanOp', BooleanOperationNode);
+nodeManager.registerNodeType('invert', InvertNode);
 nodeManager.registerNodeType('add', OperationNode);
 nodeManager.registerNodeType('subtract', OperationNode);
 nodeManager.registerNodeType('multiply', OperationNode);
@@ -127,6 +130,7 @@ nodeManager.registerNodeType('table', TableNode);
 nodeManager.registerNodeType('tableViewer', TableViewerNode);
 nodeManager.registerNodeType('percentConvert', PercentConvertNode);
 nodeManager.registerNodeType('gantt', GanttNode);
+nodeManager.registerNodeType('calendar', CalendarNode);
 nodeManager.registerNodeType('dashboard', DashboardNode);
 nodeManager.registerNodeType('chart', ChartNode);
 nodeManager.registerNodeType('xlsxImport', XlsxImportNode);
@@ -531,6 +535,74 @@ toolMarqueeBtn?.addEventListener('click', () => {
     setCutMode(false);
     setPlacingProxyMode(false);
     setMarqueeMode(next);
+});
+
+// Раунд 75 - горячие клавиши для инструментов холста (по образцу
+// Blender: B - box select). Оба обработчика ИГНОРИРУЮТ нажатия, когда
+// фокус внутри текстового поля/textarea/select - иначе набор буквы "b"
+// в названии ноды или обычный Ctrl+C/V копирования сломались бы.
+function isTypingTarget() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+
+// Состояние инструментов ДО временного зажатия Ctrl - восстанавливается
+// по отпусканию, см. keyup ниже. null = Ctrl сейчас не зажат нами.
+let toolsBeforeCtrlHold = null;
+
+document.addEventListener('keydown', (e) => {
+    if (isTypingTarget()) return;
+
+    // "B" (без модификаторов) - переключить "Выделение рамкой", тот же
+    // обработчик, что и у клика по кнопке - режимы взаимоисключающие,
+    // ничего не дублируем
+    // Багфикс: e.key зависит от АКТИВНОЙ раскладки клавиатуры - на
+    // русской/немецкой раскладке физическая клавиша "B" отдаёт совсем
+    // другой символ ('и' на ЙЦУКЕН и т.п.), поэтому e.key==='b' почти
+    // никогда не совпадает вне английской раскладки. e.code, в отличие
+    // от e.key, сообщает ФИЗИЧЕСКОЕ положение клавиши на клавиатуре
+    // ('KeyB') - не зависит от раскладки вообще, универсальное решение,
+    // работает одинаково на любой раскладке.
+    if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        toolMarqueeBtn?.click();
+        return;
+    }
+
+    // Ctrl зажат - временно включить "Ножницы", запомнив, что было
+    // активно до этого (e.repeat - защита от повторных keydown, которые
+    // браузер шлёт, пока клавиша просто удерживается)
+    if (e.key === 'Control' && !e.repeat && toolsBeforeCtrlHold === null) {
+        toolsBeforeCtrlHold = { cut: cutMode, proxy: placingProxyMode, marquee: marqueeMode };
+        setPlacingProxyMode(false);
+        setMarqueeMode(false);
+        setCutMode(true);
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'Control' && toolsBeforeCtrlHold !== null) {
+        const prev = toolsBeforeCtrlHold;
+        toolsBeforeCtrlHold = null;
+        setCutMode(prev.cut);
+        setPlacingProxyMode(prev.proxy);
+        setMarqueeMode(prev.marquee);
+    }
+});
+
+// Если окно теряет фокус (переключение на другое приложение) с зажатым
+// Ctrl - keyup может не долететь - без этого "Ножницы" остались бы
+// включёнными навсегда. Возвращаем к состоянию до зажатия по blur окна.
+window.addEventListener('blur', () => {
+    if (toolsBeforeCtrlHold !== null) {
+        const prev = toolsBeforeCtrlHold;
+        toolsBeforeCtrlHold = null;
+        setCutMode(prev.cut);
+        setPlacingProxyMode(prev.proxy);
+        setMarqueeMode(prev.marquee);
+    }
 });
 
 // "Добавить точку" - следующий клик по ПУСТОМУ месту холста создаёт

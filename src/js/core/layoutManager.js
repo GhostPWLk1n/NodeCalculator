@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -298,9 +298,15 @@ export class LayoutManager {
                     // GanttNode: календарь плана
                     startDate: n.type === 'gantt' ? n.startDate : undefined,
                     periodPreset: n.type === 'gantt' ? n.periodPreset : undefined,
+                    customPeriodDays: n.type === 'gantt' ? n.customPeriodDays : undefined,
                     durationUnit: n.type === 'gantt' ? n.durationUnit : undefined,
                     scheduleMode: n.type === 'gantt' ? n.scheduleMode : undefined,
                     taskDates: n.type === 'gantt' ? { ...n.taskDates } : undefined,
+                    taskDurationOverrides: n.type === 'gantt' ? { ...n.taskDurationOverrides } : undefined,
+                    taskResponsible: n.type === 'gantt' ? { ...n.taskResponsible } : undefined,
+                    showDurationColumn: n.type === 'gantt' ? n.showDurationColumn : undefined,
+                    showWorkingDaysColumn: n.type === 'gantt' ? n.showWorkingDaysColumn : undefined,
+                    collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
                     deadlineDate: n.type === 'gantt' ? n.deadlineDate : undefined,
@@ -359,6 +365,18 @@ export class LayoutManager {
                     // (Раунд 70) - см. докстринг treeToTableNode.js
                     layoutMode: n.type === 'treeToTable' ? n.layoutMode : undefined,
                     maxDepth: n.type === 'treeToTable' ? n.maxDepth : undefined,
+
+                    // CalendarNode: введённые вручную дни/диапазоны
+                    // (Раунд 73, переработано в Раунде 74 - см.
+                    // докстринг calendarNode.js) - без entries правки
+                    // терялись бы при каждой перезагрузке проекта
+                    entries: n.type === 'calendar' && Array.isArray(n.entries)
+                        ? n.entries.map(e => ({ type: e.type, date: e.date, dateTo: e.dateTo }))
+                        : undefined,
+                    viewYear: n.type === 'calendar' ? n.viewYear : undefined,
+                    viewMonth: n.type === 'calendar' ? n.viewMonth : undefined,
+                    selectionMode: n.type === 'calendar' ? n.selectionMode : undefined,
+                    excludedDates: n.type === 'calendar' && n.excludedDates ? [...n.excludedDates] : undefined,
 
                     // TableMergeColumnsNode: какие столбцы объединяем, как, куда
                     sourceColumns: n.type === 'tableMergeColumns' ? [...n.sourceColumns] : undefined,

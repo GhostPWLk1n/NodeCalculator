@@ -6,7 +6,7 @@
  * @file    operationNode.js
  * @brief   Операционные ноды (сложение, вычитание, умножение, деление)
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

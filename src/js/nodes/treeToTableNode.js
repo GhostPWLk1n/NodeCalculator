@@ -6,7 +6,7 @@
  * @file    treeToTableNode.js
  * @brief   Обработчик: разворачивает иерархию "Дерева" в плоскую таблицу (Data) с выбором глубины и компоновки
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

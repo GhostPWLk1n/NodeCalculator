@@ -6,7 +6,7 @@
  * @file    constants.js
  * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -17,7 +17,7 @@ export const Constants = {
     // "sidebarVersion">, а текст в него пишет main.js при старте (см.
     // инициализацию там) - обновлять нужно только это значение, одно
     // место на весь проект.
-    APP_VERSION: '1.6.0',
+    APP_VERSION: '1.7.15',
 
     NODE_TYPES: {
         NUMBER: 'number',
@@ -58,7 +58,9 @@ export const Constants = {
         dashboard: 'Дашборд',
         exportXlsx: 'Экспорт в Excel',
         exportJson: 'Экспорт JSON',
-        treeToTable: 'Дерево → Таблица'
+        treeToTable: 'Дерево → Таблица',
+        calendar: 'Календарь',
+        invert: 'Инверсия'
     },
 
     // Форматы отображения числового значения. Источник данных может

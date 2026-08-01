@@ -88,6 +88,26 @@
                         <span class="node-name">Изображение</span>
                         <span class="node-badge">Ввод</span>
                     </div>
+                    <div class="node-item" data-type="xlsxImport" onclick="window.addNode('xlsxImport', 400, 300)">
+                        <span class="node-icon">📥</span>
+                        <span class="node-name">Импорт из Excel</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="jsonImport" onclick="window.addNode('jsonImport', 400, 300)">
+                        <span class="node-icon">📄</span>
+                        <span class="node-name">Импорт JSON</span>
+                        <span class="node-badge">Данные</span>
+                    </div>
+                    <div class="node-item" data-type="exportXlsx" onclick="window.addNode('exportXlsx', 400, 300)">
+                        <span class="node-icon">📤</span>
+                        <span class="node-name">Экспорт в Excel</span>
+                        <span class="node-badge">Экспорт</span>
+                    </div>
+                    <div class="node-item" data-type="exportJson" onclick="window.addNode('exportJson', 400, 300)">
+                        <span class="node-icon">📤</span>
+                        <span class="node-name">Экспорт JSON</span>
+                        <span class="node-badge">Экспорт</span>
+                    </div>
                 </div>
             </div>
             
@@ -119,6 +139,11 @@
                         <span class="node-name">Логическая операция</span>
                         <span class="node-badge">Операция</span>
                     </div>
+                    <div class="node-item" data-type="invert" onclick="window.addNode('invert', 400, 300)">
+                        <span class="node-icon">🔄</span>
+                        <span class="node-name">Инверсия</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                 </div>
             </div>
 
@@ -139,6 +164,11 @@
                         <span class="node-icon">📅</span>
                         <span class="node-name">Диаграмма Ганта</span>
                         <span class="node-badge">Операция</span>
+                    </div>
+                    <div class="node-item" data-type="calendar" onclick="window.addNode('calendar', 400, 300)">
+                        <span class="node-icon">🗓️</span>
+                        <span class="node-name">Календарь</span>
+                        <span class="node-badge">Данные</span>
                     </div>
                     <div class="node-item" data-type="listConvert" onclick="window.addNode('listConvert', 400, 300)">
                         <span class="node-icon">🔀</span>
@@ -165,26 +195,6 @@
                         <span class="node-icon">📊</span>
                         <span class="node-name">Диаграмма</span>
                         <span class="node-badge">Данные</span>
-                    </div>
-                    <div class="node-item" data-type="xlsxImport" onclick="window.addNode('xlsxImport', 400, 300)">
-                        <span class="node-icon">📥</span>
-                        <span class="node-name">Импорт из Excel</span>
-                        <span class="node-badge">Данные</span>
-                    </div>
-                    <div class="node-item" data-type="jsonImport" onclick="window.addNode('jsonImport', 400, 300)">
-                        <span class="node-icon">📄</span>
-                        <span class="node-name">Импорт JSON</span>
-                        <span class="node-badge">Данные</span>
-                    </div>
-                    <div class="node-item" data-type="exportXlsx" onclick="window.addNode('exportXlsx', 400, 300)">
-                        <span class="node-icon">📤</span>
-                        <span class="node-name">Экспорт в Excel</span>
-                        <span class="node-badge">Экспорт</span>
-                    </div>
-                    <div class="node-item" data-type="exportJson" onclick="window.addNode('exportJson', 400, 300)">
-                        <span class="node-icon">📤</span>
-                        <span class="node-name">Экспорт JSON</span>
-                        <span class="node-badge">Экспорт</span>
                     </div>
                     <div class="node-item" data-type="tableInject" onclick="window.addNode('tableInject', 400, 300)">
                         <span class="node-icon">➕</span>
@@ -327,9 +337,9 @@
              (boardManager.js), и вместе с ним прячется панель, без
              отдельной синхронизации видимости в JS. -->
         <div id="canvasToolbar" class="canvas-toolbar">
-            <button class="canvas-tool-btn" id="toolCutConnections" title="Обрезать связи - протяните через провода, чтобы разорвать">✂️</button>
+            <button class="canvas-tool-btn" id="toolCutConnections" title="Обрезать связи - протяните через провода, чтобы разорвать (Ctrl - зажать для временного включения)">✂️</button>
             <button class="canvas-tool-btn" id="toolAddProxy" title="Добавить точку - кликните на холсте, чтобы разместить">⚪</button>
-            <button class="canvas-tool-btn" id="toolMarqueeSelect" title="Выделение рамкой - протяните рамку, чтобы выделить несколько нод для одновременного перемещения">🔲</button>
+            <button class="canvas-tool-btn" id="toolMarqueeSelect" title="Выделение рамкой - протяните рамку, чтобы выделить несколько нод для одновременного перемещения (B)">🔲</button>
         </div>
         <div class="nodes-container" id="nodesContainer">
             <!-- Сюда будут добавляться ноды -->

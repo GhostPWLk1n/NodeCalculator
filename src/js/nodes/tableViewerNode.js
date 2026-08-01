@@ -6,7 +6,7 @@
  * @file    tableViewerNode.js
  * @brief   Нода просмотра таблицы (Data), без выходов
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -93,6 +93,11 @@ export class TableViewerNode extends BaseNode {
         // ручку ресайза ноды по вертикали (см. beginFreeResize/applyFreeResize
         // ниже) - null = высота подбирается автоматически по числу строк.
         this.wrapHeight = config.wrapHeight ?? null;
+
+        // Багфикс (Раунд 77, по жалобе Mr.D: "если таблица очень большая,
+        // начинает зависать") - см. подробный комментарий у updateDisplay()
+        // ниже про причину и решение (кеш по дешёвой сигнатуре содержимого).
+        this._lastRenderedSignature = null;
     }
 
     getDisplayName() {
@@ -567,6 +572,13 @@ export class TableViewerNode extends BaseNode {
             const visibleRows = Math.min(rowCount, MAX_VISIBLE_ROWS);
             bodyScroll.style.maxHeight = Math.max(visibleRows * rowH, ROW_HEIGHT) + 'px';
         }
+
+        // Кеш сигнатуры обновляется ЗДЕСЬ, а не в updateDisplay() - так
+        // прямые вызовы renderTable() (клик по заголовку для сортировки,
+        // ресайз и т.п., см. другие вызовы этого метода) тоже держат кеш
+        // свежим, без лишнего повторного рендера на следующем
+        // updateDisplay() (см. её докстринг про причину кеша).
+        this._lastRenderedSignature = this._computeSignature();
     }
 
     calculate(nodeManager) {
@@ -596,6 +608,36 @@ export class TableViewerNode extends BaseNode {
         return this.tableData.rowCount;
     }
 
+    // Быстрый отпечаток содержимого + значимых для рендера опций отображения -
+    // НЕ криптографический хэш, просто дешёвое (один линейный проход,
+    // FNV-1a смешивание символов без построения промежуточных строк)
+    // средство отличить "таблица реально изменилась" от "пересчитался
+    // граф, а эта конкретная таблица - нет". Reference-сравнение
+    // (this.tableData === старый объект) здесь не годится - src-нода
+    // пересоздаёт TableData на КАЖДЫЙ calculate(), даже если значения не
+    // изменились (см. calculate() выше - обычный паттерн всех табличных
+    // нод проекта), так что ссылка меняется каждый раз независимо от
+    // содержимого.
+    _computeSignature() {
+        let hash = 2166136261 >>> 0;
+        const mix = (str) => {
+            for (let i = 0; i < str.length; i++) {
+                hash ^= str.charCodeAt(i);
+                hash = Math.imul(hash, 16777619) >>> 0;
+            }
+        };
+        const t = this.tableData;
+        mix(`${t.rowCount}|${t.columns.length}|${this.showRowNumbers}|${this.sortColumnIndex}|${this.sortDirection}|${this.wrapHeight}|`);
+        t.columns.forEach(col => {
+            mix(`${col.header}:${col.format}|`);
+            for (let i = 0; i < col.values.length; i++) {
+                mix(String(col.values[i]));
+                mix('|');
+            }
+        });
+        return hash;
+    }
+
     updateDisplay(element) {
         const infoLabel = element.querySelector('.table-viewer-info');
         if (infoLabel) {
@@ -604,7 +646,9 @@ export class TableViewerNode extends BaseNode {
 
         const wrap = element.querySelector('.table-viewer-wrap');
         if (wrap) {
-            this.renderTable(wrap);
+            if (this._computeSignature() !== this._lastRenderedSignature) {
+                this.renderTable(wrap);
+            }
         }
 
         const titleText = element.querySelector('.title-text');

@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.7.4
+ * @version 1.7.15
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -71,6 +71,9 @@ export class XlsxImportNode extends BaseNode {
         // в реальных файлах часто выше есть строка с названием отчёта,
         // пустая строка-отступ и т.п.) - см. _refreshHeadersForCurrentSheet()
         this.headerRow = config.headerRow ?? 1;
+
+        // Максимальное количество столбцов для отображения
+        this.maxColumns = config.maxColumns ?? 0; // 0 означает "все столбцы"
 
         // Уже импортированные данные - сериализуются, переживают
         // сохранение/загрузку проекта (см. докстринг класса)
@@ -157,7 +160,10 @@ export class XlsxImportNode extends BaseNode {
         if (!this.importedHeaders.length) {
             return this._outline ? 'выберите лист и столбцы в панели →' : 'нет импортированных данных';
         }
-        return `${this.importedRows.length} строк × ${this.importedHeaders.length} столбцов (лист «${this.selectedSheet}»)`;
+        const displayCols = this.maxColumns > 0 && this.maxColumns < this.importedHeaders.length 
+            ? this.maxColumns 
+            : this.importedHeaders.length;
+        return `${this.importedRows.length} строк × ${displayCols} из ${this.importedHeaders.length} столбцов (лист «${this.selectedSheet}»)`;
     }
 
     // Шаг 1 (см. докстринг класса) - "поверхностное" сканирование:
@@ -215,9 +221,16 @@ export class XlsxImportNode extends BaseNode {
             // начинаются СРАЗУ ПОСЛЕ неё - 0-based индекс первой строки
             // данных численно равен 1-based номеру строки заголовков
             const dataRows = allRows.slice(this.headerRow);
-            const colsToKeep = this.selectedColumns.length
+            
+            // Определяем, какие столбцы будем показывать
+            let colsToKeep = this.selectedColumns.length
                 ? [...this.selectedColumns].sort((a, b) => a - b)
                 : sheet.headers.map((_, i) => i);
+            
+            // Применяем ограничение на количество столбцов
+            if (this.maxColumns > 0 && colsToKeep.length > this.maxColumns) {
+                colsToKeep = colsToKeep.slice(0, this.maxColumns);
+            }
 
             this.importedHeaders = colsToKeep.map(i => sheet.headers[i] || `Столбец ${i + 1}`);
             this.importedRows = dataRows
@@ -273,7 +286,13 @@ export class XlsxImportNode extends BaseNode {
 
     _buildTableData() {
         if (!this.importedHeaders.length) return new TableData();
-        const columns = this.importedHeaders.map((header, colIdx) => {
+        
+        // Определяем, сколько столбцов показывать
+        const displayHeaders = this.maxColumns > 0 && this.maxColumns < this.importedHeaders.length
+            ? this.importedHeaders.slice(0, this.maxColumns)
+            : this.importedHeaders;
+        
+        const columns = displayHeaders.map((header, colIdx) => {
             const values = this.importedRows.map(row => (row[colIdx] === undefined ? null : row[colIdx]));
             const isNumericCol = values.some(v => typeof v === 'number')
                 && values.every(v => v === null || v === '' || typeof v === 'number');
@@ -373,20 +392,50 @@ export class XlsxImportNode extends BaseNode {
             }
         });
 
+        // Добавляем поле для ограничения количества столбцов
+        fields.push({
+            key: 'maxColumns',
+            label: 'Максимум столбцов для отображения (0 - все)',
+            type: 'number',
+            min: 0, step: 1,
+            get: () => this.maxColumns || 0,
+            set: (v) => {
+                this.maxColumns = Math.max(0, v || 0);
+                // Обновляем отображение без повторного импорта
+                this.tableData = this._buildTableData();
+                this.rerender();
+                if (window.nodeManager) window.nodeManager.calculateAll();
+            }
+        });
+
         const sheet = this._outline.sheets.find(s => s.name === this.selectedSheet);
         const headers = sheet ? sheet.headers : [];
 
         fields.push({ type: 'section', label: 'Столбцы для импорта' });
+        
+        // Показываем чекбоксы для всех столбцов, но с пометкой, какие будут отображаться
+        const displayLimit = this.maxColumns > 0 ? this.maxColumns : headers.length;
         headers.forEach((header, i) => {
             const label = header || `Столбец ${i + 1}`;
+            const isDisplayed = i < displayLimit;
+            const isSelected = this.selectedColumns.includes(i);
+            
             fields.push({
                 key: `xlsxCol_${i}`,
-                label,
+                label: isDisplayed ? label : `${label} (не отображается)`,
                 type: 'checkbox',
-                get: () => this.selectedColumns.includes(i),
+                disabled: !isDisplayed && displayLimit < headers.length,
+                get: () => isSelected,
                 set: (v) => {
                     if (v) {
-                        if (!this.selectedColumns.includes(i)) this.selectedColumns.push(i);
+                        if (!this.selectedColumns.includes(i)) {
+                            // Если пытаемся выбрать столбец за пределами лимита, но лимит установлен
+                            if (this.maxColumns > 0 && i >= this.maxColumns) {
+                                alert(`Невозможно выбрать столбец ${i + 1}, так как он за пределами максимального количества отображаемых столбцов (${this.maxColumns}). Увеличьте значение "Максимум столбцов для отображения"`);
+                                return;
+                            }
+                            this.selectedColumns.push(i);
+                        }
                     } else {
                         this.selectedColumns = this.selectedColumns.filter(idx => idx !== i);
                     }
