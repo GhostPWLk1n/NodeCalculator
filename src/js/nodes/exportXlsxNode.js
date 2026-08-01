@@ -6,7 +6,7 @@
  * @file    exportXlsxNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .xlsx по кнопке
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -95,8 +95,11 @@ export class ExportXlsxNode extends BaseNode {
         const connections = window.connectionManager?.getConnections() || [];
         const conn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === 0);
         const src = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
+        // Раунд 84 - через getSourceOutput() (учитывает sourceSocket у
+        // многовыходных источников), см. baseNode.js/nodeManager.js
+        const output = conn ? nodeManager.getSourceOutput(conn) : null;
 
-        this.tableData = src?.tableData ?? null;
+        this.tableData = output?.tableData ?? null;
         this._sourceName = src ? (src.customName || src.getDisplayName?.() || 'источник') : null;
 
         if (conn) {

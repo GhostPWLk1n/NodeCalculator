@@ -6,7 +6,7 @@
  * @file    nodeManager.js
  * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -264,6 +264,24 @@ export class NodeManager {
     
     getNode(id) {
         return this.nodes.find(n => n.id === id);
+    }
+
+    // Раунд 84 - читает данные ИМЕННО с того выходного сокета источника,
+    // к которому идёт соединение (conn.sourceSocket), а не просто
+    // node.tableData/node.value напрямую - см. подробный докстринг
+    // BaseNode.getOutputBySocket() про то, зачем это понадобилось
+    // (декоративные, неразличимые для потребителя выходы у существующих
+    // многовыходных нод). Пока подключено ТОЛЬКО в нескольких основных
+    // потребителях (TableViewerNode, GanttNode, ExportXlsxNode,
+    // ExportJsonNode) - остальные ноды по-прежнему читают node.tableData
+    // и т.п. напрямую, это ПОСТЕПЕННАЯ миграция, не одномоментная -
+    // прямое чтение безопасно и для многовыходных нод тоже (просто не
+    // различает сокеты, как и раньше).
+    getSourceOutput(conn) {
+        if (!conn) return null;
+        const src = this.getNode(conn.sourceNodeId);
+        if (!src) return null;
+        return src.getOutputBySocket(conn.sourceSocket || 0);
     }
 
     // === Боковая панель (InspectorManager): выбор ноды кликом ===

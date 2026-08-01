@@ -6,7 +6,7 @@
  * @file    treeFormatNode.js
  * @brief   Обработчик: оформление свода "Дерева" (формат/ширина/цвет полей), с сохранением иерархии
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -202,6 +202,11 @@ export class TreeFormatNode extends BaseNode {
     updateDisplay(element) {
         const sourceLabel = element.querySelector('.table-format-source-label');
         if (sourceLabel) sourceLabel.textContent = this._sourceName || 'не подключено';
+    }
+
+    // Раунд 89 - см. подробный комментарий в tableFormatNode.js
+    getStaticBadges() {
+        return [{ type: 'deprecated', text: 'Оформление переезжает в панель инспектора - см. обсуждение унификации' }];
     }
 
     getInspectorSchema() {

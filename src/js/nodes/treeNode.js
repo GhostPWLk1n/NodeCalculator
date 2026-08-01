@@ -6,7 +6,7 @@
  * @file    treeNode.js
  * @brief   "Дерево" - собирает таблицы/списки в именованные ветки, считает итоги по совпадающим полям
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    exampleNode.js
  * @brief   Эталонный пример реализации ноды по docs/NODE_API.md
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

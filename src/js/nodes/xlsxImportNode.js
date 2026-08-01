@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -132,6 +132,23 @@ export class XlsxImportNode extends BaseNode {
         statusEl.className = 'xlsx-status';
         statusEl.textContent = this._statusText();
         content.appendChild(statusEl);
+
+        // Раунд 85 (по запросу Mr.D: "чтобы каждый раз не просматривать
+        // список") - та же кнопка, что уже есть в панели инспектора
+        // (getInspectorSchema(), в самом низу) - здесь прямо на теле
+        // ноды, для быстрого повторного импорта уже выбранного листа/
+        // столбцов без похода в панель. Вызывает ТОТ ЖЕ _importSelected() -
+        // не дублирует логику, только доступ к ней.
+        const reimportBtn = document.createElement('button');
+        reimportBtn.className = 'node-action-btn';
+        reimportBtn.textContent = '⬇️ Импортировать выбранное';
+        reimportBtn.disabled = !this._outline || !this.selectedSheet;
+        reimportBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        reimportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._importSelected();
+        });
+        content.appendChild(reimportBtn);
 
         const outRow = document.createElement('div');
         outRow.style.cssText = `
@@ -315,6 +332,8 @@ export class XlsxImportNode extends BaseNode {
         }
         const statusEl = element.querySelector('.xlsx-status');
         if (statusEl) statusEl.textContent = this._statusText();
+        const reimportBtn = element.querySelector('.node-action-btn');
+        if (reimportBtn) reimportBtn.disabled = !this._outline || !this.selectedSheet;
     }
 
     rerender() {

@@ -6,7 +6,7 @@
  * @file    tableFormatNode.js
  * @brief   Обработчик: применяет оформление (формат/ширина/итог/цвет/зебра/линии) к любой Data-таблице
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -189,6 +189,17 @@ export class TableFormatNode extends BaseNode {
     updateDisplay(element) {
         const sourceLabel = element.querySelector('.table-format-source-label');
         if (sourceLabel) sourceLabel.textContent = this._sourceName || 'не подключено';
+    }
+
+    // Раунд 89 (чек-лист 1.7.21, п.3, по объявленному плану Mr.D) -
+    // оформление (формат/цвет/итог по столбцу) переезжает в панель
+    // инспектора КАЖДОЙ ноды с собственным представлением данных -
+    // отдельная нода-посредник для этого больше не нужна. Нода пока НЕ
+    // удалена (старые сохранённые проекты продолжат работать как есть),
+    // но новые графы использовать её не должны - см. обсуждение с Mr.D
+    // про унификацию правил оформления для Досок и Листов.
+    getStaticBadges() {
+        return [{ type: 'deprecated', text: 'Оформление переезжает в панель инспектора - см. обсуждение унификации' }];
     }
 
     getInspectorSchema() {

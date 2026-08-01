@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -40,6 +40,7 @@ import { CalendarNode } from './nodes/calendarNode.js';
 import { DashboardNode } from './nodes/dashboardNode.js';
 import { ChartNode } from './nodes/chartNode.js';
 import { XlsxImportNode } from './nodes/xlsxImportNode.js';
+import { GanttTableProcessorNode } from './nodes/ganttTableProcessorNode.js';
 import { JsonImportNode } from './nodes/jsonImportNode.js';
 import { ExportXlsxNode } from './nodes/exportXlsxNode.js';
 import { ExportJsonNode } from './nodes/exportJsonNode.js';
@@ -134,6 +135,7 @@ nodeManager.registerNodeType('calendar', CalendarNode);
 nodeManager.registerNodeType('dashboard', DashboardNode);
 nodeManager.registerNodeType('chart', ChartNode);
 nodeManager.registerNodeType('xlsxImport', XlsxImportNode);
+nodeManager.registerNodeType('ganttTableProcessor', GanttTableProcessorNode);
 nodeManager.registerNodeType('jsonImport', JsonImportNode);
 nodeManager.registerNodeType('image', ImageNode);
 nodeManager.registerNodeType('proxy', ProxyNode);

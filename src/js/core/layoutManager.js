@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -306,6 +306,8 @@ export class LayoutManager {
                     taskResponsible: n.type === 'gantt' ? { ...n.taskResponsible } : undefined,
                     showDurationColumn: n.type === 'gantt' ? n.showDurationColumn : undefined,
                     showWorkingDaysColumn: n.type === 'gantt' ? n.showWorkingDaysColumn : undefined,
+                    showResponsibleColumn: n.type === 'gantt' ? n.showResponsibleColumn : undefined,
+                    subtitleText: n.type === 'gantt' ? n.subtitleText : undefined,
                     collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
@@ -354,10 +356,10 @@ export class LayoutManager {
                     rangeStart: n.type === 'tableRemove' ? n.rangeStart : undefined,
                     rangeEnd: n.type === 'tableRemove' ? n.rangeEnd : undefined,
                     count: n.type === 'tableRemove' ? n.count : undefined,
-                    // TableFormatNode/TreeFormatNode: переопределения
-                    // оформления по столбцу/полю (формат/ширина/знаки/итог/
-                    // цвет) - см. докстринг this.columnStyles в конструкторах
-                    columnStyles: ['tableFormat', 'treeFormat'].includes(n.type) && n.columnStyles
+                    // Раунд 90 - единый columnStyles[] теперь и у обычных
+                    // табличных нод (не только у Format-посредников) -
+                    // см. докстринг this.columnStyles в конструкторах.
+                    columnStyles: ['tableFormat', 'treeFormat', 'table'].includes(n.type) && n.columnStyles
                         ? n.columnStyles.map(s => ({ ...s }))
                         : undefined,
 
@@ -377,6 +379,7 @@ export class LayoutManager {
                     viewMonth: n.type === 'calendar' ? n.viewMonth : undefined,
                     selectionMode: n.type === 'calendar' ? n.selectionMode : undefined,
                     excludedDates: n.type === 'calendar' && n.excludedDates ? [...n.excludedDates] : undefined,
+                    dataStartRowOverride: n.type === 'ganttTableProcessor' ? n.dataStartRowOverride : undefined,
 
                     // TableMergeColumnsNode: какие столбцы объединяем, как, куда
                     sourceColumns: n.type === 'tableMergeColumns' ? [...n.sourceColumns] : undefined,

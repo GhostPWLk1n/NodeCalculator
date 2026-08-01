@@ -35,6 +35,9 @@
        "Итого" (контур + лёгкая заливка), но отличается оттенком. */
     --gantt-group-indicator-border: var(--md-primary);
     --gantt-group-indicator-fill: rgba(144, 202, 249, 0.18);
+    /* Строка "Итого" (Раунд 88, чек-лист 1.7.21) - лёгкая прозрачность
+       вместо сплошного --md-surface-2, который был непрозрачным */
+    --gantt-total-row-bg: rgba(255, 255, 255, 0.06);
 }
 
 /* ============================================
@@ -3561,3 +3564,31 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 }
 .gantt-bar-resize-left:hover { border-radius: 3px 0 0 3px; }
 .gantt-bar-resize-right:hover { border-radius: 0 3px 3px 0; }
+
+/* Сворачиваемые секции инспектора (Раунд 90, чек-лист 1.7.21 п.2) */
+.inspector-section-group {
+    margin-top: 4px;
+}
+
+.inspector-section-heading-collapsible {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.inspector-section-heading-collapsible:hover {
+    color: var(--md-primary);
+}
+
+.inspector-section-arrow {
+    font-size: 9px;
+    width: 10px;
+    flex-shrink: 0;
+}
+
+.inspector-section-content {
+    display: flex;
+    flex-direction: column;
+}

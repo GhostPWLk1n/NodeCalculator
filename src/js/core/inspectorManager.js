@@ -6,7 +6,7 @@
  * @file    inspectorManager.js
  * @brief   Боковая панель настроек выбранной ноды (цвет, формат значения и т.п.)
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -87,9 +87,72 @@ export class InspectorManager {
             return;
         }
 
+        // Раунд 90 - состояние свёрнутости живёт НА САМОЙ НОДЕ (не в
+        // InspectorManager) - переживает повторные render() (те
+        // случаются на каждое изменение поля), но не сериализуется -
+        // чисто сессионное UI-удобство, не часть данных проекта.
+        if (!node._inspectorCollapsed) node._inspectorCollapsed = {};
+
+        let currentGroup = null; // {contentEl} - активная сворачиваемая секция, если есть
         schema.forEach(field => {
-            this.bodyEl.appendChild(this.renderField(node, field));
+            if (field.type === 'section' && field.collapsible) {
+                currentGroup = this._renderCollapsibleSection(node, field);
+                this.bodyEl.appendChild(currentGroup.wrapper);
+                return;
+            }
+            if (field.type === 'section') {
+                currentGroup = null; // обычная (не сворачиваемая) секция сбрасывает группировку
+            }
+            const el = this.renderField(node, field);
+            if (currentGroup) {
+                currentGroup.contentEl.appendChild(el);
+            } else {
+                this.bodyEl.appendChild(el);
+            }
         });
+    }
+
+    // Сворачиваемая секция (Раунд 90) - field.collapsed задаёт значение
+    // ПО УМОЛЧАНИЮ только при первом рендере этой ноды за сессию; дальше
+    // состояние хранится в node._inspectorCollapsed и не перезаписывается
+    // схемой при последующих render(). Все поля МЕЖДУ этой секцией и
+    // следующей 'section' (любой, не только сворачиваемой) уходят внутрь
+    // contentEl - см. render() выше.
+    _renderCollapsibleSection(node, field) {
+        const key = field.label;
+        if (!(key in node._inspectorCollapsed)) {
+            node._inspectorCollapsed[key] = !!field.collapsed;
+        }
+        const collapsed = node._inspectorCollapsed[key];
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'inspector-section-group';
+
+        const heading = document.createElement('div');
+        heading.className = 'inspector-section-heading inspector-section-heading-collapsible';
+        heading.addEventListener('mousedown', (e) => e.stopPropagation());
+        heading.addEventListener('click', () => {
+            node._inspectorCollapsed[key] = !node._inspectorCollapsed[key];
+            this.render();
+        });
+
+        const arrow = document.createElement('span');
+        arrow.className = 'inspector-section-arrow';
+        arrow.textContent = collapsed ? '▸' : '▾';
+        heading.appendChild(arrow);
+
+        const labelEl = document.createElement('span');
+        labelEl.textContent = field.label;
+        heading.appendChild(labelEl);
+
+        const contentEl = document.createElement('div');
+        contentEl.className = 'inspector-section-content';
+        if (collapsed) contentEl.style.display = 'none';
+
+        wrapper.appendChild(heading);
+        wrapper.appendChild(contentEl);
+
+        return { wrapper, contentEl };
     }
 
     renderField(node, field) {

@@ -6,7 +6,7 @@
  * @file    tableViewerNode.js
  * @brief   Нода просмотра таблицы (Data), без выходов
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -592,18 +592,23 @@ export class TableViewerNode extends BaseNode {
         }
 
         const srcNode = nodeManager.getNode(input.sourceNodeId);
-        if (!srcNode || !srcNode.tableData) {
+        // Раунд 84 - через getSourceOutput(), не srcNode.tableData
+        // напрямую - учитывает конкретный выходной сокет источника (см.
+        // BaseNode.getOutputBySocket()/nodeManager.getSourceOutput()) -
+        // для обычных однослойных источников поведение не меняется.
+        const output = nodeManager.getSourceOutput(input);
+        if (!srcNode || !output?.tableData) {
             this.tableData = new TableData();
             this.sourceName = null;
             return null;
         }
 
         this.sourceName = srcNode.customName
-            || srcNode.tableData.metadata?.title
+            || output.tableData.metadata?.title
             || srcNode.getDisplayName?.()
             || null;
 
-        this.tableData = srcNode.tableData;
+        this.tableData = output.tableData;
 
         return this.tableData.rowCount;
     }

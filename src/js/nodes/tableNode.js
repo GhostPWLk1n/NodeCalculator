@@ -6,7 +6,7 @@
  * @file    tableNode.js
  * @brief   Обработчик: собирает LIST-входы в столбцы таблицы (выход типа Data)
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -14,6 +14,7 @@ import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
+import { applyColumnStyles, buildColumnFormattingFields } from '../utils/columnFormatting.js';
 
 /**
  * TableNode - обработчик: собирает входящие LIST-ы в столбцы таблицы.
@@ -63,13 +64,9 @@ export class TableNode extends BaseNode {
             ? config.columns.map(c => ({
                 listIndex: c.listIndex,
                 stringIndex: c.stringIndex,
-                formatOverride: c.formatOverride ?? null,
-                includeNames: c.includeNames ?? false,
-                width: c.width ?? null,
-                totalType: c.totalType ?? null,
-                decimals: c.decimals ?? null
+                includeNames: c.includeNames ?? false
             }))
-            : [{ listIndex: 0, stringIndex: 1, formatOverride: null, includeNames: false, width: null, totalType: null, decimals: null }];
+            : [{ listIndex: 0, stringIndex: 1, includeNames: false }];
 
         this._nextIndex = config._nextIndex ?? (this.columns.length * 2);
 
@@ -78,6 +75,46 @@ export class TableNode extends BaseNode {
 
         this.width = config.width || 240;
         this.tableData = new TableData();
+
+        // Раунд 90 (по решению Mr.D: "стремиться к единому механизму для
+        // всех типов нод") - оформление (формат/итог/ширина/знаки после
+        // запятой/цвет) теперь общий columnStyles[] (utils/columnFormatting.js),
+        // не поля НА КАЖДОМ СЛОТЕ, как было раньше - единообразно со
+        // всеми остальными табличными нодами. includeNames ОСТАЁТСЯ в
+        // this.columns[] (см. выше) - это структурное решение (влияет
+        // на КОЛИЧЕСТВО итоговых столбцов - добавляет ли слот ещё один
+        // текстовый столбец с именами ПЕРЕД основным), не стилевое, и
+        // columnStyles (индексируется по ИТОГОВОЙ позиции столбца)
+        // не может его выразить.
+        //
+        // Миграция старых сохранённых проектов - если config.columns[i]
+        // ещё несёт formatOverride/width/totalType/decimals (формат ДО
+        // этого раунда), переносим их в columnStyles ПО ПРАВИЛЬНОМУ
+        // итоговому индексу (includeNames сдвигает индекс основного
+        // столбца на 1) - иначе уже настроенное пользователем оформление
+        // молча терялось бы при открытии старого проекта. Массив
+        // заполняется СТРОГО последовательно (без "дыр" - см. также
+        // защиту в ensureColumnStyles()).
+        this.columnStyles = [];
+        if (config.columnStyles) {
+            this.columnStyles = [...config.columnStyles];
+        } else if (config.columns && config.columns.length) {
+            let outIdx = 0;
+            config.columns.forEach(c => {
+                if (c.includeNames) {
+                    this.columnStyles[outIdx] = { formatOverride: null, width: null, decimals: null, totalType: null, color: null };
+                    outIdx++;
+                }
+                this.columnStyles[outIdx] = {
+                    formatOverride: c.formatOverride ?? null,
+                    width: c.width ?? null,
+                    decimals: c.decimals ?? null,
+                    totalType: c.totalType ?? null,
+                    color: null
+                };
+                outIdx++;
+            });
+        }
 
         // Состояние ТОЛЬКО для виджета на Доске (Раунд 35) - не влияет на
         // тело ноды в графе (оно намеренно минимальное, см. докстринг
@@ -400,11 +437,12 @@ export class TableNode extends BaseNode {
                 || listSourceName
                 || `Столбец ${i + 1}`;
 
-            // Приоритет формата: ручной выбор в колонке -> формат,
-            // объявленный источником-списком -> 'number' по умолчанию
-            const format = col.formatOverride
-                || (typeof listSrc.getValueFormat === 'function' ? listSrc.getValueFormat() : null)
-                || 'number';
+            // Формат "как есть" (до применения оформления) - источник-
+            // список объявляет свой формат, иначе 'number' по умолчанию.
+            // Ручное переопределение (было col.formatOverride) теперь
+            // накладывается ЕДИНООБРАЗНО через applyColumnStyles() ниже,
+            // как и у всех остальных табличных нод (Раунд 90).
+            const format = (typeof listSrc.getValueFormat === 'function' ? listSrc.getValueFormat() : null) || 'number';
 
             const entries = [];
 
@@ -414,17 +452,16 @@ export class TableNode extends BaseNode {
                 entries.push({
                     header: `${header} (имена)`,
                     values: items.map(it => it.name || ''),
-                    format: 'text',
-                    width: null
+                    format: 'text'
                 });
             }
 
-            entries.push({ header, values, format, width: col.width || null, totalType: col.totalType || null, decimals: col.decimals ?? null });
+            entries.push({ header, values, format });
 
             return entries;
         });
 
-        this.tableData = new TableData(columns, { title: this.customName || this.getDisplayName() });
+        this.tableData = new TableData(applyColumnStyles(columns, this.columnStyles), { title: this.customName || this.getDisplayName() });
         this.value = this.tableData.rowCount;
 
         setTimeout(() => this.checkAndAddEmptySlot(), 100);
@@ -472,75 +509,25 @@ export class TableNode extends BaseNode {
         });
     }
 
-    // Боковая панель - здесь живёт всё оформление, которое раньше было
-    // инлайн-контролами в теле ноды: формат/итог/ширина/знаки после
-    // запятой/подцепить имена строк, по одной группе полей на столбец.
+    // Боковая панель - структурные настройки по слотам (влияют на
+    // КОЛИЧЕСТВО столбцов) + общий блок "Отображение" (Раунд 90,
+    // единообразно со всеми табличными нодами - см. docstring
+    // конструктора про миграцию со старых per-slot полей формата/итога/
+    // ширины/знаков).
     getInspectorSchema() {
         const fields = super.getInspectorSchema();
 
         this.columns.forEach((col, i) => {
-            fields.push({ type: 'section', label: `Столбец ${i + 1}` });
-
-            fields.push({
-                key: `col${i}_format`,
-                label: 'Формат значения',
-                type: 'select',
-                options: [
-                    { value: '', label: 'Авто' },
-                    { value: 'number', label: 'Число' },
-                    { value: 'currency', label: 'Деньги' },
-                    { value: 'percent', label: 'Проценты' }
-                ],
-                get: () => col.formatOverride || '',
-                set: (v) => { col.formatOverride = v || null; }
-            });
-
-            fields.push({
-                key: `col${i}_total`,
-                label: 'Итог (строка "Итого")',
-                type: 'select',
-                options: [
-                    { value: '', label: 'Без итога' },
-                    { value: 'sum', label: 'Сумма' },
-                    { value: 'max', label: 'Наибольшее' },
-                    { value: 'min', label: 'Наименьшее' },
-                    { value: 'avg', label: 'Среднее' }
-                ],
-                get: () => col.totalType || '',
-                set: (v) => { col.totalType = v || null; }
-            });
-
-            fields.push({
-                key: `col${i}_width`,
-                label: 'Ширина столбца, px',
-                type: 'number',
-                min: 30, step: 5,
-                get: () => col.width,
-                set: (v) => { col.width = (v === null || isNaN(v)) ? null : Math.max(30, v); }
-            });
-
-            fields.push({
-                key: `col${i}_decimals`,
-                label: 'Знаков после запятой',
-                type: 'number',
-                min: 0, max: 10, step: 1,
-                get: () => col.decimals,
-                set: (v) => { col.decimals = (v === null || isNaN(v)) ? null : Math.max(0, Math.min(10, v)); }
-            });
-
             fields.push({
                 key: `col${i}_names`,
-                label: 'Добавить столбец с именами строк',
+                label: `Столбец ${i + 1}: добавить имена строк`,
                 type: 'checkbox',
                 get: () => !!col.includeNames,
                 set: (v) => { col.includeNames = !!v; }
             });
         });
 
-        // Зебра/линии/цвет столбца - см. TableFormatNode ("Оформление
-        // таблицы", Раунд 44) - отдельная нода, подключается ПОСЛЕ этой
-        // (или любой другой Data-ноды), чтобы не захламлять построение
-        // таблицы из списков настройками оформления.
+        fields.push(...buildColumnFormattingFields(this, this.tableData));
 
         return fields;
     }

@@ -6,13 +6,13 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.7.15
+ * @version 1.7.24
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
-import { TableData } from '../utils/dataTypes.js';
+import { TableData, ListData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { HolidayParser } from '../utils/holidayParser.js';
 
@@ -21,6 +21,7 @@ const MAX_VISIBLE_ROWS = 6; // после скольки задач включа
 const LABEL_WIDTH = 84;     // px, колонка с названиями задач
 const HOURS_COL_WIDTH = 34; // px, колонка "ч.ч." (Раунд 78)
 const WORKDAYS_COL_WIDTH = 34; // px, колонка "Раб.дн." (Раунд 81)
+const RESPONSIBLE_COL_WIDTH = 70; // px, колонка "Ответственный" (Раунд 88, чек-лист 1.7.21)
 // Багфикс (Раунд 81, по замечанию Mr.D): пересчёт дни<->часы вёлся
 // через КАЛЕНДАРНЫЕ 24ч/сутки - для рабочего планирования это неверно,
 // нужен человеко-день (стандартный рабочий день, 8ч). Единая константа
@@ -194,7 +195,7 @@ export class GanttNode extends BaseNode {
         this.inputs = config.inputs || 1;
         this.inputSockets = Array.from({ length: this.inputs }, (_, i) => i);
         this._isRerendering = false;
-        this.outputs = 1;
+        this.outputs = 3;
         this.width = config.width || 320;
 
         this.startDate = config.startDate || new Date().toISOString().slice(0, 10);
@@ -248,6 +249,17 @@ export class GanttNode extends BaseNode {
         // проектов).
         this.showDurationColumn = config.showDurationColumn ?? true;
         this.showWorkingDaysColumn = config.showWorkingDaysColumn ?? true;
+        // Раунд 88 (чек-лист 1.7.21, п.4) - колонка "Ответственный" в
+        // самом теле диаграммы (не только в выходной таблице) - по
+        // умолчанию выключена, чтобы не загромождать существующие
+        // диаграммы новым столбцом без явного запроса.
+        this.showResponsibleColumn = config.showResponsibleColumn ?? false;
+        // Раунд 88 (чек-лист 1.7.21, п.4) - "Заголовок" уже есть
+        // естественно (customName/getDisplayName()) - подзаголовок
+        // отдельного поля не имел, добавлен для симметрии с "Обработкой
+        // таблиц Ганта" (см. её getOutputBySocket()) - оба выводятся
+        // отдельными строковыми выходами, см. getOutputBySocket() ниже.
+        this.subtitleText = config.subtitleText || '';
 
         this.tasks = [];               // вычисленные задачи для рендера (плоский список, groupIndex/taskKey у каждой при группировке)
         // Раунд 78 - null, если подключён ровно один источник (обычное
@@ -264,6 +276,16 @@ export class GanttNode extends BaseNode {
             ? { ...config.collapsedGroups }
             : {};
         this.tableData = new TableData();
+        // Багфикс (Раунд 86) - раньше не инициализировались вовсе
+        // (оставались undefined) - любой потребитель, читающий
+        // output.listData.items через getSourceOutput()/getOutputBySocket()
+        // (см. baseNode.js), упал бы с TypeError вместо получения пустого
+        // списка. GanttNode сам их не заполняет (нет естественного listData-
+        // представления для расписания задач), но ДОЛЖНЫ хотя бы
+        // существовать как пустые объекты - тот же контракт, что у всех
+        // остальных нод проекта.
+        this.listData = new ListData();
+        this.resultListData = new ListData();
         this.sourceMode = 'list';      // 'list' | 'table' - откуда взялись данные в последнем calculate()
         this._sourceName = null;
         // Высота видимой области строк, если пользователь тянул общую
@@ -375,7 +397,50 @@ export class GanttNode extends BaseNode {
         outputRow.appendChild(outputSocket);
         content.appendChild(outputRow);
 
+        // Раунд 88 (чек-лист 1.7.21, п.4) - Заголовок/Подзаголовок,
+        // отдельными строковыми выходами (isString, синий кружок) - тот
+        // же приём, что уже опробован в GanttTableProcessorNode
+        // (getOutputBySocket(), см. baseNode.js/nodeManager.js).
+        const titleSubtitleDefs = [
+            { index: 1, label: 'Заголовок', get: () => this.customName || this.getDisplayName() },
+            { index: 2, label: 'Подзаголовок', get: () => this.subtitleText }
+        ];
+        titleSubtitleDefs.forEach(d => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; align-items:center; gap:8px; padding-top:2px;';
+            const label = document.createElement('label');
+            label.textContent = `${d.label}:`;
+            label.style.cssText = 'color:var(--md-text-secondary); font-size:10px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            row.appendChild(label);
+            const hint = document.createElement('span');
+            hint.className = `gantt-titlesub-hint-${d.index}`;
+            hint.style.cssText = 'color:var(--md-text-disabled); font-size:9px; max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            hint.textContent = d.get() || '—';
+            row.appendChild(hint);
+            const socket = SocketFactory.createSocket({
+                nodeId: this.id, socketType: 'output', index: d.index, isString: true,
+                title: d.label
+            });
+            row.appendChild(socket);
+            content.appendChild(row);
+        });
+
         return content;
+    }
+
+    // Раунд 88 - см. подробности в докстринге BaseNode.getOutputBySocket()
+    // и GanttTableProcessorNode (первая нода, где это реально
+    // использовано) - 0 остаётся Data (план, как и было всегда), 1/2 -
+    // честные строковые выходы.
+    getOutputBySocket(index) {
+        if (index === 1) {
+            const title = this.customName || this.getDisplayName();
+            return { value: title, tableData: new TableData([{ header: 'Заголовок', format: 'text', values: [title] }]), listData: new ListData(), resultListData: null };
+        }
+        if (index === 2) {
+            return { value: this.subtitleText, tableData: new TableData([{ header: 'Подзаголовок', format: 'text', values: [this.subtitleText] }]), listData: new ListData(), resultListData: null };
+        }
+        return { value: this.value, tableData: this.tableData, listData: this.listData, resultListData: this.resultListData };
     }
 
     // === Диаграмма: линейка дат + строки задач с перетаскиваемыми полосами ===
@@ -395,7 +460,8 @@ export class GanttNode extends BaseNode {
         const numColWidth = Math.max(20, String(Math.max(this.tasks.length, 1)).length * 7 + 12);
         const leftWidth = numColWidth + LABEL_WIDTH
             + (this.showDurationColumn ? HOURS_COL_WIDTH : 0)
-            + (this.showWorkingDaysColumn ? WORKDAYS_COL_WIDTH : 0);
+            + (this.showWorkingDaysColumn ? WORKDAYS_COL_WIDTH : 0)
+            + (this.showResponsibleColumn ? RESPONSIBLE_COL_WIDTH : 0);
 
         const outer = document.createElement('div');
         outer.className = 'gantt-outer-scroll';
@@ -970,11 +1036,15 @@ export class GanttNode extends BaseNode {
         // Столбец "Раб.дн." (Раунд 81, п.3) - рабочих дней ВНУТРИ
         // диапазона именно этой задачи (не общего диапазона проекта -
         // та величина для "Итого"/группы, см. buildTotalRow()/
-        // buildGroupHeaderRow()).
+        // buildGroupHeaderRow()). Раунд 88 (чек-лист 1.7.21, п.5) -
+        // теперь РЕДАКТИРУЕМОЕ поле, не просто текст.
         if (this.showWorkingDaysColumn) {
-            const workdaysCell = document.createElement('div');
-            workdaysCell.className = 'gantt-workdays-cell';
-            workdaysCell.style.cssText = `
+            const workdaysInput = document.createElement('input');
+            workdaysInput.type = 'number';
+            workdaysInput.className = 'gantt-workdays-cell gantt-workdays-input';
+            workdaysInput.min = '0';
+            workdaysInput.step = '1';
+            workdaysInput.style.cssText = `
                 width: ${WORKDAYS_COL_WIDTH}px;
                 flex-shrink: 0;
                 font-size: 10px;
@@ -982,9 +1052,42 @@ export class GanttNode extends BaseNode {
                 text-align: right;
                 padding-right: 6px;
                 font-variant-numeric: tabular-nums;
+                background: transparent;
+                border: none;
+                font-family: inherit;
             `;
-            workdaysCell.textContent = String(this._countWorkingDaysInRange(anchor, task.startOffsetDays, task.durationDays));
-            row.appendChild(workdaysCell);
+            workdaysInput.value = this._countWorkingDaysInRange(anchor, task.startOffsetDays, task.durationDays);
+            workdaysInput.dataset.taskKey = task.taskKey || task.name;
+            workdaysInput.addEventListener('mousedown', (e) => e.stopPropagation());
+            workdaysInput.addEventListener('click', (e) => e.stopPropagation());
+            workdaysInput.addEventListener('change', (e) => {
+                const newWorkDays = Math.max(0, parseInt(e.target.value, 10) || 0);
+                this._applyWorkDaysEdit(task, newWorkDays, anchor);
+            });
+            row.appendChild(workdaysInput);
+        }
+
+        // Столбец "Ответственный" (Раунд 88, чек-лист 1.7.21, п.4) -
+        // только отображение (редактирование - через таблицу-источник
+        // или this.taskResponsible, отдельная задача следующего раунда,
+        // см. обсуждение раскраски по ответственному).
+        if (this.showResponsibleColumn) {
+            const responsibleCell = document.createElement('div');
+            responsibleCell.className = 'gantt-responsible-cell';
+            responsibleCell.style.cssText = `
+                width: ${RESPONSIBLE_COL_WIDTH}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                padding-right: 6px;
+            `;
+            const respValue = this.taskResponsible[task.taskKey] || task.responsible || '';
+            responsibleCell.textContent = respValue;
+            responsibleCell.title = respValue;
+            row.appendChild(responsibleCell);
         }
 
         const track = document.createElement('div');
@@ -1135,6 +1238,12 @@ export class GanttNode extends BaseNode {
             row.appendChild(workdaysCell);
         }
 
+        if (this.showResponsibleColumn) {
+            const respSpacer = document.createElement('div');
+            respSpacer.style.cssText = `width:${RESPONSIBLE_COL_WIDTH}px; flex-shrink:0;`;
+            row.appendChild(respSpacer);
+        }
+
         const track = document.createElement('div');
         track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
 
@@ -1245,7 +1354,27 @@ export class GanttNode extends BaseNode {
         return `${Helpers.formatNumber(days)}дн`;
     }
 
-    // Раунд 81 (по запросу Mr.D, п.3-4) - число РАБОЧИХ дней (не
+    // Раунд 88 (чек-лист 1.7.21, п.5) - ручной ввод числа в столбец
+    // "Раб.дн.". Тот же принцип конвертации, что уже применён в
+    // attachBarResize() (Раунд 83) - таблица-источник использует override
+    // НАПРЯМУЮ как календарную ширину (не через spanWorkingDays()),
+    // остальные режимы ('list'/группы, scheduleMode==='working') -
+    // конвертируем через _countWorkingDaysInRange()-обратную операцию
+    // (spanWorkingDays()), иначе введённое число рабочих дней не
+    // совпало бы с тем, что реально отобразится после пересчёта.
+    _applyWorkDaysEdit(task, newWorkDays, anchor) {
+        const key = task.taskKey || task.name;
+        if (this.scheduleMode === 'working' && this.sourceMode !== 'table') {
+            this.taskDurationOverrides[key] = Math.max(0.5, newWorkDays);
+        } else {
+            const endOffset = spanWorkingDays(anchor, task.startOffsetDays, newWorkDays, this.holidaySet);
+            this.taskDurationOverrides[key] = Math.max(0.5, endOffset - task.startOffsetDays);
+        }
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
+
     // выходные/праздники, см. isNonWorkingDay()/this.holidaySet) внутри
     // календарного диапазона [startOffsetDays, startOffsetDays+durationDays).
     // Используется и на уровне отдельной задачи (её собственный диапазон),
@@ -1274,7 +1403,7 @@ export class GanttNode extends BaseNode {
             display: flex;
             align-items: center;
             height: ${ROW_HEIGHT}px;
-            background: var(--md-surface-2);
+            background: var(--gantt-total-row-bg, rgba(255,255,255,0.06));
             border-bottom: 2px solid var(--md-divider);
             font-weight: 600;
         `;
@@ -1353,6 +1482,12 @@ export class GanttNode extends BaseNode {
             workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
             workdaysCell.title = 'Рабочих дней в общем диапазоне проекта';
             row.appendChild(workdaysCell);
+        }
+
+        if (this.showResponsibleColumn) {
+            const respSpacer = document.createElement('div');
+            respSpacer.style.cssText = `width:${RESPONSIBLE_COL_WIDTH}px; flex-shrink:0;`;
+            row.appendChild(respSpacer);
         }
 
         const track = document.createElement('div');
@@ -1577,6 +1712,21 @@ export class GanttNode extends BaseNode {
         // это нужно (баг двойного применения праздников при цепочке
         // Гант -> Гант, Раунд 83).
         const workdaysCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('раб'));
+        // Багфикс (Раунд 87, по жалобе Mr.D: "генерация группы полностью
+        // завязано на сокеты, и не передаётся... группы должны
+        // распознаваться из переданных data") - раньше столбец "Группа"
+        // вообще не читался здесь: единственный способ сгруппировать
+        // задачи был подключить НЕСКОЛЬКО источников на разные сокеты
+        // (см. calculate() ниже) - если один-единственный источник УЖЕ
+        // нёс готовые группы в данных (например, "Обработка таблиц
+        // Ганта" со своими разделами), эта информация просто терялась.
+        // Теперь читаем "Группа" из самих данных - см. calculate() про
+        // то, как это используется для построения this.taskGroups.
+        const groupCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('групп'));
+        // Раунд 88 (чек-лист 1.7.21) - "Ответственный" из данных, тем же
+        // приёмом, что "Группа" в Раунде 87 - авторитетное значение из
+        // исходной таблицы, не дефолт.
+        const responsibleCol = tableData.columns.find(c => (c.header || '').toLowerCase().includes('ответствен'));
         if (!startCol || !endCol) return [];
 
         const anchor = parseISODate(this.startDate) || new Date();
@@ -1588,10 +1738,18 @@ export class GanttNode extends BaseNode {
             if (!startD || !endD) continue;
             const durationDays = Math.max(0, daysBetween(startD, endD));
             const rawFromCol = workdaysCol ? Number(workdaysCol.values[i]) : NaN;
+            const groupNameRaw = groupCol ? groupCol.values[i] : null;
+            const responsibleRaw = responsibleCol ? responsibleCol.values[i] : null;
             tasks.push({
                 name,
                 startOffsetDays: daysBetween(anchor, startD),
                 durationDays,
+                groupName: (groupNameRaw !== null && groupNameRaw !== undefined && String(groupNameRaw).trim())
+                    ? String(groupNameRaw).trim()
+                    : null,
+                responsible: (responsibleRaw !== null && responsibleRaw !== undefined && String(responsibleRaw).trim())
+                    ? String(responsibleRaw).trim()
+                    : '',
                 // Если столбца "Раб.дни" нет (обычная таблица, не от
                 // GanttNode) - лучшее, что можно сделать без доступа к
                 // календарю источника - взять ту же календарную
@@ -1621,7 +1779,12 @@ export class GanttNode extends BaseNode {
             workdays.push(this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays));
             ends.push(formatDateRu(addDays(anchor, t.startOffsetDays + t.durationDays)));
             factDays.push(t.durationDays);
-            responsible.push(this.taskResponsible[t.taskKey] || '');
+            // Раунд 88 - ручное переопределение (this.taskResponsible,
+            // Раунд 83) в приоритете, иначе - значение из данных
+            // источника (t.responsible, читается tasksFromTable() из
+            // столбца "Ответственный" - тот же принцип, что уже
+            // применён к "Группе" в Раунде 87).
+            responsible.push(this.taskResponsible[t.taskKey] || t.responsible || '');
         });
 
         // Раунд 83 (по прямому запросу Mr.D) - фиксированная схема,
@@ -1680,23 +1843,34 @@ export class GanttNode extends BaseNode {
         }
 
         // Раунд 78 - собираем ВСЕ подключённые источники задач (не только
-        // сокет 0) - см. конструктор про this.inputSockets.
-        const sources = this.inputSockets
+        // сокет 0) - см. конструктор про this.inputSockets. Раунд 84 -
+        // вместе с узлом-источником сразу читаем его output через
+        // getSourceOutput(conn) - учитывает конкретный сокет источника у
+        // многовыходных нод (см. baseNode.js/nodeManager.js), а не
+        // node.tableData/node.listData напрямую (та схема не различала
+        // сокеты одного рода данных).
+        const sourceConns = this.inputSockets
             .map(idx => connections.find(c => c.targetNodeId === this.id && c.targetSocket === idx))
-            .filter(Boolean)
-            .map(c => nodeManager.getNode(c.sourceNodeId))
+            .filter(Boolean);
+        const sources = sourceConns
+            .map(conn => {
+                const node = nodeManager.getNode(conn.sourceNodeId);
+                if (!node) return null;
+                return { node, output: nodeManager.getSourceOutput(conn) };
+            })
             .filter(Boolean);
 
         this._sourceStatuses = this.inputSockets.map(idx => {
             const conn = connections.find(c => c.targetNodeId === this.id && c.targetSocket === idx);
-            const src = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
-            if (!src) return { socketIndex: idx, name: null };
-            const isTable = src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData);
+            const node = conn ? nodeManager.getNode(conn.sourceNodeId) : null;
+            if (!node) return { socketIndex: idx, name: null };
+            const output = nodeManager.getSourceOutput(conn);
+            const isTable = output?.tableData && output.tableData.columns.length > 0 && this.isCompatibleTable(output.tableData);
             return {
                 socketIndex: idx,
-                name: src.customName || src.getDisplayName?.() || 'источник',
-                mode: Array.isArray(src.tasks) ? 'gantt' : (isTable ? 'table' : 'list'),
-                count: Array.isArray(src.tasks) ? src.tasks.length : undefined
+                name: node.customName || node.getDisplayName?.() || 'источник',
+                mode: Array.isArray(node.tasks) ? 'gantt' : (isTable ? 'table' : 'list'),
+                count: Array.isArray(node.tasks) ? node.tasks.length : undefined
             };
         });
 
@@ -1714,22 +1888,57 @@ export class GanttNode extends BaseNode {
         // (полупрозрачная подложка + строка-заголовок группы) появляется
         // ТОЛЬКО когда источников 2 или больше - см. докстринг класса.
         if (sources.length === 1) {
-            const src = sources[0];
+            const { node: src, output } = sources[0];
             this.taskGroups = null;
 
-            if (src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData)) {
+            if (output?.tableData && output.tableData.columns.length > 0 && this.isCompatibleTable(output.tableData)) {
                 this.sourceMode = 'table';
-                this.tasks = this.tasksFromTable(src.tableData).map(t => {
+                this.tasks = this.tasksFromTable(output.tableData).map(t => {
+                    // Багфикс (Раунд 86, по жалобе Mr.D: "могу
+                    // растягивать графики, но не могу двигать") -
+                    // durationDays уже читал taskDurationOverrides (её
+                    // ставит и растягивание, и обычное перетаскивание не
+                    // трогает), а startOffsetDays ВСЕГДА брался заново из
+                    // столбца "Начало" исходной таблицы - taskDates
+                    // (куда пишет обычное перетаскивание позиции,
+                    // attachBarDrag()) тут просто не читался. Обычное
+                    // перетаскивание визуально двигало полосу во время
+                    // драга, но на следующем пересчёте позиция снова
+                    // бралась из таблицы - drag НИКОГДА не сохранялся в
+                    // этом режиме. Теперь симметрично: startOffsetDays
+                    // тоже читает override, если он есть.
                     const durationDays = this.taskDurationOverrides[t.name] ?? t.durationDays;
-                    return { ...t, taskKey: t.name, durationDays };
+                    const startOffsetDays = this.taskDates[t.name] ?? t.startOffsetDays;
+                    return { ...t, taskKey: t.name, durationDays, startOffsetDays };
                 });
+
+                // Багфикс (Раунд 87, по жалобе Mr.D: "генерация группы
+                // полностью завязано на сокеты, и не передаётся... группы
+                // должны распознаваться из переданных data") - если сама
+                // таблица уже несёт готовые группы (столбец "Группа" с
+                // 2+ разными непустыми значениями - например, от
+                // "Обработки таблиц Ганта" со своими разделами), строим
+                // this.taskGroups ИЗ НИХ, даже когда источник ровно один
+                // (раньше группировка появлялась ТОЛЬКО при нескольких
+                // источниках на разных сокетах - данные внутри
+                // единственного источника игнорировались полностью).
+                // Порядок групп - по первому появлению в данных, порядок
+                // задач внутри группы - как в исходной таблице.
+                const distinctGroups = [...new Set(this.tasks.map(t => t.groupName).filter(Boolean))];
+                this.taskGroups = distinctGroups.length >= 2
+                    ? distinctGroups.map(gName => ({
+                        name: gName,
+                        tasks: this.tasks.filter(t => t.groupName === gName)
+                    }))
+                    : null;
+
                 this.tableData = this.buildOutputTable();
                 this.value = this.tasks.length;
                 return this.value;
             }
 
             this.sourceMode = 'list';
-            const items = src.listData?.items || [];
+            const items = output?.listData?.items || [];
             const anchor = parseISODate(this.startDate) || new Date();
 
             let cursor = 0;
@@ -1756,7 +1965,7 @@ export class GanttNode extends BaseNode {
                 }
 
                 cursor = Math.max(cursor, endOffsetDays);
-                return { name, taskKey: name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays };
+                return { name, taskKey: name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays, responsible: '' };
             });
 
             this.tableData = this.buildOutputTable();
@@ -1774,13 +1983,28 @@ export class GanttNode extends BaseNode {
         this.sourceMode = 'groups';
         const anchor = parseISODate(this.startDate) || new Date();
 
-        this.taskGroups = sources.map((src, groupIndex) => {
-            const groupName = src.customName || src.getDisplayName?.() || `Группа ${groupIndex + 1}`;
-            const rawTasks = this._extractRawTasks(src);
+        // Багфикс (Раунд 87) - тот же принцип, что и в однослойном
+        // режиме выше: если сырые задачи источника уже несут СВОЮ группу
+        // (данные, столбец "Группа" - см. tasksFromTable()), она
+        // используется вместо имени сокета-источника - тот остаётся
+        // только запасным вариантом для источников БЕЗ собственного
+        // понятия группы (обычный список). Один источник теперь МОЖЕТ
+        // дать несколько итоговых групп (если несёт свою "Группу"),
+        // несколько источников без своих групп по-прежнему сольются
+        // каждый в одну группу (имя источника) - прежнее поведение.
+        //
+        // Ключ в this.taskDates/taskDurationOverrides по-прежнему
+        // учитывает исходный ИНДЕКС СОКЕТА (не имя итоговой группы) -
+        // имена групп из разных источников МОГУТ совпадать, а сокеты -
+        // нет; это гарантирует уникальность ключа независимо от того,
+        // как задачи потом сгруппируются по данным.
+        const tasksBySocket = sources.map(({ node: src, output }, socketIndex) => {
+            const fallbackName = src.customName || src.getDisplayName?.() || `Источник ${socketIndex + 1}`;
+            const rawTasks = this._extractRawTasks(src, output);
 
             let cursor = 0;
-            const tasks = rawTasks.map(rt => {
-                const key = `${groupIndex}:${rt.name}`;
+            return rawTasks.map(rt => {
+                const key = `${socketIndex}:${rt.name}`;
                 const duration = this.taskDurationOverrides[key] ?? rt.durationDays;
                 let startOffsetDays = this.taskDates[key];
                 if (startOffsetDays === undefined) {
@@ -1802,15 +2026,24 @@ export class GanttNode extends BaseNode {
                     taskKey: key,
                     durationDays: endOffsetDays - startOffsetDays,
                     startOffsetDays,
-                    groupIndex,
-                    groupName
+                    groupName: rt.groupName || fallbackName,
+                    responsible: rt.responsible || ''
                 };
             });
-
-            return { name: groupName, tasks };
         });
 
-        this.tasks = this.taskGroups.flatMap(g => g.tasks);
+        // "Расплющиваем" задачи ВСЕХ источников и группируем по их
+        // ИТОГОВОЙ groupName (данные, если есть, иначе имя источника) -
+        // не по индексу сокета напрямую. Порядок групп - по первому
+        // появлению.
+        const flatTasks = tasksBySocket.flat();
+        const distinctGroupNames = [...new Set(flatTasks.map(t => t.groupName))];
+        this.taskGroups = distinctGroupNames.map(gName => ({
+            name: gName,
+            tasks: flatTasks.filter(t => t.groupName === gName)
+        }));
+
+        this.tasks = flatTasks;
         this.tableData = this.buildOutputTable();
         this.value = this.tasks.length;
         return this.value;
@@ -1833,23 +2066,25 @@ export class GanttNode extends BaseNode {
     // Таблица - В ПРИОРИТЕТЕ над сырыми this.tasks: buildOutputTable()
     // всегда пишет столбец "Раб.дни" (авторитетную цифру), а голые
     // объекты в src.tasks - нет (там только календарная durationDays).
-    _extractRawTasks(src) {
-        if (src.tableData && src.tableData.columns.length > 0 && this.isCompatibleTable(src.tableData)) {
-            return this.tasksFromTable(src.tableData).map(t => ({ name: t.name, durationDays: t.rawDurationDays }));
+    // Раунд 84 - принимает node (сама нода-источник, для .tasks и имени)
+    // и output (результат getSourceOutput(conn) - учитывает конкретный
+    // выходной сокет многовыходных источников) РАЗДЕЛЬНО - .tasks не
+    // входит в стандартный набор getOutputBySocket() (это специфичное
+    // для GanttNode поле, не часть общего контракта), поэтому его
+    // проверяем прямо на node, а table/list - через output.
+    _extractRawTasks(node, output) {
+        if (output?.tableData && output.tableData.columns.length > 0 && this.isCompatibleTable(output.tableData)) {
+            return this.tasksFromTable(output.tableData).map(t => ({ name: t.name, durationDays: t.rawDurationDays, groupName: t.groupName, responsible: t.responsible }));
         }
-        if (Array.isArray(src.tasks) && src.tasks.length > 0) {
-            // Запасной путь для источников без tableData вообще (не
-            // должно случаться для настоящей GanttNode - у неё tableData
-            // есть всегда, см. calculate()) - лучшее, что можно сделать
-            // без доступа к столбцу "Раб.дни" источника, календарная
-            // ширина как есть, тот же риск, что был всегда для таких
-            // источников.
-            return src.tasks.map(t => ({ name: t.name, durationDays: t.durationDays }));
+        if (Array.isArray(node.tasks) && node.tasks.length > 0) {
+            return node.tasks.map(t => ({ name: t.name, durationDays: t.durationDays, groupName: t.groupName || null, responsible: t.responsible || '' }));
         }
-        const items = src.listData?.items || [];
+        const items = output?.listData?.items || [];
         return items.map(item => ({
             name: item.name || 'Задача',
-            durationDays: Math.max(0, this.durationUnit === 'hours' ? (item.value || 0) / HOURS_PER_WORKDAY : (item.value || 0))
+            durationDays: Math.max(0, this.durationUnit === 'hours' ? (item.value || 0) / HOURS_PER_WORKDAY : (item.value || 0)),
+            groupName: null,
+            responsible: ''
         }));
     }
 
@@ -1870,6 +2105,11 @@ export class GanttNode extends BaseNode {
 
         const outputCount = element.querySelector('.gantt-output-count');
         if (outputCount) outputCount.textContent = `${this.tasks.length} задач`;
+
+        const titleHint = element.querySelector('.gantt-titlesub-hint-1');
+        if (titleHint) titleHint.textContent = (this.customName || this.getDisplayName()) || '—';
+        const subtitleHint = element.querySelector('.gantt-titlesub-hint-2');
+        if (subtitleHint) subtitleHint.textContent = this.subtitleText || '—';
     }
 
     _sourceStatusText(socketIndex) {
@@ -1927,10 +2167,12 @@ export class GanttNode extends BaseNode {
         setTimeout(() => { this._isRerendering = false; }, 100);
     }
 
-    // Первая нода, помеченная новой системой бейджей (см. baseNode.js) -
-    // самая свежая и всё ещё меняющаяся часть проекта на данный момент
+    // Раунд 88 - плашка "beta" снята (чек-лист 1.7.21, п.4) - нода
+    // прошла достаточно раундов доработки/проверки (Раунды 73-87) и
+    // больше не является экспериментальной в том смысле, в каком была
+    // изначально помечена (Раунд 44).
     getStaticBadges() {
-        return [{ type: 'beta', text: 'Экспериментальная нода - интерфейс и поведение могут ещё измениться' }];
+        return [];
     }
 
     // Боковая панель: календарь плана (дата начала/период отображения/
@@ -2027,6 +2269,22 @@ export class GanttNode extends BaseNode {
             type: 'checkbox',
             get: () => this.showWorkingDaysColumn,
             set: (v) => { this.showWorkingDaysColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showResponsibleColumn',
+            label: 'Колонка "Ответственный"',
+            type: 'checkbox',
+            get: () => this.showResponsibleColumn,
+            set: (v) => { this.showResponsibleColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'subtitleText',
+            label: 'Подзаголовок (выход 2)',
+            type: 'text',
+            get: () => this.subtitleText,
+            set: (v) => { this.subtitleText = v || ''; }
         });
 
         fields.push({
