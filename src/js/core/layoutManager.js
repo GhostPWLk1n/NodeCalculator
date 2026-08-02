@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.7.45
+ * @version 1.7.50
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -327,6 +327,10 @@ export class LayoutManager {
                     // Раунд 109 - пользовательские цвета ответственных/групп
                     responsibleColors: n.type === 'gantt' && n.responsibleColors ? { ...n.responsibleColors } : undefined,
                     groupColors: n.type === 'gantt' && n.groupColors ? { ...n.groupColors } : undefined,
+                    // Раунд 115 (чек-лист, раздел 4) - ручные добавления/удаления строк
+                    manualTasks: n.type === 'gantt' && n.manualTasks?.length ? n.manualTasks.map(t => ({ ...t })) : undefined,
+                    deletedTaskKeys: n.type === 'gantt' && n.deletedTaskKeys?.length ? [...n.deletedTaskKeys] : undefined,
+                    taskNameOverrides: n.type === 'gantt' && n.taskNameOverrides && Object.keys(n.taskNameOverrides).length ? { ...n.taskNameOverrides } : undefined,
                     collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
@@ -354,6 +358,8 @@ export class LayoutManager {
                     headerRow: n.type === 'xlsxImport' ? n.headerRow : undefined,
                     importedHeaders: n.type === 'xlsxImport' ? [...n.importedHeaders] : undefined,
                     importedRows: n.type === 'xlsxImport' ? n.importedRows.map(r => [...r]) : undefined,
+                    // Раунд 114 - см. докстринг this.cellColors в конструкторе
+                    cellColors: n.type === 'xlsxImport' && n.cellColors?.length ? n.cellColors.map(r => [...r]) : undefined,
 
                     // ImageNode: сама картинка целиком (base64 data URL) -
                     // см. докстринг imageNode.js про то, почему тут (в

@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.7.45
+ * @version 1.7.50
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -25,6 +25,12 @@ const HOURS_COL_WIDTH = 34; // px, колонка "ч.ч." (Раунд 78)
 const WORKDAYS_COL_WIDTH = 34; // px, колонка "Раб.дн." (Раунд 81)
 const RESPONSIBLE_COL_WIDTH = 70; // px, колонка "Ответственный" (Раунд 88, чек-лист 1.7.21)
 const CALDAYS_COL_WIDTH = 40; // px, колонка "Кал. дни" (Раунд 101, чек-лист)
+// Раунд 116 (уточнение Mr.D по механике строк: "сделать строку перед
+// № п/п для того чтобы в ней появлялись + и -, заодно расширит поле
+// для активации фокуса") - узкая колонка ПЕРЕД "№ п/п", ВСЕГДА
+// присутствует (не toggle-able, как остальные - это часть самого
+// механизма фокуса/редактирования, не опциональное отображение данных).
+const FOCUS_COL_WIDTH = 16;
 // Багфикс (Раунд 81, по замечанию Mr.D): пересчёт дни<->часы вёлся
 // через КАЛЕНДАРНЫЕ 24ч/сутки - для рабочего планирования это неверно,
 // нужен человеко-день (стандартный рабочий день, 8ч). Единая константа
@@ -329,6 +335,38 @@ export class GanttNode extends BaseNode {
         this.groupColors = config.groupColors ? { ...config.groupColors } : {};
         this._detectedResponsibles = [];
         this._detectedGroups = [];
+        // Раунд 115 (чек-лист 1.7.21, раздел 4 - механика добавления/
+        // удаления строк) - задачи из ИСТОЧНИКА (список/таблица/группы)
+        // остаются производными от calculate(), как и раньше - ручное
+        // добавление/удаление накладывается ПОВЕРХ них отдельным слоем
+        // (тот же принцип, что this.taskDurationOverrides/taskDates -
+        // "переопределения", не замена самого источника):
+        //   - manualTasks - задачи, добавленные ВРУЧНУЮ прямо на
+        //     диаграмме (не пришли ни из какого источника) - переживают
+        //     пересчёт, потому что это НЕЗАВИСИМОЕ состояние самой
+        //     ноды, не производное.
+        //   - deletedTaskKeys - имена задач ИЗ ИСТОЧНИКА, которые
+        //     пользователь удалил вручную - "мягкое" удаление (сам
+        //     источник ничего не теряет, просто эта конкретная задача
+        //     скрывается из ЭТОЙ диаграммы) - если источник когда-нибудь
+        //     перестанет её присылать, запись просто больше ни на что
+        //     не влияет (безопасно оставлять "мусор" в списке).
+        this.manualTasks = Array.isArray(config.manualTasks) ? config.manualTasks.map(t => ({ ...t })) : [];
+        // Раунд 116 (уточнение Mr.D по механике строк): "фокус по клику
+        // фиксируется" - в отличие от подсветки при наведении (Раунд
+        // 115, остаётся отдельно), клик по номеру строки/новой колонке
+        // делает её "текущей" ДО следующего клика (не сбрасывается сама
+        // по себе) - показывает +/- в отдельной колонке ПЕРЕД "№ п/п" и
+        // делает "Вид работ" редактируемым прямо на месте. Транзитное
+        // состояние UI - НЕ сериализуется (сбрасывается при каждой новой
+        // сессии, как this._detectedResponsibles и подобные).
+        this._focusedTaskKey = null;
+        // Переименование задачи ПРЯМО на диаграмме - тот же принцип, что
+        // taskDurationOverrides/taskDates (переопределение поверх
+        // значения из источника, по taskKey - стабильному идентификатору,
+        // не меняющемуся при самом переименовании).
+        this.taskNameOverrides = config.taskNameOverrides ? { ...config.taskNameOverrides } : {};
+        this.deletedTaskKeys = Array.isArray(config.deletedTaskKeys) ? [...config.deletedTaskKeys] : [];
 
         this.tasks = [];               // вычисленные задачи для рендера (плоский список, groupIndex/taskKey у каждой при группировке)
         // Раунд 78 - null, если подключён ровно один источник (обычное
@@ -539,7 +577,7 @@ export class GanttNode extends BaseNode {
         // leftWidth - суммарный отступ ДО начала временной шкалы (номер +
         // имя задачи) - используется везде, где раньше стоял голый LABEL_WIDTH.
         const numColWidth = this.numColWidthOverride || Math.max(20, String(Math.max(this.tasks.length, 1)).length * 7 + 12);
-        const leftWidth = numColWidth + this._labelW()
+        const leftWidth = FOCUS_COL_WIDTH + numColWidth + this._labelW()
             + (this.showDurationColumn ? this._hoursW() : 0)
             + (this.showWorkingDaysColumn ? this._workdaysW() : 0)
             + (this.showResponsibleColumn ? this._respW() : 0)
@@ -1164,35 +1202,163 @@ export class GanttNode extends BaseNode {
         row.appendChild(leftGroup);
 
         // Столбец номера строки (как в Excel/tableViewerNode.js) - чисто
-        // навигационный ориентир, не связан с датами/сортировкой
+        // навигационный ориентир, не связан с датами/сортировкой.
+        // Раунд 115 (чек-лист, раздел 4 - механика добавления/удаления
+        // строк) - обёрнут в numWrap: при наведении показывает значки
+        // +/- (добавить строку под этой / удалить эту) и подсвечивает
+        // всю строку - подсветка/фон восстанавливаются по СОХРАНЁННЫМ
+        // исходным значениям (не через CSS-класс - у row/leftGroup уже
+        // есть свой инлайновый фон - zebra/sticky-градиент, см. выше -
+        // проще временно ПОДМЕНИТЬ его и вернуть обратно, чем воевать
+        // со specificity через !important).
+        // Раунд 116 (уточнение Mr.D по механике строк) - ФОКУС (клик,
+        // фиксируется до следующего клика) - отдельно от НАВЕДЕНИЯ
+        // (Раунд 115, лёгкая подсветка, остаётся). Колонка фокуса ПЕРЕД
+        // "№ п/п" - в ней живут +/-, показываются ТОЛЬКО когда строка в
+        // фокусе (не при наведении - наведение теперь просто подсвечивает,
+        // без кнопок, чтобы не мешать быстрому скроллу мышью по строкам).
+        const taskKey = task.taskKey || task.name;
+        const isFocused = this._focusedTaskKey === taskKey;
+
+        const focusCol = document.createElement('div');
+        focusCol.className = 'gantt-row-focus-col';
+        focusCol.style.cssText = `position: relative; width: ${FOCUS_COL_WIDTH}px; flex-shrink: 0; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer;`;
+        focusCol.title = 'Клик - выделить строку (правка названия, +/-)';
+        focusCol.addEventListener('mousedown', (e) => e.stopPropagation());
+        focusCol.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._focusedTaskKey = isFocused ? null : taskKey;
+            this._rerenderGanttSlot();
+        });
+
+        if (isFocused) {
+            const addBtn = document.createElement('button');
+            addBtn.className = 'gantt-row-add-btn';
+            addBtn.textContent = '+';
+            addBtn.title = 'Добавить строку под этой';
+            addBtn.style.cssText = 'display:flex; left:2px; top:1px;';
+            addBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            addBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.addTaskAfter(taskKey);
+            });
+            focusCol.appendChild(addBtn);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'gantt-row-remove-btn';
+            removeBtn.textContent = '−';
+            removeBtn.title = 'Удалить строку';
+            removeBtn.style.cssText = 'display:flex; left:2px; top:13px;';
+            removeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.removeTask(taskKey);
+            });
+            focusCol.appendChild(removeBtn);
+        }
+        leftGroup.appendChild(focusCol);
+
+        // Раунд 115 - подсветка по НАВЕДЕНИЮ (мышь над областью номера
+        // строки ИЛИ новой колонкой фокуса) - независима от фокуса
+        // (клика), временная подмена inline-фона (не CSS-класс - у row/
+        // leftGroup уже есть свой инлайновый фон - zebra/sticky-
+        // градиент - проще временно подменить и вернуть, чем воевать со
+        // specificity через !important).
+        const numWrap = document.createElement('div');
+        numWrap.className = 'gantt-row-num-wrap';
+        numWrap.style.cssText = `position: relative; width: ${numColWidth}px; flex-shrink: 0; height: 100%; display: flex; align-items: center; cursor: pointer;`;
+        numWrap.title = focusCol.title;
+
         const numCell = document.createElement('div');
         numCell.className = 'gantt-row-num';
         numCell.style.cssText = `
-            width: ${numColWidth}px;
-            flex-shrink: 0;
+            width: 100%;
             font-size: 10px;
-            color: var(--md-text-disabled);
+            color: ${isFocused ? 'var(--md-accent)' : 'var(--md-text-disabled)'};
             text-align: right;
             padding-right: 4px;
             font-variant-numeric: tabular-nums;
         `;
         numCell.textContent = String(taskNumber);
-        leftGroup.appendChild(numCell);
+        numWrap.appendChild(numCell);
 
-        const label = document.createElement('div');
-        label.className = 'gantt-task-label';
-        label.style.cssText = `
-            width: ${this._labelW()}px;
-            flex-shrink: 0;
-            font-size: 11px;
-            color: var(--md-text);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding-right: 6px;
-        `;
-        label.textContent = task.name;
-        label.title = task.name;
+        numWrap.addEventListener('mousedown', (e) => e.stopPropagation());
+        numWrap.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._focusedTaskKey = isFocused ? null : taskKey;
+            this._rerenderGanttSlot();
+        });
+
+        const originalRowBg = row.style.background;
+        const originalLeftBg = leftGroup.style.background;
+        const highlightOn = () => {
+            row.style.background = 'var(--md-surface-3)';
+            leftGroup.style.background = 'var(--md-surface-3)';
+        };
+        const highlightOff = () => {
+            row.style.background = originalRowBg;
+            leftGroup.style.background = originalLeftBg;
+        };
+        numWrap.addEventListener('mouseenter', highlightOn);
+        numWrap.addEventListener('mouseleave', highlightOff);
+        focusCol.addEventListener('mouseenter', highlightOn);
+        focusCol.addEventListener('mouseleave', highlightOff);
+
+        leftGroup.appendChild(numWrap);
+
+        // Раунд 116 - "Вид работ" РЕДАКТИРУЕМО, пока строка в фокусе
+        // (переопределение поверх значения из источника - taskNameOverrides,
+        // тот же принцип, что taskDurationOverrides/taskDates, см. её
+        // докстринг в конструкторе). Вне фокуса - обычный текстовый
+        // ярлык, как и раньше (не превращать КАЖДУЮ строку в <input> -
+        // ни к чему лишний DOM/фокус-ловушки там, где не нужно).
+        let label;
+        if (isFocused) {
+            label = document.createElement('input');
+            label.type = 'text';
+            label.className = 'gantt-task-label gantt-task-label-input';
+            label.value = task.name;
+            label.style.cssText = `
+                width: ${this._labelW()}px;
+                flex-shrink: 0;
+                font-size: 11px;
+                color: var(--md-text);
+                padding-right: 6px;
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid var(--md-accent);
+                font-family: inherit;
+            `;
+            label.addEventListener('mousedown', (e) => e.stopPropagation());
+            label.addEventListener('click', (e) => e.stopPropagation());
+            label.addEventListener('change', (e) => {
+                const newName = e.target.value.trim();
+                if (!newName || newName === task.name) return;
+                const manualTask = this.manualTasks.find(t => t.key === taskKey);
+                if (manualTask) {
+                    manualTask.name = newName;
+                } else {
+                    this.taskNameOverrides[taskKey] = newName;
+                }
+                if (window.nodeManager) window.nodeManager.calculateAll();
+                if (window.renderer) window.renderer.updateAllDisplays();
+            });
+        } else {
+            label = document.createElement('div');
+            label.className = 'gantt-task-label';
+            label.style.cssText = `
+                width: ${this._labelW()}px;
+                flex-shrink: 0;
+                font-size: 11px;
+                color: var(--md-text);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                padding-right: 6px;
+            `;
+            label.textContent = task.name;
+            label.title = task.name;
+        }
         leftGroup.appendChild(label);
 
         // Столбец "ч.ч." (Раунд 78, по запросу Mr.D) - длительность
@@ -1250,26 +1416,58 @@ export class GanttNode extends BaseNode {
             leftGroup.appendChild(workdaysInput);
         }
 
-        // Столбец "Ответственный" (Раунд 88, чек-лист 1.7.21, п.4) -
-        // только отображение (редактирование - через таблицу-источник
-        // или this.taskResponsible, отдельная задача следующего раунда,
-        // см. обсуждение раскраски по ответственному).
+        // Столбец "Ответственный" (Раунд 88, чек-лист 1.7.21, п.4).
+        // Раунд 117 (по запросу Mr.D: "добавить возможность вводить
+        // Ответственного, сейчас заблокировано") - редактируемо, пока
+        // строка в фокусе - тот же принцип, что "Вид работ" (Раунд 116) -
+        // пишет в УЖЕ СУЩЕСТВУЮЩИЙ this.taskResponsible (Раунд 83) -
+        // тот самый override-словарь, который уже читает
+        // _effectiveResponsible()/выходная таблица/цвет полосы (Раунд
+        // 109) - никакого нового механизма не потребовалось, только
+        // сама возможность ввода.
         if (this.showResponsibleColumn) {
-            const responsibleCell = document.createElement('div');
-            responsibleCell.className = 'gantt-responsible-cell';
-            responsibleCell.style.cssText = `
-                width: ${this._respW()}px;
-                flex-shrink: 0;
-                font-size: 10px;
-                color: var(--md-text-secondary);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                padding-right: 6px;
-            `;
             const respValue = this._effectiveResponsible(task);
-            responsibleCell.textContent = respValue;
-            responsibleCell.title = respValue;
+            let responsibleCell;
+            if (isFocused) {
+                responsibleCell = document.createElement('input');
+                responsibleCell.type = 'text';
+                responsibleCell.className = 'gantt-responsible-cell gantt-responsible-input';
+                responsibleCell.value = respValue;
+                responsibleCell.style.cssText = `
+                    width: ${this._respW()}px;
+                    flex-shrink: 0;
+                    font-size: 10px;
+                    color: var(--md-text-secondary);
+                    padding-right: 6px;
+                    background: transparent;
+                    border: none;
+                    border-bottom: 1px solid var(--md-accent);
+                    font-family: inherit;
+                `;
+                responsibleCell.addEventListener('mousedown', (e) => e.stopPropagation());
+                responsibleCell.addEventListener('click', (e) => e.stopPropagation());
+                responsibleCell.addEventListener('change', (e) => {
+                    const newValue = e.target.value.trim();
+                    this.taskResponsible[taskKey] = newValue;
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                    if (window.renderer) window.renderer.updateAllDisplays();
+                });
+            } else {
+                responsibleCell = document.createElement('div');
+                responsibleCell.className = 'gantt-responsible-cell';
+                responsibleCell.style.cssText = `
+                    width: ${this._respW()}px;
+                    flex-shrink: 0;
+                    font-size: 10px;
+                    color: var(--md-text-secondary);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    padding-right: 6px;
+                `;
+                responsibleCell.textContent = respValue;
+                responsibleCell.title = respValue;
+            }
             leftGroup.appendChild(responsibleCell);
         }
 
@@ -1381,12 +1579,26 @@ export class GanttNode extends BaseNode {
         leftGroup.style.cssText = 'display:flex; align-items:center; height:100%; position:relative; left:0; z-index:5; will-change: transform; background:var(--md-surface-variant);';
         row.appendChild(leftGroup);
 
-        // Стрелка сворачивания - делит место со столбцом номера строки
+        // Раунд 116 - спейсер под колонку фокуса (см. buildTaskRow()) -
+        // строки групп её не используют, но должны занимать то же место
+        // для выравнивания столбцов.
+        const focusSpacerG = document.createElement('div');
+        focusSpacerG.style.cssText = `width:${FOCUS_COL_WIDTH}px; flex-shrink:0;`;
+        leftGroup.appendChild(focusSpacerG);
+
+        // Стрелка сворачивания - делит место со столбцом номера строки.
+        // Раунд 115 (чек-лист, раздел 4) - обёрнута в toggleWrap: при
+        // наведении показывает значок удаления ВСЕЙ группы (с
+        // подтверждением - см. removeGroup()) - добавления для групп
+        // нет (новые группы создаются иначе - переносом задачи в
+        // существующую/новую через groupName, не отдельной кнопкой).
+        const toggleWrap = document.createElement('div');
+        toggleWrap.style.cssText = `position: relative; width: ${numColWidth}px; flex-shrink: 0; height: 100%; display: flex; align-items: center;`;
+
         const toggle = document.createElement('div');
         toggle.className = 'gantt-group-toggle';
         toggle.style.cssText = `
-            width: ${numColWidth}px;
-            flex-shrink: 0;
+            width: 100%;
             text-align: center;
             font-size: 10px;
             color: var(--md-text-secondary);
@@ -1401,7 +1613,24 @@ export class GanttNode extends BaseNode {
             this.collapsedGroups[groupIndex] = !collapsed;
             this._rerenderGanttSlot();
         });
-        leftGroup.appendChild(toggle);
+        toggleWrap.appendChild(toggle);
+
+        const removeGroupBtn = document.createElement('button');
+        removeGroupBtn.className = 'gantt-row-remove-btn';
+        removeGroupBtn.textContent = '−';
+        removeGroupBtn.title = 'Удалить группу целиком';
+        removeGroupBtn.style.cssText = 'display:none; top:1px;';
+        removeGroupBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        removeGroupBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.removeGroup(group);
+        });
+        toggleWrap.appendChild(removeGroupBtn);
+
+        toggleWrap.addEventListener('mouseenter', () => { removeGroupBtn.style.display = 'flex'; });
+        toggleWrap.addEventListener('mouseleave', () => { removeGroupBtn.style.display = 'none'; });
+
+        leftGroup.appendChild(toggleWrap);
 
         const label = document.createElement('div');
         label.className = 'gantt-group-header-label';
@@ -1664,6 +1893,37 @@ export class GanttNode extends BaseNode {
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    // Багфикс (Раунд 101, по жалобе Mr.D: "в строке Итого столбец ч.ч.
+    // отображает 'дн' вместо 'ч'"). Столбец ВСЕГДА в часах, без
+    // исключений - используется и в buildTotalRow(), и в
+    // buildGroupHeaderRow() - единая точка.
+    // Раунд 115 (чек-лист, раздел 4: "если это группа с дочерними
+    // элементами -> запрос подтверждения") - удаляет ВСЕ задачи группы
+    // (каждую - тем же путём, что removeTask(): вручную добавленные
+    // убираются из manualTasks, пришедшие из источника - в
+    // deletedTaskKeys). confirm() уже используется в проекте (main.js/
+    // layoutManager.js) - тот же приём.
+    removeGroup(group) {
+        const count = group.tasks.length;
+        if (count > 0 && !confirm(`Удалить группу "${group.name}" вместе со всеми задачами (${count} шт.)?`)) return;
+        group.tasks.forEach(t => {
+            const key = t.taskKey || t.name;
+            const manualIdx = this.manualTasks.findIndex(m => m.key === key);
+            if (manualIdx >= 0) {
+                this.manualTasks.splice(manualIdx, 1);
+            } else if (!this.deletedTaskKeys.includes(key)) {
+                this.deletedTaskKeys.push(key);
+            }
+        });
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
+    _formatTotalCell(tasks) {
+        const hours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
+        return `${Helpers.formatNumber(hours)}ч`;
+    }
+
     // Раунд 109 - "эффективный" ответственный задачи: ручное
     // переопределение (this.taskResponsible, Раунд 83) в приоритете,
     // иначе - значение из данных источника (task.responsible) - тот же
@@ -1674,22 +1934,101 @@ export class GanttNode extends BaseNode {
         return this.taskResponsible[task.taskKey] || task.responsible || '';
     }
 
-    _formatTotalCell(tasks) {
-        const hours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
-        return `${Helpers.formatNumber(hours)}ч`;
+    // Раунд 115 (чек-лист, раздел 4) - применяет ручные правки
+    // (manualTasks/deletedTaskKeys) ПОВЕРХ уже построенных this.tasks
+    // (не важно, из какого источника - список/таблица/группы) - единая
+    // точка, вызывается перед _detectResponsiblesAndGroups() во ВСЕХ 4
+    // точках завершения calculate() (см. её же комментарии).
+    _applyManualRowEdits() {
+        if (this.deletedTaskKeys.length > 0) {
+            const deletedSet = new Set(this.deletedTaskKeys);
+            this.tasks = this.tasks.filter(t => !deletedSet.has(t.taskKey || t.name));
+        }
+
+        // Раунд 116 - переименование ПРЯМО на диаграмме, для задач ИЗ
+        // ИСТОЧНИКА (у вручную добавленных - имя уже своё состояние,
+        // см. manualTasks.forEach() ниже, переопределение не нужно).
+        Object.keys(this.taskNameOverrides).forEach(key => {
+            const t = this.tasks.find(t => (t.taskKey || t.name) === key);
+            if (t) t.name = this.taskNameOverrides[key];
+        });
+
+        this.manualTasks.forEach(mt => {
+            const afterIdx = this.tasks.findIndex(t => (t.taskKey || t.name) === mt.insertAfterKey);
+            const anchorTask = afterIdx >= 0 ? this.tasks[afterIdx] : null;
+            const newTask = {
+                name: mt.name || 'Новая задача',
+                taskKey: mt.key,
+                durationDays: mt.durationDays ?? 0,
+                startOffsetDays: mt.startOffsetDays ?? (anchorTask ? anchorTask.startOffsetDays : 0),
+                groupName: mt.groupName ?? (anchorTask ? anchorTask.groupName : null),
+                responsible: mt.responsible || ''
+            };
+            if (afterIdx >= 0) {
+                this.tasks.splice(afterIdx + 1, 0, newTask);
+            } else {
+                this.tasks.push(newTask);
+            }
+        });
+
+        // Если диаграмма в групповом режиме - перестраиваем корзины
+        // групп из уже обновлённого this.tasks (проще, чем вручную
+        // синхронизировать splice() с this.taskGroups отдельно).
+        if (Array.isArray(this.taskGroups)) {
+            const byName = new Map();
+            this.tasks.forEach(t => {
+                const key = t.groupName || '';
+                if (!byName.has(key)) byName.set(key, []);
+                byName.get(key).push(t);
+            });
+            this.taskGroups = [...byName.entries()].map(([name, tasks]) => ({ name, tasks }));
+        }
+    }
+
+    // Раунд 115 - добавляет новую задачу СРАЗУ ПОСЛЕ указанной (по
+    // taskKey/name) - дефолтные значения по чек-листу: "Новая задача",
+    // 0 длительности, даты не заданы (наследует позицию соседа - см.
+    // _applyManualRowEdits()), та же группа, что у соседа.
+    addTaskAfter(afterTaskKey) {
+        const key = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        this.manualTasks.push({ key, name: 'Новая задача', durationDays: 0, insertAfterKey: afterTaskKey });
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
+    // Раунд 115 - "удаляет" задачу (мягко - см. докстринг
+    // deletedTaskKeys выше). Если taskKey принадлежит ДОБАВЛЕННОЙ вручную
+    // задаче (manualTasks) - убирается из самого manualTasks целиком
+    // (не нужен deletedTaskKeys - она и так не пришла бы из источника).
+    removeTask(taskKey) {
+        const manualIdx = this.manualTasks.findIndex(t => t.key === taskKey);
+        if (manualIdx >= 0) {
+            this.manualTasks.splice(manualIdx, 1);
+        } else if (!this.deletedTaskKeys.includes(taskKey)) {
+            this.deletedTaskKeys.push(taskKey);
+        }
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
     }
 
     // Раунд 88 (чек-лист 1.7.21, п.5) - ручной ввод числа в столбец
-    // "Раб.дн.". Тот же принцип конвертации, что уже применён в
-    // attachBarResize() (Раунд 83) - таблица-источник использует override
-    // НАПРЯМУЮ как календарную ширину (не через spanWorkingDays()),
-    // остальные режимы ('list'/группы, scheduleMode==='working') -
-    // конвертируем через _countWorkingDaysInRange()-обратную операцию
-    // (spanWorkingDays()), иначе введённое число рабочих дней не
-    // совпало бы с тем, что реально отобразится после пересчёта.
+    // "Раб.дн.". Раунд 118 (багфикс, по жалобе Mr.D: "меняю
+    // протяжённость рабочих дней, график перестаёт прибавлять
+    // выходные") - таблица-источник ПОСЛЕ Раунда 105 ВСЕГДА считает
+    // свою длительность через spanWorkingDays() (Начало+Раб.дни, вне
+    // зависимости от scheduleMode - см. calculate()) - override для неё
+    // теперь ТОЖЕ должен быть числом РАБОЧИХ дней (не готовой
+    // календарной шириной, как было раньше) - иначе, если календарь
+    // (список праздников) изменится ПОСЛЕ редактирования, уже
+    // отредактированная задача "замерзала" на старой календарной
+    // ширине и переставала реагировать - именно это Mr.D описал как
+    // "перестаёт прибавлять выходные". Список/группы (scheduleMode ===
+    // 'working') - тот же принцип, calendar-режим списка - override
+    // остаётся готовой календарной шириной (там spanWorkingDays() не
+    // применяется вообще, конвертировать нечего).
     _applyWorkDaysEdit(task, newWorkDays, anchor) {
         const key = task.taskKey || task.name;
-        if (this.scheduleMode === 'working' && this.sourceMode !== 'table') {
+        if (this.sourceMode === 'table' || this.scheduleMode === 'working') {
             this.taskDurationOverrides[key] = Math.max(0.5, newWorkDays);
         } else {
             const endOffset = spanWorkingDays(anchor, task.startOffsetDays, newWorkDays, this.holidaySet);
@@ -1769,6 +2108,11 @@ export class GanttNode extends BaseNode {
         leftGroup.className = 'gantt-left-sticky';
         leftGroup.style.cssText = 'display:flex; align-items:center; height:100%; position:sticky; left:0; z-index:6; background:var(--md-surface-variant);';
         row.appendChild(leftGroup);
+
+        // Раунд 116 - спейсер под колонку фокуса (см. buildTaskRow()).
+        const focusSpacerH = document.createElement('div');
+        focusSpacerH.style.cssText = `width:${FOCUS_COL_WIDTH}px; flex-shrink:0;`;
+        leftGroup.appendChild(focusSpacerH);
 
         leftGroup.appendChild(makeHeaderCell(numColWidth, '№ п/п', (w) => {
             this.numColWidthOverride = w;
@@ -1851,6 +2195,11 @@ export class GanttNode extends BaseNode {
         leftGroup.className = 'gantt-left-sticky gantt-left-sticky-js';
         leftGroup.style.cssText = 'display:flex; align-items:center; height:100%; position:relative; left:0; z-index:5; will-change: transform; background: linear-gradient(var(--gantt-total-row-bg, rgba(255,255,255,0.06)), var(--gantt-total-row-bg, rgba(255,255,255,0.06))), var(--md-surface-variant);';
         row.appendChild(leftGroup);
+
+        // Раунд 116 - спейсер под колонку фокуса (см. buildTaskRow()).
+        const focusSpacerT = document.createElement('div');
+        focusSpacerT.style.cssText = `width:${FOCUS_COL_WIDTH}px; flex-shrink:0;`;
+        leftGroup.appendChild(focusSpacerT);
 
         const spacer = document.createElement('div');
         spacer.style.cssText = `width:${numColWidth}px; flex-shrink:0;`;
@@ -2090,20 +2439,34 @@ export class GanttNode extends BaseNode {
                     // дней внутри неё (_countWorkingDaysInRange) - тогда
                     // spanWorkingDays() на следующем пересчёте
                     // восстановит РОВНО ТОТ ЖЕ календарный диапазон, а не
-                    // расширит его. В режиме 'calendar' пропуска выходных
-                    // нет вообще - календарная ширина и есть исходная
-                    // длительность, конвертировать нечего.
+                    // расширит его. В режиме 'calendar' (кроме таблицы -
+                    // см. ниже) пропуска выходных нет вообще - календарная
+                    // ширина и есть исходная длительность, конвертировать
+                    // нечего.
                     //
-                    // ВАЖНО: конвертация нужна, только если override
-                    // потом СНОВА пройдёт через spanWorkingDays() - это
-                    // 'list' и групповой режимы (см. calculate()). В
-                    // sourceMode==='table' override используется
-                    // НАПРЯМУЮ как календарная ширина (таблица просто
-                    // читает свои даты как есть, без пересборки через
-                    // spanWorkingDays) - конвертация там дала бы
-                    // ОБРАТНЫЙ эффект: бар визуально сжался бы до числа
-                    // рабочих дней вместо запрошенной календарной ширины.
-                    if (this.scheduleMode === 'working' && this.sourceMode !== 'table') {
+                    // Раунд 118 (багфикс, по жалобе Mr.D: "меняю
+                    // протяжённость рабочих дней, график перестаёт
+                    // прибавлять выходные") - ДО этого раунда здесь стояло
+                    // "в sourceMode==='table' override используется
+                    // НАПРЯМУЮ как календарная ширина" - было верно ДО
+                    // Раунда 105 (тогда таблица читала готовую дату
+                    // "Окончание", override просто перекрывал её без
+                    // spanWorkingDays()). Раунд 105 переделал таблицу на
+                    // ВСЕГДА пересчитывать через spanWorkingDays()
+                    // (Начало+Раб.дни) - но эта конвертация "забыла"
+                    // обновиться вместе с ним: override для уже
+                    // отредактированной задачи оставался готовой
+                    // календарной шириной и подсовывался НАПРЯМУЮ (см.
+                    // calculate() - таблица тоже читает override без
+                    // повторного spanWorkingDays()), из-за чего задача
+                    // "замерзала" на старой ширине и переставала
+                    // реагировать на изменения календаря/праздников,
+                    // сделанные ПОСЛЕ редактирования. Таблица теперь ТОЖЕ
+                    // всегда конвертирует через _countWorkingDaysInRange()
+                    // перед сохранением override (не хранит готовую
+                    // календарную ширину как раньше) - см. докстринг
+                    // _applyWorkDaysEdit() про то, почему.
+                    if (this.sourceMode === 'table' || this.scheduleMode === 'working') {
                         const anchor = parseISODate(this.startDate) || new Date();
                         this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
                     } else {
@@ -2378,6 +2741,7 @@ export class GanttNode extends BaseNode {
             this.sourceMode = 'list';
             this.taskGroups = null;
             this.tasks = [];
+            this._applyManualRowEdits();
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
             this.value = 0;
@@ -2445,9 +2809,20 @@ export class GanttNode extends BaseNode {
                     // что уже верно работает для задач из простого
                     // списка (см. её же использование чуть ниже, в ветке
                     // sourceMode==='list').
-                    const computedEndOffset = spanWorkingDays(anchor, startOffsetDays, t.rawWorkDays, this.holidaySet);
-                    const defaultDuration = Math.max(0, computedEndOffset - startOffsetDays);
-                    const durationDays = this.taskDurationOverrides[t.name] ?? defaultDuration;
+                    //
+                    // Раунд 118 (багфикс, по жалобе Mr.D: "меняю
+                    // протяжённость рабочих дней, график перестаёт
+                    // прибавлять выходные") - taskDurationOverrides
+                    // теперь ТОЖЕ число РАБОЧИХ дней (не готовая
+                    // календарная ширина, см. _applyWorkDaysEdit()/
+                    // attachBarResize()) - ОБЯЗАТЕЛЬНО тоже проходит
+                    // через spanWorkingDays() с ТЕКУЩИМ this.holidaySet -
+                    // иначе однажды отредактированная задача "замерзала"
+                    // на старой ширине и переставала реагировать на
+                    // изменения календаря/праздников после редактирования.
+                    const workDaysForSpan = this.taskDurationOverrides[t.name] ?? t.rawWorkDays;
+                    const computedEndOffset = spanWorkingDays(anchor, startOffsetDays, workDaysForSpan, this.holidaySet);
+                    const durationDays = Math.max(0, computedEndOffset - startOffsetDays);
                     return { ...t, taskKey: t.name, durationDays, startOffsetDays };
                 });
 
@@ -2471,6 +2846,7 @@ export class GanttNode extends BaseNode {
                     }))
                     : null;
 
+                this._applyManualRowEdits();
                 this._detectResponsiblesAndGroups();
                 this.tableData = this.buildOutputTable();
                 this.value = this.tasks.length;
@@ -2508,6 +2884,7 @@ export class GanttNode extends BaseNode {
                 return { name, taskKey: name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays, responsible: '' };
             });
 
+            this._applyManualRowEdits();
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
             this.value = this.tasks.length;
@@ -2585,6 +2962,7 @@ export class GanttNode extends BaseNode {
         }));
 
         this.tasks = flatTasks;
+        this._applyManualRowEdits();
         this._detectResponsiblesAndGroups();
         this.tableData = this.buildOutputTable();
         this.value = this.tasks.length;

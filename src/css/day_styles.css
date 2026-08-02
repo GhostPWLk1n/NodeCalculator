@@ -3543,3 +3543,27 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     color: var(--md-text);
     cursor: pointer;
 }
+
+/* Значки добавления/удаления строки Ганта - парность со styles.css */
+.gantt-row-add-btn,
+.gantt-row-remove-btn {
+    position: absolute;
+    left: -13px;
+    width: 11px;
+    height: 11px;
+    font-size: 9px;
+    line-height: 1;
+    padding: 0;
+    border: 1px solid var(--md-divider);
+    border-radius: 2px;
+    background: var(--md-surface-2);
+    color: var(--md-text);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+.gantt-row-add-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
+.gantt-row-remove-btn:hover { background: var(--md-error); color: var(--md-surface); }
+.gantt-row-add-btn { top: 1px; }
+.gantt-row-remove-btn { top: 13px; }

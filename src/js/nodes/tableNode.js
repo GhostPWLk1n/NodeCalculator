@@ -6,7 +6,7 @@
  * @file    tableNode.js
  * @brief   Обработчик: собирает LIST-входы в столбцы таблицы (выход типа Data)
  * @author  Pavel Fomin
- * @version 1.7.45
+ * @version 1.7.50
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

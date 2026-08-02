@@ -6,7 +6,7 @@
  * @file    stringNode.js
  * @brief   Компактная нода ввода текста (по образцу NumberNode)
  * @author  Pavel Fomin
- * @version 1.7.45
+ * @version 1.7.50
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

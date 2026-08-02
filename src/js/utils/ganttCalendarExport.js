@@ -6,7 +6,7 @@
  * @file    ganttCalendarExport.js
  * @brief   Сборка сетки {value,color,border} для экспорта GanttNode в Excel-календарь - обратный механизм к GanttTableProcessorNode
  * @author  Pavel Fomin
- * @version 1.7.45
+ * @version 1.7.50
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -15,34 +15,38 @@
  * механизм Обработки диаграммы Ганта загруженных из excel, теперь нужен
  * обратный механизм - выгрузить в такую раскрашенную нашими цветами
  * диаграмму обратно"). Раунд 111 - ширина столбцов, объединение ячеек
- * по месяцам/годам, границы ("разлиновка").
+ * по месяцам/годам, границы ("разлиновка"). Раунд 112 - реальный
+ * коэффициент px->Excel-units. Раунд 113 (по жалобе Mr.D: "потерялись
+ * столбики ч.ч/Раб.дни/Кал.дни") - те же ДОПОЛНИТЕЛЬНЫЕ колонки, что
+ * видны на самой диаграмме (см. buildTaskRow() в ganttNode.js),
+ * добавлены в экспорт - условно, по тем же флагам видимости
+ * (showDurationColumn/showWorkingDaysColumn/showCalDaysColumn), в ТОМ
+ * ЖЕ порядке (№ п/п -> Вид работ -> ч.ч. -> Раб.дн. -> Ответственный ->
+ * Кал.дни - Ответственный остаётся ВСЕГДА, это часть базовой схемы
+ * исходного импорта, см. ниже).
  *
  * Строит СЕТКУ (не TableData - структура нерегулярная, см.
  * utils/xlsxWriter.js::buildFromGrid()) в ТОЙ ЖЕ структуре, что читает
  * GanttTableProcessorNode при разборе (Раунд 97):
  *   строка 1 - заголовок, строка 2 - подзаголовок,
- *   строка 3 - "№ п/п"/"Вид работ"/"Ответственный" + год,
+ *   строка 3 - базовые колонки (№ п/п/Вид работ/[ч.ч.]/[Раб.дн.]/
+ *              Ответственный/[Кал.дни]) + год,
  *   строка 4 - месяц, строка 5 - неделя внутри месяца (1-4, ровно 4
  *              колонки на месяц),
  *   строки 6+ - задачи: начало/конец красятся цветом, назначенным
  *              ответственному/группе задачи (Раунд 109) - число в
  *              ячейке = день месяца (тот же "точечный маркер", что
  *              разбирает _decodeTaskDates(), роль 'point').
- *
- * Раунд 111 - год/месяц ТЕПЕРЬ объединяются (Excel merge) через
- * ПОСЛЕДОВАТЕЛЬНЫЕ колонки с одинаковым значением - значение пишется
- * ТОЛЬКО в первую ячейку диапазона (остальные - null), сама сетка ещё
- * ПОЛУЧАЕТ границу (border:true) равномерно по ВСЕЙ области заголовка/
- * данных (не только у объединяемых) - "разлиновка", по прямому запросу
- * Mr.D. Ширина столбцов - ПРЯМАЯ конвертация 1:1 px->units (по
- * собственному замеру Mr.D: 22px на экране ~ 20 units в Excel для той
- * же по смыслу ячейки - "будем считать, что 22 в 22 и обойдёмся" - его
- * решение, не формула пересчёта шрифта).
  */
 
 const RU_MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 const DEFAULT_COLOR = '90CAF9'; // var(--md-primary) эквивалент - когда ни ответственному, ни группе цвет не назначен
 const DAY_WIDTH_PX = 22; // тот же "22", что RULER_SCALES.days.dayWidth в ganttNode.js - желаемая ВИЗУАЛЬНАЯ ширина в пикселях
+// Раунд 113 - тот же HOURS_PER_WORKDAY, что в ganttNode.js (не
+// импортирован оттуда напрямую - утилита сознательно не зависит от
+// самого класса GanttNode, только от его публичных полей/методов, см.
+// докстринг ниже - значение стабильно, дублирование безопаснее связи).
+const HOURS_PER_WORKDAY = 8;
 
 // Раунд 112 (по замеру Mr.D: "сейчас ширина колонки даты 153, должна
 // быть 22" - Excel-атрибут width задаётся не в пикселях, а в
@@ -113,12 +117,36 @@ function groupConsecutive(dateColumns, keyFn) {
     return groups;
 }
 
+// Раунд 113 - список БАЗОВЫХ (не датных) колонок - динамический, в
+// ТОМ ЖЕ порядке и с ТОЙ ЖЕ условностью показа, что на самой диаграмме
+// (см. buildTaskRow() в ganttNode.js). "№ п/п"/"Вид работ"/
+// "Ответственный" - ВСЕГДА (базовая схема исходного импорта, три
+// фиксированные колонки A:C) - "ч.ч."/"Раб.дн."/"Кал.дни" - условно.
+function buildBaseColumns(ganttNode) {
+    const cols = [
+        { key: 'num', header: '№ п/п', width: ganttNode.numColWidthOverride || Math.max(20, String(Math.max((ganttNode.tasks || []).length, 1)).length * 7 + 12) },
+        { key: 'name', header: 'Вид работ', width: typeof ganttNode._labelW === 'function' ? ganttNode._labelW() : 84 }
+    ];
+    if (ganttNode.showDurationColumn) {
+        cols.push({ key: 'hours', header: 'ч.ч.', width: typeof ganttNode._hoursW === 'function' ? ganttNode._hoursW() : 34 });
+    }
+    if (ganttNode.showWorkingDaysColumn) {
+        cols.push({ key: 'workdays', header: 'Раб.дн.', width: typeof ganttNode._workdaysW === 'function' ? ganttNode._workdaysW() : 34 });
+    }
+    cols.push({ key: 'responsible', header: 'Ответственный', width: typeof ganttNode._respW === 'function' ? ganttNode._respW() : 70 });
+    if (ganttNode.showCalDaysColumn) {
+        cols.push({ key: 'caldays', header: 'Кал. дни', width: typeof ganttNode._calDaysW === 'function' ? ganttNode._calDaysW() : 40 });
+    }
+    return cols;
+}
+
 // ganttNode - экземпляр GanttNode (nodes/ganttNode.js) - используем ТОЛЬКО
 // уже публичные поля/методы (this.tasks/this.taskGroups/this.startDate/
 // this.responsibleColors/this.groupColors/this._effectiveResponsible()/
-// this._labelW()/this._respW()/this.numColWidthOverride) - без изменений
-// в самом GanttNode. Возвращает {grid, colWidths, merges} или null, если
-// у диаграммы нет задач.
+// this._labelW()/this._respW()/this._hoursW()/this._workdaysW()/
+// this._calDaysW()/this._countWorkingDaysInRange()/show*Column) - без
+// изменений в самом GanttNode. Возвращает {grid, colWidths, merges}
+// или null, если у диаграммы нет задач.
 export function buildGanttCalendarGrid(ganttNode) {
     const tasks = ganttNode.tasks || [];
     if (tasks.length === 0) return null;
@@ -133,21 +161,24 @@ export function buildGanttCalendarGrid(ganttNode) {
     const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
     const dateColumns = buildDateColumns(minDate, maxDate);
 
+    const baseCols = buildBaseColumns(ganttNode);
+    const baseColCount = baseCols.length;
+
     const grid = [];
     grid.push([{ value: ganttNode._resolvedTitle || ganttNode.customName || ganttNode.getDisplayName() }]);
     grid.push([{ value: ganttNode._resolvedSubtitle || ganttNode.subtitleText || '' }]);
 
     // Раунд 111 - border:true равномерно по ВСЕЙ области заголовка/
     // данных (строки 3+, все колонки) - "разлиновка".
-    const row3 = [{ value: '№ п/п', border: true }, { value: 'Вид работ', border: true }, { value: 'Ответственный', border: true }];
+    const row3 = baseCols.map(c => ({ value: c.header, border: true }));
     dateColumns.forEach(c => row3.push({ value: c.year, border: true }));
     grid.push(row3);
 
-    const row4 = [{ value: null, border: true }, { value: null, border: true }, { value: null, border: true }];
+    const row4 = baseCols.map(() => ({ value: null, border: true }));
     dateColumns.forEach(c => row4.push({ value: RU_MONTHS[c.month], border: true }));
     grid.push(row4);
 
-    const row5 = [{ value: null, border: true }, { value: null, border: true }, { value: null, border: true }];
+    const row5 = baseCols.map(() => ({ value: null, border: true }));
     dateColumns.forEach(c => row5.push({ value: c.week, border: true }));
     grid.push(row5);
 
@@ -158,23 +189,35 @@ export function buildGanttCalendarGrid(ganttNode) {
     const merges = [];
     const yearGroups = groupConsecutive(dateColumns, c => c.year);
     yearGroups.forEach(g => {
-        for (let i = g.startIdx + 1; i <= g.endIdx; i++) row3[3 + i].value = null;
-        merges.push({ r1: 2, c1: 3 + g.startIdx, r2: 2, c2: 3 + g.endIdx });
+        for (let i = g.startIdx + 1; i <= g.endIdx; i++) row3[baseColCount + i].value = null;
+        merges.push({ r1: 2, c1: baseColCount + g.startIdx, r2: 2, c2: baseColCount + g.endIdx });
     });
     const monthGroups = groupConsecutive(dateColumns, c => `${c.year}-${c.month}`);
     monthGroups.forEach(g => {
-        for (let i = g.startIdx + 1; i <= g.endIdx; i++) row4[3 + i].value = null;
-        merges.push({ r1: 3, c1: 3 + g.startIdx, r2: 3, c2: 3 + g.endIdx });
+        for (let i = g.startIdx + 1; i <= g.endIdx; i++) row4[baseColCount + i].value = null;
+        merges.push({ r1: 3, c1: baseColCount + g.startIdx, r2: 3, c2: baseColCount + g.endIdx });
     });
 
     tasks.forEach((task, i) => {
-        const row = new Array(3 + dateColumns.length).fill(null).map(() => ({ value: null, border: true }));
-        row[0].value = i + 1;
-        row[1].value = task.name;
+        const row = new Array(baseColCount + dateColumns.length).fill(null).map(() => ({ value: null, border: true }));
         const responsible = typeof ganttNode._effectiveResponsible === 'function'
             ? ganttNode._effectiveResponsible(task)
             : (task.responsible || '');
-        row[2].value = responsible;
+        // Раунд 113 - значения базовых колонок по их key (тот же набор
+        // и порядок, что buildBaseColumns() выше).
+        baseCols.forEach((col, ci) => {
+            switch (col.key) {
+                case 'num': row[ci].value = i + 1; break;
+                case 'name': row[ci].value = task.name; break;
+                case 'hours': row[ci].value = Math.round(task.durationDays * HOURS_PER_WORKDAY); break;
+                case 'workdays': row[ci].value = typeof ganttNode._countWorkingDaysInRange === 'function'
+                    ? ganttNode._countWorkingDaysInRange(anchor, task.startOffsetDays, task.durationDays)
+                    : task.durationDays;
+                    break;
+                case 'responsible': row[ci].value = responsible; break;
+                case 'caldays': row[ci].value = task.durationDays; break;
+            }
+        });
 
         // Раунд 109 - цвет ответственного в приоритете, иначе цвет
         // группы задачи, иначе цвет по умолчанию (тот же принцип
@@ -189,22 +232,17 @@ export function buildGanttCalendarGrid(ganttNode) {
         const endDate = addDays(anchor, task.startOffsetDays + task.durationDays);
         const startColIdx = findColIndex(dateColumns, startDate);
         const endColIdx = findColIndex(dateColumns, endDate);
-        if (startColIdx >= 0) { row[3 + startColIdx].value = startDate.getDate(); row[3 + startColIdx].color = cleanColor; }
-        if (endColIdx >= 0 && endColIdx !== startColIdx) { row[3 + endColIdx].value = endDate.getDate(); row[3 + endColIdx].color = cleanColor; }
+        if (startColIdx >= 0) { row[baseColCount + startColIdx].value = startDate.getDate(); row[baseColCount + startColIdx].color = cleanColor; }
+        if (endColIdx >= 0 && endColIdx !== startColIdx) { row[baseColCount + endColIdx].value = endDate.getDate(); row[baseColCount + endColIdx].color = cleanColor; }
 
         grid.push(row);
     });
 
     // Раунд 111 (по запросу Mr.D: "остальные столбики тоже") + Раунд 112
-    // (реальный коэффициент px->units, не 1:1, см. pxToExcelUnits()) -
-    // ширина каждого столбца сетки в Excel-"units", пересчитанная из
-    // ширины того же столбца на экране в пикселях (см. её же
-    // LABEL_WIDTH/RESPONSIBLE_COL_WIDTH/dayWidth в ganttNode.js).
-    const numColWidth = ganttNode.numColWidthOverride
-        || Math.max(20, String(Math.max(tasks.length, 1)).length * 7 + 12);
-    const labelWidth = typeof ganttNode._labelW === 'function' ? ganttNode._labelW() : 84;
-    const respWidth = typeof ganttNode._respW === 'function' ? ganttNode._respW() : 70;
-    const colWidths = [numColWidth, labelWidth, respWidth, ...dateColumns.map(() => DAY_WIDTH_PX)].map(pxToExcelUnits);
+    // (реальный коэффициент px->units, см. pxToExcelUnits()) - ширина
+    // каждого столбца сетки в Excel-"units", пересчитанная из ширины
+    // того же столбца на экране в пикселях.
+    const colWidths = [...baseCols.map(c => c.width), ...dateColumns.map(() => DAY_WIDTH_PX)].map(pxToExcelUnits);
 
     return { grid, colWidths, merges };
 }
