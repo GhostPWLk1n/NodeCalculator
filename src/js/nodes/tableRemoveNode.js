@@ -6,7 +6,7 @@
  * @file    tableRemoveNode.js
  * @brief   Обработчик: удаляет строки из таблицы (по номеру строки или диапазону)
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -54,6 +54,8 @@ export class TableRemoveNode extends BaseNode {
         // (удаление строк), подключите после неё TableFormatNode
         // ("Оформление таблицы", tableFormatNode.js).
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
     }

@@ -6,7 +6,7 @@
  * @file    tableInjectNode.js
  * @brief   Обработчик: вставляет строки из одной таблицы в другую (в конец/начало/по номеру строки)
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -63,6 +63,8 @@ export class TableInjectNode extends BaseNode {
         // (вставка строк), подключите после неё TableFormatNode
         // ("Оформление таблицы", tableFormatNode.js).
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
     }

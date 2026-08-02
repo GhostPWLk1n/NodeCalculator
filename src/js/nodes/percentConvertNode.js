@@ -6,7 +6,7 @@
  * @file    percentConvertNode.js
  * @brief   Нода-преобразователь: список чисел -> список процентных долей от суммы
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

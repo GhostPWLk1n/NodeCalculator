@@ -6,7 +6,7 @@
  * @file    tableFormatNode.js
  * @brief   Обработчик: применяет оформление (формат/ширина/итог/цвет/зебра/линии) к любой Data-таблице
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -59,6 +59,8 @@ export class TableFormatNode extends BaseNode {
 
         // Виджет Доски (Раунды 35/42/44, см. TableWidgetRenderer)
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
         this.boardZebra = config.boardZebra ?? false;
@@ -235,7 +237,8 @@ export class TableFormatNode extends BaseNode {
                     { value: 'sum', label: 'Сумма' },
                     { value: 'max', label: 'Наибольшее' },
                     { value: 'min', label: 'Наименьшее' },
-                    { value: 'avg', label: 'Среднее' }
+                    { value: 'avg', label: 'Среднее' },
+                    { value: 'count', label: 'Кол-во' }
                 ],
                 get: () => style.totalType || '',
                 set: (v) => { style.totalType = v || null; }

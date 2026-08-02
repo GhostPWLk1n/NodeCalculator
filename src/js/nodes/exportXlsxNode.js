@@ -6,13 +6,14 @@
  * @file    exportXlsxNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .xlsx по кнопке
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { XlsxWriter } from '../utils/xlsxWriter.js';
+import { buildGanttCalendarGrid } from '../utils/ganttCalendarExport.js';
 
 /**
  * ExportXlsxNode - зеркало XlsxImportNode: вход Data, БЕЗ выхода
@@ -34,10 +35,17 @@ export class ExportXlsxNode extends BaseNode {
         this.inputs = 1;
         this.inputSockets = [0];
         this.outputs = 0;
-        this.width = config.width || 220;
+        // Раунд 106 (чек-лист, раздел 2) - минимальная ширина 224px.
+        this.width = Math.max(config.width || 220, 224);
+        this.minWidth = 224; // Раунд 106 - применяется и при ручном растягивании через UI
 
         this.tableData = null;
         this._sourceName = null;
+        // Раунд 110 - ссылка на САМ узел-источник (не только имя) -
+        // нужен доступ к его this.tasks/responsibleColors/groupColors
+        // для календарного экспорта Ганта (см. _doExportGanttCalendar()).
+        // Транзитное состояние, как this.tableData - не сериализуется.
+        this._sourceNode = null;
     }
 
     createContent() {
@@ -68,7 +76,7 @@ export class ExportXlsxNode extends BaseNode {
         content.appendChild(inRow);
 
         const exportBtn = document.createElement('button');
-        exportBtn.className = 'node-action-btn';
+        exportBtn.className = 'node-action-btn export-xlsx-btn';
         exportBtn.textContent = '💾 Экспорт в .xlsx';
         exportBtn.disabled = !this._hasData();
         exportBtn.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -78,7 +86,40 @@ export class ExportXlsxNode extends BaseNode {
         });
         content.appendChild(exportBtn);
 
+        // Раунд 110 (по запросу Mr.D: "обратный механизм - выгрузить
+        // раскрашенную нашими цветами диаграмму") - отдельная кнопка,
+        // видна ТОЛЬКО когда источник - Диаграмма Ганта (см.
+        // _isGanttSource()) - обычный "💾 Экспорт в .xlsx" выше по-прежнему
+        // экспортирует плоскую таблицу (Группа/Задача/Начало/... - как
+        // было раньше, без изменений) - эта кнопка ДОПОЛНИТЕЛЬНО
+        // экспортирует в том же календарном виде, что читает "Обработка
+        // таблиц Ганта" при импорте, с цветами по Ответственному/Группе
+        // (Раунд 109). ВСЕГДА в DOM (не условно) - источник может
+        // смениться с/на Гант уже ПОСЛЕ первой отрисовки, а
+        // updateDisplay() не пересоздаёт DOM - видимость переключается
+        // через display, не через add/remove.
+        const calendarBtn = document.createElement('button');
+        calendarBtn.className = 'node-action-btn export-gantt-calendar-btn';
+        calendarBtn.textContent = '📅 Экспорт как календарь Ганта';
+        calendarBtn.style.display = this._isGanttSource() ? '' : 'none';
+        calendarBtn.disabled = !(this._sourceNode?.tasks?.length > 0);
+        calendarBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        calendarBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._doExportGanttCalendar();
+        });
+        content.appendChild(calendarBtn);
+
         return content;
+    }
+
+    // Раунд 110 - источник считается "Диаграммой Ганта", если у него
+    // есть this.tasks (массив) - проверка по НАЛИЧИЮ поля, не по
+    // node.type === 'gantt' - на случай, если в будущем появится другой
+    // тип ноды с такой же формой задач (см. тот же принцип "утиной
+    // типизации", что уже используется в isCompatibleTable()).
+    _isGanttSource() {
+        return !!(this._sourceNode && Array.isArray(this._sourceNode.tasks));
     }
 
     _hasData() {
@@ -101,6 +142,7 @@ export class ExportXlsxNode extends BaseNode {
 
         this.tableData = output?.tableData ?? null;
         this._sourceName = src ? (src.customName || src.getDisplayName?.() || 'источник') : null;
+        this._sourceNode = src || null;
 
         if (conn) {
             if (!this.tableData) {
@@ -124,8 +166,14 @@ export class ExportXlsxNode extends BaseNode {
     updateDisplay(element) {
         const label = element.querySelector('.export-source-label');
         if (label) label.textContent = this._statusText();
-        const btn = element.querySelector('.node-action-btn');
+        const btn = element.querySelector('.export-xlsx-btn');
         if (btn) btn.disabled = !this._hasData();
+
+        const calendarBtn = element.querySelector('.export-gantt-calendar-btn');
+        if (calendarBtn) {
+            calendarBtn.style.display = this._isGanttSource() ? '' : 'none';
+            calendarBtn.disabled = !(this._sourceNode?.tasks?.length > 0);
+        }
     }
 
     async _doExport() {
@@ -145,6 +193,42 @@ export class ExportXlsxNode extends BaseNode {
             if (statusEl) {
                 if (result?.success) {
                     statusEl.textContent = '💾 Экспортировано в .xlsx';
+                } else if (!result?.canceled) {
+                    statusEl.textContent = `❌ Ошибка экспорта: ${result?.error || 'неизвестная ошибка'}`;
+                }
+                setTimeout(() => { statusEl.textContent = 'Готово'; }, 2000);
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = `❌ Ошибка экспорта: ${err.message}`;
+        }
+    }
+
+    // Раунд 110 - обратный механизм к GanttTableProcessorNode: собирает
+    // ту же календарную сетку (год/месяц/неделя + раскрашенные точки
+    // начала/конца задач), что "Обработка таблиц Ганта" умеет ЧИТАТЬ -
+    // экспортированный файл можно снова импортировать через тот же
+    // узел, получив ИСХОДНЫЕ даты и цвета обратно (проверено
+    // исполняемым тестом полного цикла).
+    async _doExportGanttCalendar() {
+        if (!this._isGanttSource()) return;
+        const built = buildGanttCalendarGrid(this._sourceNode);
+        if (!built) return;
+        const { grid, colWidths, merges } = built;
+        const statusEl = document.getElementById('status');
+
+        try {
+            const bytes = XlsxWriter.buildFromGrid(grid, this._sourceName || 'Гант', { colWidths, merges });
+            const base64 = XlsxWriter.bytesToBase64(bytes);
+            const result = await window.electron.exportFile({
+                content: base64,
+                encoding: 'base64',
+                suggestedName: `${this._sourceName || 'gantt'}_календарь.xlsx`,
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+            });
+
+            if (statusEl) {
+                if (result?.success) {
+                    statusEl.textContent = '📅 Экспортировано как календарь Ганта';
                 } else if (!result?.canceled) {
                     statusEl.textContent = `❌ Ошибка экспорта: ${result?.error || 'неизвестная ошибка'}`;
                 }

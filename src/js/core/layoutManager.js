@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -271,6 +271,13 @@ export class LayoutManager {
                     boardShowRowNumbers: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardShowRowNumbers : undefined,
                     boardSortColumn: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortColumn : undefined,
                     boardSortDirection: TABLE_WIDGET_TYPES.includes(n.type) ? n.boardSortDirection : undefined,
+                    // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов
+                    // ИМЕННО на Доске (TableWidgetRenderer, auto-init
+                    // node.boardColumnWidths при первой отрисовке виджета -
+                    // здесь просто читаем, если уже существует).
+                    boardColumnWidths: TABLE_WIDGET_TYPES.includes(n.type) && n.boardColumnWidths
+                        ? { ...n.boardColumnWidths }
+                        : undefined,
                     // Зебра/линии (Раунд 44, расширено на TreeFormatNode в
                     // Раунде 56) - ТОЛЬКО у "форматирующих" нод -
                     // остальные табличные/древесные ноды намеренно не
@@ -281,6 +288,7 @@ export class LayoutManager {
                     showRowNumbers: n.type === 'tableViewer' ? n.showRowNumbers : undefined,
                     sortColumnIndex: n.type === 'tableViewer' ? n.sortColumnIndex : undefined,
                     sortDirection: n.type === 'tableViewer' ? n.sortDirection : undefined,
+                    columnWidths: n.type === 'tableViewer' && n.columnWidths ? { ...n.columnWidths } : undefined,
                     // Свободный ресайз (nodeManager.applyFreeResize) - и у
                     // TableViewerNode, и у GanttNode, взаимоисключающе по типу,
                     // поэтому один общий ключ (раньше было ДВА одинаковых ключа
@@ -297,6 +305,7 @@ export class LayoutManager {
                     locked: n.type === 'dashboard' ? n.locked : undefined,
                     // GanttNode: календарь плана
                     startDate: n.type === 'gantt' ? n.startDate : undefined,
+                    autoAnchorFromData: n.type === 'gantt' ? n.autoAnchorFromData : undefined,
                     periodPreset: n.type === 'gantt' ? n.periodPreset : undefined,
                     customPeriodDays: n.type === 'gantt' ? n.customPeriodDays : undefined,
                     durationUnit: n.type === 'gantt' ? n.durationUnit : undefined,
@@ -307,7 +316,17 @@ export class LayoutManager {
                     showDurationColumn: n.type === 'gantt' ? n.showDurationColumn : undefined,
                     showWorkingDaysColumn: n.type === 'gantt' ? n.showWorkingDaysColumn : undefined,
                     showResponsibleColumn: n.type === 'gantt' ? n.showResponsibleColumn : undefined,
+                    showCalDaysColumn: n.type === 'gantt' ? n.showCalDaysColumn : undefined,
                     subtitleText: n.type === 'gantt' ? n.subtitleText : undefined,
+                    numColWidthOverride: n.type === 'gantt' ? n.numColWidthOverride : undefined,
+                    labelColWidthOverride: n.type === 'gantt' ? n.labelColWidthOverride : undefined,
+                    hoursColWidthOverride: n.type === 'gantt' ? n.hoursColWidthOverride : undefined,
+                    workdaysColWidthOverride: n.type === 'gantt' ? n.workdaysColWidthOverride : undefined,
+                    responsibleColWidthOverride: n.type === 'gantt' ? n.responsibleColWidthOverride : undefined,
+                    calDaysColWidthOverride: n.type === 'gantt' ? n.calDaysColWidthOverride : undefined,
+                    // Раунд 109 - пользовательские цвета ответственных/групп
+                    responsibleColors: n.type === 'gantt' && n.responsibleColors ? { ...n.responsibleColors } : undefined,
+                    groupColors: n.type === 'gantt' && n.groupColors ? { ...n.groupColors } : undefined,
                     collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
@@ -380,6 +399,7 @@ export class LayoutManager {
                     selectionMode: n.type === 'calendar' ? n.selectionMode : undefined,
                     excludedDates: n.type === 'calendar' && n.excludedDates ? [...n.excludedDates] : undefined,
                     dataStartRowOverride: n.type === 'ganttTableProcessor' ? n.dataStartRowOverride : undefined,
+                    colorRoles: n.type === 'ganttTableProcessor' && n.colorRoles ? { ...n.colorRoles } : undefined,
 
                     // TableMergeColumnsNode: какие столбцы объединяем, как, куда
                     sourceColumns: n.type === 'tableMergeColumns' ? [...n.sourceColumns] : undefined,

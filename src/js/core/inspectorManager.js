@@ -6,7 +6,7 @@
  * @file    inspectorManager.js
  * @brief   Боковая панель настроек выбранной ноды (цвет, формат значения и т.п.)
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -195,7 +195,18 @@ export class InspectorManager {
 
         const label = document.createElement('label');
         label.className = 'inspector-field-label';
-        label.textContent = field.label;
+        // Раунд 99 (по запросу Mr.D - "маленький квадратик с цветом
+        // перед #HEX в ролях цветов, чтобы явно видеть о каком цвете
+        // идёт речь") - общая возможность для ЛЮБОГО поля, не только
+        // ролей цветов: field.swatchColor - если задан, перед текстом
+        // подписи ставится маленький квадратик именно этого цвета.
+        if (field.swatchColor) {
+            const swatch = document.createElement('span');
+            swatch.className = 'inspector-field-swatch';
+            swatch.style.background = field.swatchColor;
+            label.appendChild(swatch);
+        }
+        label.appendChild(document.createTextNode(field.label));
         row.appendChild(label);
 
         const controlRow = document.createElement('div');

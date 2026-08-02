@@ -6,7 +6,7 @@
  * @file    treeFormatNode.js
  * @brief   Обработчик: оформление свода "Дерева" (формат/ширина/цвет полей), с сохранением иерархии
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -248,7 +248,8 @@ export class TreeFormatNode extends BaseNode {
                     { value: 'sum', label: 'Сумма' },
                     { value: 'max', label: 'Наибольшее' },
                     { value: 'min', label: 'Наименьшее' },
-                    { value: 'avg', label: 'Среднее' }
+                    { value: 'avg', label: 'Среднее' },
+                    { value: 'count', label: 'Кол-во' }
                 ],
                 get: () => style.totalType || '',
                 set: (v) => { style.totalType = v || null; }

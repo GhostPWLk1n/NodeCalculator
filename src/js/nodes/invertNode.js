@@ -6,7 +6,7 @@
  * @file    invertNode.js
  * @brief   Инверсия истина/ложь и 1/0 - поэлементно по подключённому списку, таблице или скаляру
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

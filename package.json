@@ -1,6 +1,6 @@
 {
   "name": "nodecalculate",
-  "version": "1.7.24",
+  "version": "1.7.45",
   "description": "Нодовый калькулятор - визуальный калькулятор с нодовой системой",
   "main": "main.js",
   "author": "Pavel Fomin",

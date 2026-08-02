@@ -6,7 +6,7 @@
  * @file    treeToTableNode.js
  * @brief   Обработчик: разворачивает иерархию "Дерева" в плоскую таблицу (Data) с выбором глубины и компоновки
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -80,6 +80,8 @@ export class TreeToTableNode extends BaseNode {
         // Виджет Доски - тот же общий рендерер, что у остальных
         // табличных нод (TableWidgetRenderer)
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
         this.boardZebra = config.boardZebra ?? false;

@@ -6,7 +6,7 @@
  * @file    percentageNode.js
  * @brief   Просмотр диаграммы (Viewer) - без выбора типа, тип берётся из источника
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

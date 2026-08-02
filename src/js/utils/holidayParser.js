@@ -6,7 +6,7 @@
  * @file    holidayParser.js
  * @brief   Извлекает набор дат-праздников из подключённой ноды - для сокета "Праздники" у GanttNode
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -3592,3 +3592,171 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     display: flex;
     flex-direction: column;
 }
+
+/* Ручка растягивания ширины столбца (Раунд 93, чек-лист 1.7.21 п.4.1) -
+   единая для TableViewerNode/Доски/левых колонок Ганта */
+.column-resize-handle {
+    position: absolute;
+    right: -3px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 2;
+}
+
+.column-resize-handle:hover,
+.column-resize-handle.column-resize-active {
+    background: var(--md-primary);
+    opacity: 0.5;
+}
+
+/* Визуальный индикатор во время самого растягивания (чек-лист п.4.1) -
+   лёгкая подсветка всего заголовка, не только ручки */
+.column-resize-target-active {
+    background: rgba(144, 202, 249, 0.08);
+}
+
+/* Раунд 94 - постоянные разделители между левыми колонками Ганта (не
+   только в строке заголовков) - по предложению Mr.D "универсальное
+   решение, всегда отображать сепараторы" */
+.gantt-row-num,
+.gantt-task-label,
+.gantt-hours-cell,
+.gantt-workdays-cell,
+.gantt-workdays-input,
+.gantt-responsible-cell {
+    border-right: 1px solid var(--md-divider);
+}
+
+/* Цветовой квадратик перед подписью поля (Раунд 99) - field.swatchColor,
+   общая возможность инспектора, используется в ролях цветов у
+   "Обработки таблиц Ганта" */
+.inspector-field-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border: 1px solid var(--md-divider);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+/* Настройки сайдбара (Раунд 102, чек-лист 1.7.21 раздел 5) */
+.sidebar-settings-btn {
+    background: none;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+    line-height: 1;
+    vertical-align: middle;
+}
+.sidebar-settings-btn:hover {
+    background: var(--md-surface-2);
+}
+
+.sidebar-settings-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sidebar-settings-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+.sidebar-settings-panel {
+    position: relative;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 80vh;
+    background: var(--md-surface-variant);
+    border-radius: var(--md-radius-lg);
+    box-shadow: var(--md-elevation);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.sidebar-settings-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--md-divider);
+}
+.sidebar-settings-panel-header h3 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--md-text);
+}
+.sidebar-settings-panel-body {
+    padding: 12px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sidebar-settings-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.sidebar-settings-select {
+    flex: 1;
+    background: var(--md-surface-2);
+    color: var(--md-text);
+    border: 1px solid var(--md-divider);
+    border-radius: var(--md-radius);
+    padding: 4px 6px;
+    font-size: 12px;
+}
+.sidebar-settings-btn-small {
+    background: var(--md-surface-2);
+    color: var(--md-text);
+    border: 1px solid var(--md-divider);
+    border-radius: var(--md-radius);
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.sidebar-settings-btn-small:hover {
+    background: var(--md-surface-3);
+}
+.sidebar-settings-btn-small:disabled {
+    cursor: not-allowed;
+}
+.sidebar-settings-hint {
+    font-size: 10px;
+    color: var(--md-text-secondary);
+    padding: 2px 0;
+}
+.sidebar-settings-node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+}
+.sidebar-settings-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--md-accent);
+    margin-bottom: 4px;
+}
+.sidebar-settings-item-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-size: 12px;
+    color: var(--md-text);
+    cursor: pointer;
+}

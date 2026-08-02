@@ -6,7 +6,7 @@
  * @file    chartRenderer.js
  * @brief   Общий код отрисовки SVG-диаграмм (круговая/линейчатая) + легенды
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

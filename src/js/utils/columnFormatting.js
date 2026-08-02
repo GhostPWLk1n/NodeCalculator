@@ -6,7 +6,7 @@
  * @file    columnFormatting.js
  * @brief   Общая логика оформления столбцов (палитры, применение стилей, поля инспектора) - единая для всех нод с tableData
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -140,7 +140,8 @@ export function buildColumnFormattingFields(node, tableData, { excludeHeaders = 
                 { value: 'sum', label: 'Сумма' },
                 { value: 'max', label: 'Наибольшее' },
                 { value: 'min', label: 'Наименьшее' },
-                { value: 'avg', label: 'Среднее' }
+                { value: 'avg', label: 'Среднее' },
+                { value: 'count', label: 'Кол-во' }
             ],
             get: () => style.totalType || '',
             set: (v) => { style.totalType = v || null; }

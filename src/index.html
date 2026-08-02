@@ -26,7 +26,10 @@
     <!-- Боковая панель -->
     <div id="sidebar">
         <div class="sidebar-header">
-            <h2>🧮 Ноды</h2>
+            <h2>
+                <button class="sidebar-settings-btn" id="sidebarSettingsBtn" type="button" title="Настройки сайдбара" aria-label="Настройки сайдбара">⚙️</button>
+                Ноды
+            </h2>
             <div class="sidebar-header-right">
                 <button
                     class="theme-switch"
@@ -435,6 +438,33 @@
             <span class="inspector-close" onclick="window.closeInspector()" title="Закрыть">✕</span>
         </div>
         <div class="inspector-body" id="inspectorBody"></div>
+    </div>
+
+    <!-- Раунд 102 (чек-лист 1.7.21, раздел 5) - модальное окно настроек
+         сайдбара: список всех нод с флажками показать/скрыть, готовые и
+         пользовательские конфигурации, экспорт/импорт JSON -->
+    <div class="sidebar-settings-modal" id="sidebarSettingsModal" style="display:none;">
+        <div class="sidebar-settings-backdrop" id="sidebarSettingsBackdrop"></div>
+        <div class="sidebar-settings-panel">
+            <div class="sidebar-settings-panel-header">
+                <h3>⚙️ Настройки сайдбара</h3>
+                <span class="inspector-close" id="sidebarSettingsClose" title="Закрыть">✕</span>
+            </div>
+            <div class="sidebar-settings-panel-body">
+                <div class="sidebar-settings-row">
+                    <select id="sidebarSettingsConfigSelect" class="sidebar-settings-select"></select>
+                    <button id="sidebarSettingsNewConfigBtn" class="sidebar-settings-btn-small" title="Создать новую конфигурацию на основе текущей">+ Своя</button>
+                    <button id="sidebarSettingsDeleteConfigBtn" class="sidebar-settings-btn-small" title="Удалить текущую конфигурацию">🗑️</button>
+                </div>
+                <div class="sidebar-settings-row">
+                    <button id="sidebarSettingsExportBtn" class="sidebar-settings-btn-small">⬇️ Экспорт JSON</button>
+                    <button id="sidebarSettingsImportBtn" class="sidebar-settings-btn-small">⬆️ Импорт JSON</button>
+                    <input type="file" id="sidebarSettingsImportFile" accept="application/json" style="display:none;">
+                </div>
+                <div class="sidebar-settings-hint" id="sidebarSettingsHint"></div>
+                <div class="sidebar-settings-node-list" id="sidebarSettingsNodeList"></div>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="js/main.js"></script>

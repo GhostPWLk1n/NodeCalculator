@@ -6,7 +6,7 @@
  * @file    xlsxReader.js
  * @brief   Чтение .xlsx (ZIP + OOXML) без сторонних библиотек - только браузерные API
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -163,6 +163,47 @@ function parseWorkbookSheets(workbookXml, relsXml) {
     });
 }
 
+// Раунд 96 - разбор xl/styles.xml (Раунд 96, чек-лист - "научим
+// обработчик цеплять данные для заполнения диаграммы"). Возвращает
+// массив HEX-цветов заливки, ИНДЕКСИРОВАННЫЙ ПО ИНДЕКСУ СТИЛЯ ЯЧЕЙКИ
+// (атрибут s="N" у <c>) - то есть сразу готовый к прямому обращению
+// styleFillColors[cellStyleIndex], без промежуточного поиска fillId.
+// Тема-цвета (fgColor theme="N", без прямого rgb) НЕ поддерживаются -
+// потребовали бы отдельного разбора theme1.xml и палитры темы, а
+// подавляющее большинство "цветного кодирования" в реальных файлах
+// (как у Mr.D) использует ПРЯМЫЕ rgb-цвета, не темы - см. её
+// докстринг в xlsxReader.js о разборе Гант-таблиц ниже.
+function parseStylesXml(xmlText) {
+    if (!xmlText) return [];
+    const doc = parseXml(xmlText);
+
+    const fillsParent = doc.getElementsByTagName('fills')[0];
+    const fillEls = fillsParent ? [...fillsParent.getElementsByTagName('fill')] : [];
+    const fillColors = fillEls.map(fillEl => {
+        const patternEl = fillEl.getElementsByTagName('patternFill')[0];
+        if (!patternEl || patternEl.getAttribute('patternType') !== 'solid') return null;
+        const fgColorEl = patternEl.getElementsByTagName('fgColor')[0];
+        if (!fgColorEl) return null;
+        const rgb = fgColorEl.getAttribute('rgb'); // формат AARRGGBB
+        if (rgb && rgb.length >= 6) return `#${rgb.slice(-6)}`.toUpperCase();
+        return null; // тема-цвет или иной формат - не поддерживаем
+    });
+
+    const cellXfsParent = doc.getElementsByTagName('cellXfs')[0];
+    const xfEls = cellXfsParent ? [...cellXfsParent.getElementsByTagName('xf')] : [];
+    return xfEls.map(xf => {
+        const fillId = parseInt(xf.getAttribute('fillId'), 10);
+        return Number.isNaN(fillId) ? null : (fillColors[fillId] || null);
+    });
+}
+
+function readCellColor(cellEl, styleFillColors) {
+    const s = cellEl.getAttribute('s');
+    if (s === null) return null;
+    const idx = parseInt(s, 10);
+    return Number.isNaN(idx) ? null : (styleFillColors[idx] || null);
+}
+
 function readCellValue(cellEl, sharedStrings) {
     const type = cellEl.getAttribute('t');
     const vEl = cellEl.getElementsByTagName('v')[0];
@@ -225,6 +266,50 @@ function parseSheetRows(xmlText, sharedStrings) {
     return result;
 }
 
+// Раунд 96 - параллельная версия parseRowCells/parseSheetRows выше,
+// дополнительно несёт цвет заливки КАЖДОЙ ячейки (styleFillColors -
+// см. parseStylesXml()). Используется ТОЛЬКО в readSheet() (полный
+// разбор ОДНОГО выбранного листа) - scanOutline()/getHeadersAtRow()
+// цвета не нужны (только текст заголовков), поэтому они по-прежнему
+// используют старые (более быстрые) функции без цвета - никакого
+// риска регрессии там.
+function parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors) {
+    const cells = [...rowEl.getElementsByTagName('c')];
+    if (cells.length === 0) return { values: [], colors: [] };
+    const parsed = cells.map(c => ({ ref: parseCellRef(c.getAttribute('r')), cell: c }));
+    const maxCol = Math.max(-1, ...parsed.map(p => (p.ref ? p.ref.col : -1)));
+    const values = new Array(maxCol + 1).fill(null);
+    const colors = new Array(maxCol + 1).fill(null);
+    parsed.forEach(({ ref, cell }) => {
+        if (ref) {
+            values[ref.col] = readCellValue(cell, sharedStrings);
+            colors[ref.col] = readCellColor(cell, styleFillColors);
+        }
+    });
+    return { values, colors };
+}
+
+function parseSheetRowsWithColors(xmlText, sharedStrings, styleFillColors) {
+    const rowEls = [...parseXml(xmlText).getElementsByTagName('row')];
+    let maxRow = 0;
+    const byRowNum = new Map();
+    rowEls.forEach(rowEl => {
+        const rNum = parseInt(rowEl.getAttribute('r'), 10);
+        if (Number.isNaN(rNum)) return;
+        byRowNum.set(rNum, parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors));
+        if (rNum > maxRow) maxRow = rNum;
+    });
+
+    const values = [];
+    const colors = [];
+    for (let r = 1; r <= maxRow; r++) {
+        const entry = byRowNum.get(r) || { values: [], colors: [] };
+        values.push(entry.values);
+        colors.push(entry.colors);
+    }
+    return { values, colors };
+}
+
 export const XlsxReader = {
     // "Поверхностное" сканирование - имена листов + ПЕРВАЯ строка
     // (заголовки) каждого листа, без разбора всех строк целиком. XML
@@ -242,6 +327,12 @@ export const XlsxReader = {
         const sharedStringsXml = await extractText(arrayBuffer, entries, 'xl/sharedStrings.xml');
         const sharedStrings = parseSharedStrings(sharedStringsXml);
 
+        // Раунд 96 - styles.xml для цвета заливки ячеек (см.
+        // parseStylesXml()) - разбирается здесь ОДИН раз (как и
+        // sharedStrings), кэшируется в outline для readSheet() ниже.
+        const stylesXml = await extractText(arrayBuffer, entries, 'xl/styles.xml');
+        const styleFillColors = parseStylesXml(stylesXml);
+
         const sheets = [];
         for (const meta of sheetsMeta) {
             if (!entries.has(meta.path)) continue; // лист объявлен, но файла в архиве нет - пропускаем
@@ -252,7 +343,7 @@ export const XlsxReader = {
             sheets.push({ name: meta.name, path: meta.path, headers });
         }
 
-        return { sheets, _entries: entries, _sharedStrings: sharedStrings };
+        return { sheets, _entries: entries, _sharedStrings: sharedStrings, _styleFillColors: styleFillColors };
     },
 
     // Полный разбор ОДНОГО листа (все строки, включая первую строку-
@@ -260,10 +351,15 @@ export const XlsxReader = {
     // только когда пользователь явно нажал "Импортировать" для конкретного
     // листа - переиспользует entries/sharedStrings, уже посчитанные в
     // scanOutline(), повторно их разбирать не нужно.
+    //
+    // Раунд 96 - возвращает {values, colors} (не голый rows-массив, как
+    // раньше) - colors[row][col] - HEX-цвет заливки той же ячейки, или
+    // null (нет заливки/тема-цвет, см. parseStylesXml()). Единственный
+    // вызывающий код (xlsxImportNode.js) обновлён под новую форму.
     async readSheet(arrayBuffer, outline, sheetPath) {
         const xml = await extractText(arrayBuffer, outline._entries, sheetPath);
         if (!xml) throw new Error(`Лист не найден в архиве: ${sheetPath}`);
-        return parseSheetRows(xml, outline._sharedStrings);
+        return parseSheetRowsWithColors(xml, outline._sharedStrings, outline._styleFillColors || []);
     },
 
     // Заголовки НЕ обязательно в первой строке листа (в реальных файлах

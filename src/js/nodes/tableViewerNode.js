@@ -6,7 +6,7 @@
  * @file    tableViewerNode.js
  * @brief   Нода просмотра таблицы (Data), без выходов
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -14,6 +14,7 @@ import { BaseNode } from './baseNode.js';
 import { Helpers } from '../utils/helpers.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
+import { attachColumnResizeHandle } from '../utils/columnResize.js';
 
 const ROW_HEIGHT = 22;         // px, оценка высоты строки тела (фолбэк до первого измерения)
 const MAX_VISIBLE_ROWS = 8;    // после скольки строк тело включает внутренний скролл
@@ -93,6 +94,14 @@ export class TableViewerNode extends BaseNode {
         // ручку ресайза ноды по вертикали (см. beginFreeResize/applyFreeResize
         // ниже) - null = высота подбирается автоматически по числу строк.
         this.wrapHeight = config.wrapHeight ?? null;
+        // Раунд 93 (чек-лист 1.7.21, п.4.1) - ручное растягивание ширины
+        // столбца мышью (attachColumnResizeHandle) - ключ по ЗАГОЛОВКУ
+        // столбца (не по индексу - переживает переупорядочивание/
+        // добавление столбцов в источнике разумным образом). Это ширина
+        // ИМЕННО ЭТОГО просмотрщика, не источника - разные просмотрщики
+        // одних и тех же данных могут иметь разную ширину столбцов,
+        // как в обычном табличном редакторе.
+        this.columnWidths = config.columnWidths ? { ...config.columnWidths } : {};
 
         // Багфикс (Раунд 77, по жалобе Mr.D: "если таблица очень большая,
         // начинает зависать") - см. подробный комментарий у updateDisplay()
@@ -200,6 +209,7 @@ export class TableViewerNode extends BaseNode {
     // совпадают по ширине столбцов без JS-синхронизации.
     getColumnWidths() {
         return this.tableData.columns.map(col => {
+            if (this.columnWidths[col.header] != null) return this.columnWidths[col.header];
             if (col.width) return col.width;
             const guess = (col.header?.length || 6) * 7 + 24;
             return Math.max(50, Math.min(140, guess));
@@ -333,6 +343,15 @@ export class TableViewerNode extends BaseNode {
                 color: ${isSortActive ? 'var(--md-primary)' : 'inherit'};
             `;
             th.appendChild(sortIcon);
+
+            // Раунд 93 (чек-лист, п.4.1) - ручка растягивания. Сохраняет
+            // в this.columnWidths по ЗАГОЛОВКУ столбца, не по индексу -
+            // переживает переупорядочивание источника разумным образом.
+            attachColumnResizeHandle(th, colWidths[colIdx], (finalWidth) => {
+                this.columnWidths[col.header] = finalWidth;
+                const wrap = th.closest ? th.closest('.table-viewer-wrap') : null;
+                this._rerenderWrap(wrap);
+            });
 
             th.addEventListener('mousedown', (e) => e.stopPropagation());
             th.addEventListener('click', (e) => {

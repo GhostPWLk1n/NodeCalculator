@@ -6,7 +6,7 @@
  * @file    dataTypes.js
  * @brief   Единые форматы данных между нодами: ListData и TableData
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -80,6 +80,15 @@ export class TableData {
     // числовых значений нет вовсе.
     aggregate(col) {
         if (!col || !col.totalType) return null;
+
+        // "Кол-во" (Раунд 92, чек-лист п.4.2) - единственная агрегация,
+        // которая имеет смысл и для НЕчисловых столбцов (текст, даты и
+        // т.п.) - считает непустые значения, а не идёт через общий
+        // числовой фильтр ниже, как sum/max/min/avg.
+        if (col.totalType === 'count') {
+            return col.values.filter(v => v !== null && v !== undefined && v !== '').length;
+        }
+
         const nums = col.values.filter(v => typeof v === 'number' && !isNaN(v));
         if (nums.length === 0) return null;
 

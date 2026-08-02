@@ -6,7 +6,7 @@
  * @file    calendarNode.js
  * @brief   Визуальный календарь (сетка месяца) для ручной разметки праздников/дней - источник для сокета "Праздники" у GanttNode
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -85,7 +85,11 @@ export class CalendarNode extends BaseNode {
         this.inputs = config.inputs || 1;
         this.inputSockets = Array.from({ length: this.inputs }, (_, i) => i);
         this._isRerendering = false;
-        this.width = config.width || 240;
+        // Раунд 106 (чек-лист, раздел 2) - минимальная ширина 248px -
+        // сетка календаря (7 колонок дней недели) требует достаточно
+        // места, чтобы не сжиматься до нечитаемого состояния.
+        this.width = Math.max(config.width || 240, 248);
+        this.minWidth = 248; // Раунд 106 - применяется и при ручном растягивании через UI
 
         // entry: { id, type: 'single'|'range', date, dateTo }
         this.entries = Array.isArray(config.entries)
@@ -348,6 +352,21 @@ export class CalendarNode extends BaseNode {
         eraseBtn.addEventListener('click', (e) => { e.stopPropagation(); this._setSelectionMode('erase'); });
         modeRow.appendChild(eraseBtn);
 
+        // Раунд 92 (чек-лист, п.3.1) - макрос "Отметить все выходные" -
+        // не режим выделения (не переключает this.selectionMode), а
+        // разовое действие: сразу проставляет субботы/воскресенья за
+        // текущий год ±1 (3 года подряд) - актуально после того, как
+        // Диаграмма Ганта перестала считать выходные автоматически
+        // (Раунд 92, п.2.2) - теперь это самый быстрый способ вернуть
+        // прежнее поведение через явный календарь.
+        const weekendsBtn = document.createElement('button');
+        weekendsBtn.className = 'calendar-mode-btn calendar-weekends-btn';
+        weekendsBtn.textContent = '📅';
+        weekendsBtn.title = 'Отметить все выходные (сб/вс) за текущий год ±1';
+        weekendsBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        weekendsBtn.addEventListener('click', (e) => { e.stopPropagation(); this._markAllWeekends(); });
+        modeRow.appendChild(weekendsBtn);
+
         content.appendChild(modeRow);
 
         const gridSlot = document.createElement('div');
@@ -386,6 +405,34 @@ export class CalendarNode extends BaseNode {
         el.querySelectorAll('.calendar-mode-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === mode);
         });
+    }
+
+    // Раунд 92 (чек-лист, п.3.1) - каждую субботу года добавляет ОДИН
+    // range-диапазон [суббота, следующее воскресенье] (компактнее, чем
+    // отдельная single-запись на каждый день - вдвое меньше записей в
+    // entries за тот же охват). 3 года подряд (текущий ±1) - тот же
+    // диапазон, что явно указан в задаче. Снимает даты с excludedDates
+    // (та же логика, что при обычной разметке 🔁) - если пользователь
+    // раньше стирал какие-то из этих дат ластиком, явный макрос должен
+    // их вернуть, а не молча пропустить.
+    _markAllWeekends() {
+        const thisYear = new Date().getFullYear();
+        [thisYear - 1, thisYear, thisYear + 1].forEach(year => {
+            const cursor = new Date(year, 0, 1);
+            while (cursor.getFullYear() === year) {
+                if (cursor.getDay() === 6) { // суббота
+                    const sat = formatISO(cursor);
+                    const sun = new Date(cursor.getTime());
+                    sun.setDate(sun.getDate() + 1);
+                    const sunISO = formatISO(sun);
+                    this.entries.push({ id: Helpers.generateId(), type: 'range', date: sat, dateTo: sunISO });
+                    this.excludedDates.delete(sat);
+                    this.excludedDates.delete(sunISO);
+                }
+                cursor.setDate(cursor.getDate() + 1);
+            }
+        });
+        this._recalcFromEntries();
     }
 
     _inputStatusText(socketIndex) {

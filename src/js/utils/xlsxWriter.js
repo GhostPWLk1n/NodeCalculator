@@ -6,7 +6,7 @@
  * @file    xlsxWriter.js
  * @brief   Запись .xlsx (ZIP + OOXML) без сторонних библиотек - только браузерные API
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -157,6 +157,105 @@ function buildZip(files) {
     return out;
 }
 
+// Раунд 110 (по запросу Mr.D: "обратный механизм - выгрузить
+// раскрашенную нашими цветами диаграмму") - минимальный styles.xml с
+// заливкой ячеек. Симметрично xlsxReader.js (parseStylesXml() там
+// ЧИТАЕТ fills/cellXfs) - здесь их ПИШЕМ. Принимает список HEX-цветов
+// Раунд 110/111 (по запросу Mr.D: "заливка" + "разлиновка") -
+// минимальный styles.xml с заливкой ячеек И тонкой границей по всем
+// сторонам. Симметрично xlsxReader.js (parseStylesXml() там ЧИТАЕТ
+// fills/cellXfs) - здесь их ПИШЕМ. Принимает МАССИВ УНИКАЛЬНЫХ КЛЮЧЕЙ
+// стиля {color, border} (color - HEX без "#" или null/без заливки,
+// border - bool) - индекс в массиве = индекс стиля (s="N") минус 1
+// (0 зарезервирован под "без заливки, без границы").
+function buildStylesXml(styleKeys) {
+    // Раунд 111 - тонкая граница по всем 4 сторонам ("разлиновка", по
+    // запросу Mr.D) - borderId=1 (borderId=0 - "без границы", ниже).
+    const borders = `<borders count="2">` +
+        `<border><left/><right/><top/><bottom/><diagonal/></border>` +
+        `<border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right>` +
+        `<top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>` +
+        `</borders>`;
+
+    // Уникальные цвета (без null) - каждому свой fillId, начиная с 2
+    // (0="none", 1="gray125" - зарезервированы стандартом OOXML).
+    const uniqueColors = [...new Set(styleKeys.map(k => k.color).filter(Boolean))];
+    const colorToFillId = new Map(uniqueColors.map((c, i) => [c, i + 2]));
+    const fills = uniqueColors.map(hex =>
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF${hex}"/><bgColor indexed="64"/></patternFill></fill>`
+    ).join('');
+
+    const cellXfs = styleKeys.map(({ color, border }) => {
+        const fillId = color ? colorToFillId.get(color) : 0;
+        const borderId = border ? 1 : 0;
+        const applyFill = color ? ' applyFill="1"' : '';
+        const applyBorder = border ? ' applyBorder="1"' : '';
+        return `<xf numFmtId="0" fontId="0" fillId="${fillId}" borderId="${borderId}" xfId="0"${applyFill}${applyBorder}/>`;
+    }).join('');
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="${uniqueColors.length + 2}">` +
+        `<fill><patternFill patternType="none"/></fill>` +
+        `<fill><patternFill patternType="gray125"/></fill>` +
+        fills +
+        `</fills>` +
+        borders +
+        `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+        `<cellXfs count="${styleKeys.length + 1}">` +
+        `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+        cellXfs +
+        `</cellXfs>` +
+        `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+        `</styleSheet>`;
+}
+
+// Раунд 111 - "ключ" стиля ячейки, по которому ищем/заводим индекс в
+// styleIndexByKey ("HEX|0" или "HEX|1" - цвет+граница, "|1" - только
+// граница без заливки). Единая функция - используется и при сборе
+// уникальных стилей, и при поиске индекса конкретной ячейки.
+function styleKeyFor(color, border) {
+    return `${color || ''}|${border ? 1 : 0}`;
+}
+
+// Раунд 110 - собирает XML листа из ПРОИЗВОЛЬНОЙ сетки (не только
+// TableData, как buildSheetXml() выше) - каждая ячейка либо голое
+// значение, либо {value, color, border} (color - HEX без "#" или
+// null, border - bool). Нужен для календарного экспорта Ганта
+// (ganttCalendarExport.js) - там сетка нерегулярная (заголовочные
+// строки года/месяца/недели + строки задач), TableData (строго
+// табличная форма) для этого не подходит.
+function buildGridSheetXml(grid, styleIndexByKey) {
+    let rows = '';
+    grid.forEach((row, ri) => {
+        const cells = row.map((cell, ci) => {
+            const isObj = cell !== null && typeof cell === 'object' && !(cell instanceof Date);
+            const value = isObj ? cell.value : cell;
+            const color = isObj ? cell.color : null;
+            const border = isObj ? !!cell.border : false;
+            const key = styleKeyFor(color, border);
+            const styleIdx = styleIndexByKey.get(key);
+            const sAttr = styleIdx ? ` s="${styleIdx}"` : '';
+            const ref = `${colLetter(ci)}${ri + 1}`;
+            if (value === null || value === undefined || value === '') {
+                if (!sAttr) return '';
+                return `<c r="${ref}"${sAttr}/>`;
+            }
+            if (typeof value === 'boolean') {
+                return `<c r="${ref}"${sAttr} t="b"><v>${value ? 1 : 0}</v></c>`;
+            }
+            if (typeof value === 'number' && isFinite(value)) {
+                return `<c r="${ref}"${sAttr}><v>${value}</v></c>`;
+            }
+            return `<c r="${ref}"${sAttr} t="inlineStr"><is><t>${escapeXml(String(value))}</t></is></c>`;
+        }).join('');
+        rows += `<row r="${ri + 1}">${cells}</row>`;
+    });
+
+    return rows;
+}
+
 // Собирает XML одного листа из TableData (см. dataTypes.js) - шапка
 // (имена столбцов) в строке 1, данные с строки 2. Числа/bool/текст -
 // разные типы ячеек OOXML (см. докстринг класса про отсутствие
@@ -225,6 +324,90 @@ export const XlsxWriter = {
             { name: 'xl/workbook.xml', bytes: textToBytes(workbookXml) },
             { name: 'xl/_rels/workbook.xml.rels', bytes: textToBytes(workbookRels) },
             { name: 'xl/worksheets/sheet1.xml', bytes: textToBytes(buildSheetXml(tableData)) }
+        ];
+
+        return buildZip(files);
+    },
+
+    // Раунд 110 (по запросу Mr.D: "обратный механизм - выгрузить
+    // раскрашенную нашими цветами диаграмму") - книга из ПРОИЗВОЛЬНОЙ
+    // сетки (grid - массив строк, каждая ячейка - голое значение или
+    // {value, color, border}, color - HEX без "#", border - bool) с
+    // поддержкой заливки/границ ячеек. Раунд 111 (по запросу Mr.D:
+    // ширина столбцов + объединение ячеек по месяцам/годам) - options:
+    //   colWidths - массив ширины КАЖДОГО столбца в Excel-"units"
+    //     (прямая конвертация 1:1 из пикселей - см. ganttCalendarExport.js)
+    //   merges - массив {r1,c1,r2,c2} (0-based, включительно) - диапазоны
+    //     объединяемых ячеек (год/месяц в шапке календаря).
+    buildFromGrid(grid, sheetName = 'Sheet1', options = {}) {
+        const { colWidths = [], merges = [] } = options;
+        const safeName = escapeXml((sheetName || 'Sheet1').slice(0, 31));
+
+        // Раунд 111 - уникальные КЛЮЧИ стиля (цвет+граница), не только
+        // голые цвета - см. styleKeyFor()/buildStylesXml().
+        const styleKeysSet = new Map(); // key -> {color, border}
+        grid.forEach(row => row.forEach(cell => {
+            const isObj = cell !== null && typeof cell === 'object' && !(cell instanceof Date);
+            const color = isObj && cell.color ? String(cell.color).replace('#', '').toUpperCase() : null;
+            const border = isObj && !!cell.border;
+            if (!color && !border) return; // дефолтный стиль (индекс 0) - заводить не нужно
+            const key = styleKeyFor(color, border);
+            if (!styleKeysSet.has(key)) styleKeysSet.set(key, { color, border });
+        }));
+        const styleKeys = [...styleKeysSet.values()];
+        const styleIndexByKey = new Map([...styleKeysSet.keys()].map((k, i) => [k, i + 1]));
+
+        const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+            `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+            `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+            `<Default Extension="xml" ContentType="application/xml"/>` +
+            `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+            `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+            `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+            `</Types>`;
+
+        const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+            `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+            `</Relationships>`;
+
+        const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+            `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
+            `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+            `<sheets><sheet name="${safeName}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+
+        const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+            `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
+            `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+            `</Relationships>`;
+
+        // Раунд 111 - <cols> ДОЛЖЕН идти ПЕРЕД <sheetData> (порядок
+        // элементов в <worksheet> строго фиксирован спецификацией OOXML).
+        const colsXml = colWidths.length
+            ? `<cols>` + colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + `</cols>`
+            : '';
+        // <mergeCells> идёт ПОСЛЕ <sheetData>.
+        const mergeCellsXml = merges.length
+            ? `<mergeCells count="${merges.length}">` + merges.map(m =>
+                `<mergeCell ref="${colLetter(m.c1)}${m.r1 + 1}:${colLetter(m.c2)}${m.r2 + 1}"/>`
+            ).join('') + `</mergeCells>`
+            : '';
+
+        const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+            `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+            colsXml +
+            `<sheetData>${buildGridSheetXml(grid, styleIndexByKey)}</sheetData>` +
+            mergeCellsXml +
+            `</worksheet>`;
+
+        const files = [
+            { name: '[Content_Types].xml', bytes: textToBytes(contentTypes) },
+            { name: '_rels/.rels', bytes: textToBytes(rootRels) },
+            { name: 'xl/workbook.xml', bytes: textToBytes(workbookXml) },
+            { name: 'xl/_rels/workbook.xml.rels', bytes: textToBytes(workbookRels) },
+            { name: 'xl/styles.xml', bytes: textToBytes(buildStylesXml(styleKeys)) },
+            { name: 'xl/worksheets/sheet1.xml', bytes: textToBytes(sheetXml) }
         ];
 
         return buildZip(files);

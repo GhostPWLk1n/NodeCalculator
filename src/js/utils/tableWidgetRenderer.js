@@ -6,11 +6,12 @@
  * @file    tableWidgetRenderer.js
  * @brief   Общий код виджета Доски "таблица" - используется всеми нодами, отдающими Data-таблицу
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { Helpers } from './helpers.js';
+import { attachColumnResizeHandle } from './columnResize.js';
 
 /**
  * TableWidgetRenderer - раньше интерактивная таблица на Доске (номера
@@ -98,8 +99,13 @@ export const TableWidgetRenderer = {
         // просто ИГНОРИРОВАЛАСЬ - таблица всегда была auto-layout, ширины
         // столбцов подбирал браузер сам. table-layout:fixed включаем,
         // только если хоть у одного столбца задана явная ширина - иначе
-        // (самый частый случай) поведение не меняется вообще.
-        const hasExplicitWidths = table.columns.some(col => col.width);
+        // (самый частый случай) поведение не меняется вообще. Раунд 93 -
+        // ручное растягивание (node.boardColumnWidths, по заголовку
+        // столбца - та же ширина ЭТОГО виджета Доски, не источника,
+        // сама Доска - отдельный "просмотрщик" со своими предпочтениями)
+        // тоже учитывается здесь.
+        if (!node.boardColumnWidths) node.boardColumnWidths = {};
+        const hasExplicitWidths = table.columns.some(col => col.width) || Object.keys(node.boardColumnWidths).length > 0;
         if (hasExplicitWidths) el.style.tableLayout = 'fixed';
 
         // === ШАПКА ===
@@ -133,9 +139,13 @@ export const TableWidgetRenderer = {
             if (isBoolColumn) th.style.textAlign = 'center';
             else if (col.format !== 'text') th.classList.add('align-right');
             if (col.color) th.style.color = col.color;
-            if (col.width) {
-                th.style.width = col.width + 'px';
-                th.style.maxWidth = col.width + 'px';
+            // Раунд 93 (чек-лист, п.4.1) - ручная ширина ЭТОГО виджета
+            // Доски в приоритете над col.width источника.
+            const manualWidth = node.boardColumnWidths[col.header];
+            const effectiveWidth = manualWidth || col.width || null;
+            if (effectiveWidth) {
+                th.style.width = effectiveWidth + 'px';
+                th.style.maxWidth = effectiveWidth + 'px';
             }
 
             const label = document.createElement('span');
@@ -147,6 +157,11 @@ export const TableWidgetRenderer = {
             sortIcon.className = 'board-widget-table-sort-icon' + (isSortActive ? ' active' : '');
             sortIcon.textContent = isSortActive ? (node.boardSortDirection === 'asc' ? '↑' : '↓') : '↕';
             th.appendChild(sortIcon);
+
+            attachColumnResizeHandle(th, effectiveWidth || 90, (finalWidth) => {
+                node.boardColumnWidths[col.header] = finalWidth;
+                window.boardManager?.renderActiveBoard();
+            });
 
             th.addEventListener('click', (e) => {
                 e.stopPropagation();

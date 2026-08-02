@@ -6,7 +6,7 @@
  * @file    tableNode.js
  * @brief   Обработчик: собирает LIST-входы в столбцы таблицы (выход типа Data)
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -123,6 +123,8 @@ export class TableNode extends BaseNode {
         // тот же принцип, просто отдельный набор специально для
         // getDashboardWidget(), т.к. это разные потребители одной tableData.
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null; // 'asc' | 'desc' | null
         // Зебра/линии/цвет столбца - НЕ здесь (Раунд 44). В Раунде 43 их

@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -59,7 +59,11 @@ export class XlsxImportNode extends BaseNode {
         this.inputs = 0;
         this.inputSockets = [];
         this.outputs = 1;
-        this.width = config.width || 240;
+        // Раунд 106 (чек-лист, раздел 2) - минимальная ширина 224px -
+        // содержимое (кнопка выбора файла + имя файла + сокет) не
+        // помещалось разборчиво при более узкой ноде.
+        this.width = Math.max(config.width || 240, 224);
+        this.minWidth = 224; // Раунд 106 - применяется и при ручном растягивании через UI
 
         this.fileName = config.fileName || null;
         this.selectedSheet = config.selectedSheet || null;
@@ -79,6 +83,14 @@ export class XlsxImportNode extends BaseNode {
         // сохранение/загрузку проекта (см. докстринг класса)
         this.importedHeaders = Array.isArray(config.importedHeaders) ? config.importedHeaders : [];
         this.importedRows = Array.isArray(config.importedRows) ? config.importedRows : [];
+        // Раунд 96 - цвет заливки каждой импортированной ячейки,
+        // ВЫРОВНЕННЫЙ по this.importedRows (та же форма - массив строк,
+        // каждая строка - массив по тем же столбцам colsToKeep). НЕ
+        // сериализуется (в отличие от importedRows) - раздуло бы .ncp-файл
+        // на порядок для больших листов, а актуальность всё равно
+        // пересчитывается заново при каждом импорте кнопкой
+        // "Импортировать выбранное" (Раунд 85).
+        this.cellColors = [];
 
         // Транзитное состояние текущей сессии - НЕ сериализуется
         this._outline = null;
@@ -232,12 +244,16 @@ export class XlsxImportNode extends BaseNode {
         if (statusEl) statusEl.textContent = '⏳ Импорт данных из Excel...';
 
         try {
-            const allRows = await XlsxReader.readSheet(this._arrayBuffer, this._outline, sheet.path);
+            // Раунд 96 - readSheet() теперь возвращает {values, colors},
+            // не голый rows-массив, как раньше - colors нужны "Обработке
+            // таблиц Ганта" для разбора цветового кодирования дат.
+            const { values: allRows, colors: allColors } = await XlsxReader.readSheet(this._arrayBuffer, this._outline, sheet.path);
             // this.headerRow - 1-based номер строки заголовков (Раунд 44,
             // по умолчанию 1 - первая строка, как было раньше); данные
             // начинаются СРАЗУ ПОСЛЕ неё - 0-based индекс первой строки
             // данных численно равен 1-based номеру строки заголовков
             const dataRows = allRows.slice(this.headerRow);
+            const dataColors = allColors.slice(this.headerRow);
             
             // Определяем, какие столбцы будем показывать
             let colsToKeep = this.selectedColumns.length
@@ -250,9 +266,17 @@ export class XlsxImportNode extends BaseNode {
             }
 
             this.importedHeaders = colsToKeep.map(i => sheet.headers[i] || `Столбец ${i + 1}`);
+            // Та же фильтрация (по values), применённая параллельно и к
+            // цветам - importedRows[i]/cellColors[i] должны соответствовать
+            // ОДНОЙ и той же исходной строке листа, иначе цвет "уехал" бы
+            // не на ту задачу при разборе в GanttTableProcessorNode.
+            const keepMask = dataRows.map(row => row.length > 0);
             this.importedRows = dataRows
-                .filter(row => row.length > 0)
+                .filter((_, i) => keepMask[i])
                 .map(row => colsToKeep.map(i => (row[i] === undefined ? null : row[i])));
+            this.cellColors = dataColors
+                .filter((_, i) => keepMask[i])
+                .map(row => colsToKeep.map(i => (row?.[i] ?? null)));
 
             this.tableData = this._buildTableData();
             this.value = this.importedRows.length;

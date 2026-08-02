@@ -6,7 +6,7 @@
  * @file    tableJoinNode.js
  * @brief   Обработчик: слияние двух таблиц по ключевым столбцам с агрегацией по столбцу
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -79,6 +79,8 @@ export class TableJoinNode extends BaseNode {
         // Виджет Доски (см. utils/tableWidgetRenderer.js) - только номера
         // строк/сортировка, оформление - через TableFormatNode (Раунд 44)
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
     }

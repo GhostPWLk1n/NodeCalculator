@@ -6,7 +6,7 @@
  * @file    jsonImportNode.js
  * @brief   Импорт .json - разбирает произвольный JSON в Data + иерархию веток (см. TreeViewerNode)
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -65,7 +65,9 @@ export class JsonImportNode extends BaseNode {
         this.outputs = 1;
         this.inputs = 0;
         this.inputSockets = [];
-        this.width = config.width || 220;
+        // Раунд 106 (чек-лист, раздел 2) - минимальная ширина 224px.
+        this.width = Math.max(config.width || 220, 224);
+        this.minWidth = 224; // Раунд 106 - применяется и при ручном растягивании через UI
 
         this.fileName = config.fileName || null;
         // Сырой текст файла - сериализуется целиком (тот же принцип, что
@@ -78,6 +80,8 @@ export class JsonImportNode extends BaseNode {
         this.branches = []; // см. докстринг класса - публичное поле для TreeViewerNode
 
         this.boardShowRowNumbers = config.boardShowRowNumbers ?? true;
+        // Раунд 93 (чек-лист, п.4.1) - ручная ширина столбцов на Доске
+        this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
     }

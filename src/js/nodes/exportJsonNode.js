@@ -6,7 +6,7 @@
  * @file    exportJsonNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .json по кнопке
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -28,7 +28,9 @@ export class ExportJsonNode extends BaseNode {
         this.inputs = 1;
         this.inputSockets = [0];
         this.outputs = 0;
-        this.width = config.width || 220;
+        // Раунд 106 (чек-лист, раздел 2) - минимальная ширина 224px.
+        this.width = Math.max(config.width || 220, 224);
+        this.minWidth = 224; // Раунд 106 - применяется и при ручном растягивании через UI
 
         this.tableData = null;
         this._sourceName = null;

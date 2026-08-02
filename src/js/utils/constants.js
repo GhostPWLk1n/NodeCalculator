@@ -6,7 +6,7 @@
  * @file    constants.js
  * @brief   Имена типов нод, цвета, форматы значений, дефолтные конфиги
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -17,7 +17,7 @@ export const Constants = {
     // "sidebarVersion">, а текст в него пишет main.js при старте (см.
     // инициализацию там) - обновлять нужно только это значение, одно
     // место на весь проект.
-    APP_VERSION: '1.7.24',
+    APP_VERSION: '1.7.45',
 
     NODE_TYPES: {
         NUMBER: 'number',

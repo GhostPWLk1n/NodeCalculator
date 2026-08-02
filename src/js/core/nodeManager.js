@@ -6,7 +6,7 @@
  * @file    nodeManager.js
  * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -87,8 +87,11 @@ export class NodeManager {
         const zoom = window.getZoomLevel ? window.getZoomLevel() : 1;
         const deltaX = (e.clientX - this.resizeStartX) / zoom;
         
-        // Минимальная ширина 200px
-        const newWidth = Math.max(200, this.resizeStartWidth + deltaX);
+        // Минимальная ширина - индивидуальная для типа ноды
+        // (this.minWidth, Раунд 106, чек-лист раздел 2), иначе общий
+        // дефолт 200px.
+        const minWidth = this.resizingNode.minWidth || 200;
+        const newWidth = Math.max(minWidth, this.resizeStartWidth + deltaX);
         
         el.style.width = newWidth + 'px';
         

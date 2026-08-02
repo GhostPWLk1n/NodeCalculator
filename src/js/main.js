@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.7.24
+ * @version 1.7.45
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -20,6 +20,7 @@ import { Renderer } from './core/renderer.js';
 import { LayoutManager } from './core/layoutManager.js';
 import { BoardManager } from './core/boardManager.js';
 import { InspectorManager } from './core/inspectorManager.js';
+import { SidebarSettings } from './utils/sidebarSettings.js';
 import { NumberNode } from './nodes/numberNode.js';
 import { BooleanNode } from './nodes/booleanNode.js';
 import { BooleanOperationNode } from './nodes/booleanOperationNode.js';
@@ -103,6 +104,13 @@ themeSwitchEl?.addEventListener('click', () => {
 if (themeSwitchEl) {
     themeSwitchEl.setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'light'));
 }
+
+// Раунд 102 (чек-лист 1.7.21, раздел 5) - настройки сайдбара (показ/
+// скрытие нод по конфигурации) - инициализируется СРАЗУ, до
+// nodeManager/остального - список нод в самом сайдбаре уже присутствует
+// в разметке index.html на этот момент (SidebarSettings сканирует его
+// напрямую из DOM, см. её докстринг), ждать остального не нужно.
+SidebarSettings.init();
 
 const nodeManager = new NodeManager();
 const connectionManager = new ConnectionManager();
