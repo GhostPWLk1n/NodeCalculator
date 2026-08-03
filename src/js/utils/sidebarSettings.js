@@ -6,7 +6,7 @@
  * @file    sidebarSettings.js
  * @brief   Настройки сайдбара - показ/скрытие нод, конфигурации, экспорт/импорт
  * @author  Pavel Fomin
- * @version 1.7.50
+ * @version 1.8.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -151,6 +151,56 @@ export const SidebarSettings = {
             const cfg = resolveConfig(this._state, this._state.activeConfig);
             applyConfig(cfg.enabledTypes);
             this._renderPanel();
+        });
+
+        // Раунд 123 (релиз 1.8.0, "стартап-конфиги") - переключение
+        // вкладок "Сайдбар"/"Запуск" - просто показывает/скрывает два
+        // уже готовых блока разметки, ничего не пересоздаёт.
+        const tabBtns = [document.getElementById('settingsTabBtnSidebar'), document.getElementById('settingsTabBtnStartup')];
+        const tabPanels = {
+            sidebar: document.getElementById('settingsTabSidebar'),
+            startup: document.getElementById('settingsTabStartup')
+        };
+        tabBtns.forEach(tabBtn => {
+            tabBtn.addEventListener('click', () => {
+                tabBtns.forEach(b => b.classList.remove('active'));
+                tabBtn.classList.add('active');
+                Object.entries(tabPanels).forEach(([key, panel]) => {
+                    panel.style.display = key === tabBtn.dataset.tab ? '' : 'none';
+                });
+            });
+        });
+
+        // Раунд 123 - "Сохранить текущее как стартовое" - собирает ТЕ ЖЕ
+        // данные, что уходят при обычном "Сохранить проект" (см. main.js,
+        // onGetProjectData() - layoutManager.serialize() +
+        // boardManager.serialize()), но пишет их НАПРЯМУЮ (invoke с
+        // данными как аргументом) - без диалога "Сохранить как" и без
+        // события-round-trip get-project-data/project-data (та
+        // асинхронная пара нужна ТОЛЬКО потому, что main-процесс сам не
+        // может дотянуться до состояния рендерера - здесь мы уже В
+        // рендерере, собираем данные сразу на месте).
+        document.getElementById('settingsSaveStartupBtn')?.addEventListener('click', async () => {
+            if (!window.electron?.saveDefaultWorkspace) return;
+            const layoutData = window.layoutManager?.serialize() || { layouts: [] };
+            const boardData = window.boardManager?.serialize() || { boards: [] };
+            const result = await window.electron.saveDefaultWorkspace({ ...layoutData, ...boardData });
+            const hint = document.getElementById('settingsStartupHint');
+            if (hint) {
+                hint.textContent = result?.success
+                    ? '✅ Сохранено - откроется автоматически при следующем запуске'
+                    : `❌ Не удалось сохранить: ${result?.error || 'неизвестная ошибка'}`;
+            }
+        });
+
+        document.getElementById('settingsClearStartupBtn')?.addEventListener('click', async () => {
+            if (!window.electron?.clearDefaultWorkspace) return;
+            if (!confirm('Сбросить стартовое рабочее пространство? При следующем запуске откроется пример по умолчанию.')) return;
+            const result = await window.electron.clearDefaultWorkspace();
+            const hint = document.getElementById('settingsStartupHint');
+            if (hint) {
+                hint.textContent = result?.success ? '🗑️ Стартовое рабочее пространство сброшено' : `❌ Ошибка: ${result?.error || ''}`;
+            }
         });
     },
 

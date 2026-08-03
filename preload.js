@@ -6,7 +6,7 @@
  * @file    preload.js
  * @brief   Electron preload-скрипт: безопасный мост IPC между main-процессом и рендерером (contextBridge)
  * @author  Pavel Fomin
- * @version 1.7.50
+ * @version 1.8.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -41,5 +41,22 @@ contextBridge.exposeInMainWorld('electron', {
     exportFile: (payload) => ipcRenderer.invoke('export-file', payload),
 
     // === Экспорт активной Доски в PDF (1.7.0) ===
-    exportBoardPdf: () => ipcRenderer.send('request-export-board-pdf')
+    exportBoardPdf: () => ipcRenderer.send('request-export-board-pdf'),
+
+    // === Раунд 123 (релиз 1.8.0, "стартап-конфиги") - дефолтное
+    // рабочее пространство, открывающееся автоматически при запуске
+    // приложения, вместо отладочных трёх нод-примера. ХРАНИТСЯ ПОКА В
+    // ПАПКЕ ПРОГРАММЫ (main.js, __dirname) - явное решение Mr.D:
+    // "файл с настройками должен храниться в пользовательской
+    // директории, чтобы переустановка не сбила настройки - оставим на
+    // будущее, пока реализуем в папке с программой". saveDefaultWorkspace
+    // не открывает диалог "Сохранить как" (в отличие от saveProject) -
+    // всегда один и тот же путь, тихая перезапись.
+    saveDefaultWorkspace: (data) => ipcRenderer.invoke('save-default-workspace', data),
+    // main сам присылает сохранённое пространство при старте, если оно
+    // есть (см. main.js, createWindow()) - события те же, что и у
+    // обычной загрузки проекта (onLoadProject), рендерер не должен
+    // знать разницу.
+    hasDefaultWorkspace: () => ipcRenderer.invoke('has-default-workspace'),
+    clearDefaultWorkspace: () => ipcRenderer.invoke('clear-default-workspace')
 });

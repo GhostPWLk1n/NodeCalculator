@@ -6,7 +6,7 @@
  * @file    jsonImportNode.js
  * @brief   Импорт .json - разбирает произвольный JSON в Data + иерархию веток (см. TreeViewerNode)
  * @author  Pavel Fomin
- * @version 1.7.50
+ * @version 1.8.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Electron main-процесс: создание окна, меню, IPC-обработчики сохранения/загрузки .ncp и экспорта изображения
  * @author  Pavel Fomin
- * @version 1.7.50
+ * @version 1.8.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -15,6 +15,13 @@ const path = require('path');
 const fs = require('fs');
 
 let mainWindow;
+
+// Раунд 123 (релиз 1.8.0, "стартап-конфиги") - файл дефолтного рабочего
+// пространства. ХРАНИТСЯ ПОКА В ПАПКЕ ПРОГРАММЫ (__dirname), не в
+// пользовательской директории (app.getPath('userData')) - явное
+// временное решение Mr.D, см. докстринг saveDefaultWorkspace в
+// preload.js про то, почему это откладывается на будущее.
+const DEFAULT_WORKSPACE_PATH = path.join(__dirname, 'default-workspace.ncp');
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -33,6 +40,23 @@ function createWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
+
+    // Раунд 123 - если сохранено дефолтное рабочее пространство,
+    // загружаем его АВТОМАТИЧЕСКИ при старте - тем же событием
+    // 'load-project', что и обычная ручная загрузка (рендерер не
+    // должен знать разницу, см. preload.js). did-finish-load (не
+    // ready-to-show) - нужно, чтобы к этому моменту скрипты рендерера
+    // (main.js, регистрирующий onLoadProject) уже успели выполниться.
+    mainWindow.webContents.once('did-finish-load', () => {
+        if (fs.existsSync(DEFAULT_WORKSPACE_PATH)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(DEFAULT_WORKSPACE_PATH, 'utf8'));
+                mainWindow.webContents.send('load-project', data);
+            } catch (error) {
+                console.error('Не удалось загрузить дефолтное рабочее пространство:', error.message);
+            }
+        }
+    });
 
     // Показываем окно после загрузки
     mainWindow.once('ready-to-show', () => {
@@ -281,6 +305,33 @@ ipcMain.on('request-export-board-pdf', async () => {
         mainWindow.webContents.send('status-update', '📄 Доска экспортирована в PDF');
     } catch (error) {
         dialog.showErrorBox('Ошибка экспорта PDF', error.message);
+    }
+});
+
+// Раунд 123 (релиз 1.8.0, "стартап-конфиги") - дефолтное рабочее
+// пространство: тихое сохранение (без диалога "Сохранить как" - всегда
+// один и тот же путь, DEFAULT_WORKSPACE_PATH), проверка наличия и
+// удаление (сброс к отладочному примеру/пустому листу).
+ipcMain.handle('save-default-workspace', (event, data) => {
+    try {
+        fs.writeFileSync(DEFAULT_WORKSPACE_PATH, JSON.stringify(data, null, 2));
+        mainWindow.webContents.send('status-update', '⭐ Сохранено как стартовое рабочее пространство');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('has-default-workspace', () => {
+    return fs.existsSync(DEFAULT_WORKSPACE_PATH);
+});
+
+ipcMain.handle('clear-default-workspace', () => {
+    try {
+        if (fs.existsSync(DEFAULT_WORKSPACE_PATH)) fs.unlinkSync(DEFAULT_WORKSPACE_PATH);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
 });
 

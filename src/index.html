@@ -27,7 +27,7 @@
     <div id="sidebar">
         <div class="sidebar-header">
             <h2>
-                <button class="sidebar-settings-btn" id="sidebarSettingsBtn" type="button" title="Настройки сайдбара" aria-label="Настройки сайдбара">⚙️</button>
+                <button class="sidebar-settings-btn" id="sidebarSettingsBtn" type="button" title="Настройки" aria-label="Настройки">⚙️</button>
                 Ноды
             </h2>
             <div class="sidebar-header-right">
@@ -440,17 +440,26 @@
         <div class="inspector-body" id="inspectorBody"></div>
     </div>
 
-    <!-- Раунд 102 (чек-лист 1.7.21, раздел 5) - модальное окно настроек
-         сайдбара: список всех нод с флажками показать/скрыть, готовые и
-         пользовательские конфигурации, экспорт/импорт JSON -->
+    <!-- Раунд 102 (чек-лист 1.7.21, раздел 5) - модальное окно настроек -
+         список всех нод с флажками показать/скрыть, готовые и
+         пользовательские конфигурации, экспорт/импорт JSON.
+         Раунд 123 (релиз 1.8.0, "стартап-конфиги", по запросу Mr.D:
+         "превратить в полноценные настройки, где будет раздел настройки
+         сайдбара") - добавлены вкладки: то, что раньше было ЕДИНСТВЕННЫМ
+         содержимым модалки, стало вкладкой "Сайдбар", рядом - новая
+         вкладка "Запуск" (дефолтное рабочее пространство). -->
     <div class="sidebar-settings-modal" id="sidebarSettingsModal" style="display:none;">
         <div class="sidebar-settings-backdrop" id="sidebarSettingsBackdrop"></div>
         <div class="sidebar-settings-panel">
             <div class="sidebar-settings-panel-header">
-                <h3>⚙️ Настройки сайдбара</h3>
+                <h3>⚙️ Настройки</h3>
                 <span class="inspector-close" id="sidebarSettingsClose" title="Закрыть">✕</span>
             </div>
-            <div class="sidebar-settings-panel-body">
+            <div class="settings-tabs-row">
+                <button class="settings-tab-btn active" id="settingsTabBtnSidebar" data-tab="sidebar">🧩 Сайдбар</button>
+                <button class="settings-tab-btn" id="settingsTabBtnStartup" data-tab="startup">🚀 Запуск</button>
+            </div>
+            <div class="sidebar-settings-panel-body" id="settingsTabSidebar">
                 <div class="sidebar-settings-row">
                     <select id="sidebarSettingsConfigSelect" class="sidebar-settings-select"></select>
                     <button id="sidebarSettingsNewConfigBtn" class="sidebar-settings-btn-small" title="Создать новую конфигурацию на основе текущей">+ Своя</button>
@@ -463,6 +472,27 @@
                 </div>
                 <div class="sidebar-settings-hint" id="sidebarSettingsHint"></div>
                 <div class="sidebar-settings-node-list" id="sidebarSettingsNodeList"></div>
+            </div>
+            <div class="sidebar-settings-panel-body" id="settingsTabStartup" style="display:none;">
+                <p class="settings-startup-description">
+                    Сохраните текущее рабочее пространство (все листы,
+                    ноды и связи) как стартовое - оно будет открываться
+                    автоматически при каждом запуске приложения вместо
+                    примера по умолчанию.
+                </p>
+                <div class="sidebar-settings-row">
+                    <button id="settingsSaveStartupBtn" class="sidebar-settings-btn-small">⭐ Сохранить текущее как стартовое</button>
+                </div>
+                <div class="sidebar-settings-row">
+                    <button id="settingsClearStartupBtn" class="sidebar-settings-btn-small">🗑️ Сбросить стартовое рабочее пространство</button>
+                </div>
+                <div class="sidebar-settings-hint" id="settingsStartupHint"></div>
+                <p class="settings-startup-note">
+                    Пока хранится в папке программы - при переустановке
+                    приложения потребуется сохранить заново. Перенос в
+                    пользовательский профиль (переживёт переустановку) -
+                    в планах.
+                </p>
             </div>
         </div>
     </div>

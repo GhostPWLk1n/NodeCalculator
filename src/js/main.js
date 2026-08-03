@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.7.50
+ * @version 1.8.4
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -234,6 +234,129 @@ window.toContainerCoords = (clientX, clientY) => {
 };
 
 applyZoom();
+
+// Раунд 119 (релиз 1.8.0, по запросу Mr.D: "если я хочу открыть Excel
+// файл в калькуляторе, то я могу его просто перетащить в рабочее
+// пространство листа и на этом месте появится нода импорта") - drag&drop
+// файлов ИЗВНЕ (проводник/рабочий стол ОС) прямо на холст. Слушаем на
+// #nodesContainer (тот же элемент, что toContainerCoords() выше
+// переводит координаты курсора относительно него) - события всплывают
+// с любой точки внутри рабочей области, включая пустое место "за"
+// нодами.
+//
+// Технически - НЕ через нативный <input type="file"> (тот требует
+// клика пользователя, программно не открывается) - вместо этого
+// напрямую вызываем ТЕ ЖЕ внутренние методы, что уже вызывает сам
+// input.addEventListener('change', ...) внутри xlsxImportNode.js/
+// jsonImportNode.js (_onFilePicked(file) принимает обычный File -
+// результат браузерного File API, который e.dataTransfer.files даёт
+// точно в такой же форме) - никакого дублирования логики импорта.
+const DROP_NODE_TYPE_BY_EXT = {
+    xlsx: 'xlsxImport',
+    json: 'jsonImport'
+};
+
+document.getElementById('nodesContainer')?.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    document.getElementById('workspace')?.classList.add('drag-file-over');
+});
+
+document.getElementById('nodesContainer')?.addEventListener('dragleave', (e) => {
+    // dragleave срабатывает и при переходе между дочерними элементами
+    // внутри холста (не только при полном уходе курсора) - проверяем
+    // relatedTarget, чтобы не мигать рамкой при каждом мелком движении
+    // мыши над нодами.
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+    document.getElementById('workspace')?.classList.remove('drag-file-over');
+});
+
+document.getElementById('nodesContainer')?.addEventListener('drop', async (e) => {
+    document.getElementById('workspace')?.classList.remove('drag-file-over');
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const dropPoint = window.toContainerCoords(e.clientX, e.clientY);
+    let offsetIndex = 0;
+
+    for (const file of files) {
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const nodeType = DROP_NODE_TYPE_BY_EXT[ext];
+        if (!nodeType) {
+            console.warn(`Drag&drop: неподдерживаемое расширение "${ext}" (${file.name}) - пропущено`);
+            continue;
+        }
+
+        // Раунд 120 (по уточнению Mr.D после проверки: "если у нас уже
+        // есть нода Импорт Excel и мы перетаскиваем файл в её поле, то
+        // мы не создаём новую ноду, а заменяем ссылку в существующей") -
+        // если курсор в момент сброса физически НАД существующей нодой
+        // ПОДХОДЯЩЕГО типа (тот же nodeType, что определён по
+        // расширению файла) - переиспользуем ЕЁ, не создаём новую.
+        // e.target - реальный DOM-элемент под курсором (нативный HTML5
+        // Drag&Drop API даёт его точно так же, как у обычного click) -
+        // .closest('.node') поднимается до корневого div ноды, откуда
+        // data-node-id ведёт к самому экземпляру через nodeManager.
+        let node = null;
+        const targetNodeEl = e.target.closest?.('.node');
+        if (targetNodeEl) {
+            const targetId = parseInt(targetNodeEl.dataset.nodeId, 10);
+            const existingNode = window.nodeManager?.getNode(targetId);
+            if (existingNode && existingNode.type === nodeType) {
+                node = existingNode;
+            }
+        }
+
+        if (!node) {
+            // Несколько файлов сразу - раскладываем по вертикали, чтобы
+            // ноды не легли друг на друга в одной точке.
+            const x = dropPoint.x;
+            const y = dropPoint.y + offsetIndex * 140;
+            offsetIndex++;
+            node = window.addNode(nodeType, x, y);
+        }
+        if (!node) continue;
+
+        try {
+            await node._onFilePicked(file);
+            // У Excel импорт - двухшаговый (сначала "поверхностное"
+            // сканирование листов внутри _onFilePicked(), затем сам
+            // разбор строк) - у JSON он уже полный внутри _onFilePicked()
+            // (calculateAll() ниже подхватит this.jsonText сама). Второй
+            // шаг вызываем ТОЛЬКО если он есть у этого типа ноды - не
+            // размазывать xlsx-специфичную логику по main.js.
+            if (typeof node._importSelected === 'function') {
+                await node._importSelected();
+            }
+        } catch (err) {
+            console.error(`Drag&drop: ошибка импорта "${file.name}":`, err);
+        }
+    }
+
+    if (window.nodeManager) window.nodeManager.calculateAll();
+    // Раунд 122 (по дампу DOM от Mr.D - реальная причина найдена, не
+    // тайминг браузера, как предполагалось в Раунде 121) -
+    // drawAllConnections(connections) требует АРГУМЕНТОМ список
+    // соединений (см. её начало в renderer.js - сама она НИЧЕГО не
+    // читает из connectionManager) - я вызывал её БЕЗ аргумента. Функция
+    // СНАЧАЛА чистит SVG (удаляет все path/градиенты - "разлиновка
+    // начисто"), а дальше просто нечего было рисовать - отсюда
+    // абсолютно пустой <defs></defs> в дампе, при том что
+    // connectionManager реально хранил соединения (статус-бар их
+    // считал верно). Раунд 121 (requestAnimationFrame) лечил не ту
+    // причину - оставлен как есть (не мешает), но реальный фикс - ниже,
+    // передача connections явным аргументом, как и во ВСЕХ остальных
+    // местах проекта.
+    requestAnimationFrame(() => {
+        if (window.renderer) {
+            window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+            window.renderer.updateAllDisplays();
+        }
+    });
+});
 
 // Ctrl + колесо мыши - зум рабочей области (как в Blender/Figma)
 document.getElementById('workspace')?.addEventListener('wheel', (e) => {
