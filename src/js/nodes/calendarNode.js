@@ -6,7 +6,7 @@
  * @file    calendarNode.js
  * @brief   Визуальный календарь (сетка месяца) для ручной разметки праздников/дней - источник для сокета "Праздники" у GanttNode
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -15,6 +15,7 @@ import { Helpers } from '../utils/helpers.js';
 import { ListData, TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { HolidayParser } from '../utils/holidayParser.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 const MAX_DATES = 3660; // ~10 лет суммарно - защита от случайно введённого гигантского диапазона
 const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; // с понедельника
@@ -133,6 +134,9 @@ export class CalendarNode extends BaseNode {
 
         this._drag = null; // { startISO, mode: 'mark'|'unmark' } - во время протяжки мышью
 
+        // Раунд 126 (релиз 1.8.0, механика Досок) - см. utils/boardPublish.js.
+        initBoardPublishFields(this, config);
+
         this._recalcDates();
     }
 
@@ -235,7 +239,40 @@ export class CalendarNode extends BaseNode {
             this.clearBadge('calendar-truncated');
         }
 
+        syncNodeToBoards(this);
         return this.value;
+    }
+
+    // Раунд 126 (релиз 1.8.0, механика Досок, по запросу Mr.D:
+    // "добавим виджет Календаря") - компактная сводка (не полная
+    // интерактивная сетка с навигацией по месяцам - та рассчитана на
+    // рабочее пространство графа, для Доски это избыточно) - количество
+    // дат + список первых нескольких, отсортированных по возрастанию.
+    getDashboardWidget() {
+        return {
+            type: 'calendar',
+            title: this.customName || null,
+            render: (container) => {
+                const summary = document.createElement('div');
+                summary.className = 'board-widget-calendar-summary';
+                summary.textContent = `${this.holidayDates.length} дат`;
+                container.appendChild(summary);
+
+                if (this.holidayDates.length > 0) {
+                    const list = document.createElement('div');
+                    list.className = 'board-widget-calendar-list';
+                    const preview = this.holidayDates.slice(0, 12);
+                    list.textContent = preview.join(', ') + (this.holidayDates.length > preview.length ? '…' : '');
+                    container.appendChild(list);
+                }
+            }
+        };
+    }
+
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+        fields.push(...buildBoardInspectorFields(this));
+        return fields;
     }
 
     isSocketConnected(index) {

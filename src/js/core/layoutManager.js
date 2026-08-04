@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -127,8 +127,10 @@ export class LayoutManager {
         // boardManager.showBoardView(), см. boardManager.js)
         const workspace = document.getElementById('workspace');
         const boardCanvas = document.getElementById('boardCanvasWrap');
+        const boardToolbar = document.getElementById('boardToolbar');
         if (workspace) workspace.style.display = '';
         if (boardCanvas) boardCanvas.style.display = 'none';
+        if (boardToolbar) boardToolbar.style.display = 'none';
 
         // Этот вид (граф нод) теперь на экране - снимаем флаг с Досок,
         // иначе оба стека вкладок будут одновременно считать себя
@@ -254,6 +256,16 @@ export class LayoutManager {
                     // необязателен, выставляется явно только теми нодами,
                     // которым это важно
                     valueFormat: n.valueFormat,
+                    // Раунд 124 (релиз 1.8.0, "переключатель Доска" в
+                    // инспекторе) - универсально по НАЛИЧИЮ поля (см.
+                    // initBoardPublishFields() в utils/boardPublish.js),
+                    // не по конкретному типу ноды - любая будущая нода,
+                    // подключившая эту механику, сохранится сама, без
+                    // правки этого файла.
+                    showOnBoard: n.showOnBoard !== undefined ? n.showOnBoard : undefined,
+                    boardIds: n.boardIds?.length ? [...n.boardIds] : undefined,
+                    widgetStyle: n.widgetStyle && Object.keys(n.widgetStyle).length ? { ...n.widgetStyle } : undefined,
+                    widgetLayout: n.widgetLayout ? { ...n.widgetLayout } : undefined,
                     // Акцентный цвет ноды (боковая панель, InspectorManager) -
                     // необязателен, null = цвет темы по умолчанию
                     color: n.color,
@@ -297,9 +309,6 @@ export class LayoutManager {
                     wrapHeight: (n.type === 'tableViewer' || n.type === 'gantt') ? n.wrapHeight : undefined,
                     // DashboardNode: привязка к Доске
                     targetBoardId: n.type === 'dashboard' ? n.targetBoardId : undefined,
-                    dashboardOrder: n.type === 'dashboard' ? n.dashboardOrder : undefined,
-                    widgetStyle: n.type === 'dashboard' ? { ...n.widgetStyle } : undefined,
-                    widgetLayout: n.type === 'dashboard' ? { ...n.widgetLayout } : undefined,
                     overridden: n.type === 'dashboard' ? n.overridden : undefined,
                     overrideValue: n.type === 'dashboard' ? n.overrideValue : undefined,
                     locked: n.type === 'dashboard' ? n.locked : undefined,
@@ -373,6 +382,12 @@ export class LayoutManager {
                     // принцип, что у ImageNode.dataUrl выше - см. докстринг
                     // jsonImportNode.js, fileName - общий ключ выше)
                     jsonText: n.type === 'jsonImport' ? n.jsonText : undefined,
+                    // Раунд 127 (новый узел "Текст")
+                    displayMode: n.type === 'text' ? n.displayMode : undefined,
+                    transformTrim: n.type === 'text' ? n.transformTrim : undefined,
+                    transformCase: n.type === 'text' ? n.transformCase : undefined,
+                    transformReplaceSpecial: n.type === 'text' ? n.transformReplaceSpecial : undefined,
+                    fallbackValue: n.type === 'text' ? n.fallbackValue : undefined,
 
                     // TableInjectNode: операция вставки + номер строки
                     operation: ['tableInject', 'tableRemove', 'booleanOp'].includes(n.type) ? n.operation : undefined,

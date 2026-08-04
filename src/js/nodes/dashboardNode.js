@@ -6,7 +6,7 @@
  * @file    dashboardNode.js
  * @brief   Нода-мост: подключает источник данных к виджету на конкретной Доске
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -71,8 +71,11 @@ export class DashboardNode extends BaseNode {
         this.width = config.width || 220;
 
         this.targetBoardId = config.targetBoardId ?? null;
-        // null = автопорядок (следующий свободный номер на доске)
-        this.dashboardOrder = config.dashboardOrder ?? null;
+        // Раунд 124 (по решению Mr.D: "уйдём от ручного ввода порядка
+        // виджетов, это был костыль для тестов") - dashboardOrder
+        // убран - порядок теперь принадлежит самой Доске (board.order,
+        // см. boardManager.js), меняется перетаскиванием виджета прямо
+        // на Доске.
 
         // Оформление виджета НА ДОСКЕ (не путать с this.color - тем
         // акцентным цветом самой ноды в графе, из BaseNode). Читается/
@@ -295,7 +298,6 @@ export class DashboardNode extends BaseNode {
                 const widget = src.getDashboardWidget(ctx);
                 this._widgetType = widget.type;
                 window.boardManager.registerWidget(this.targetBoardId, this.id, {
-                    order: this.dashboardOrder,
                     type: widget.type,
                     title: widget.title,
                     render: widget.render,
@@ -327,6 +329,18 @@ export class DashboardNode extends BaseNode {
     // Боковая панель: какая Доска получает виджет + порядок на странице.
     // Список досок читается из window.boardManager - тот же паттерн, что
     // у layoutInputNode.js со списком Листов.
+    // Раунд 124 (релиз 1.8.0, по решению Mr.D: "механика с нодой
+    // Дашборд плохо приживается, м не будем её пока удалять. Оставим,
+    // но упростим") - каждая нода, которая может представить себя на
+    // Доске, теперь получает переключатель "Доска" прямо в СВОЁМ
+    // инспекторе (см. utils/boardPublish.js) - отдельная
+    // нода-посредник для этого больше не нужна. Нода НЕ удалена
+    // (старые сохранённые проекты продолжат работать как есть), но
+    // новые графы использовать её не должны.
+    getStaticBadges() {
+        return [{ type: 'deprecated', text: 'Показ на Досках переезжает в переключатель "Доска" в панели инспектора каждой ноды' }];
+    }
+
     getInspectorSchema() {
         const fields = super.getInspectorSchema();
 
@@ -344,18 +358,6 @@ export class DashboardNode extends BaseNode {
             get: () => (this.targetBoardId === null ? '' : String(this.targetBoardId)),
             set: (v) => {
                 this.targetBoardId = v === '' ? null : parseInt(v, 10);
-                if (window.nodeManager) window.nodeManager.calculateAll();
-            }
-        });
-
-        fields.push({
-            key: 'dashboardOrder',
-            label: 'Порядок на странице (пусто = авто)',
-            type: 'number',
-            min: 0, step: 1,
-            get: () => this.dashboardOrder,
-            set: (v) => {
-                this.dashboardOrder = v;
                 if (window.nodeManager) window.nodeManager.calculateAll();
             }
         });

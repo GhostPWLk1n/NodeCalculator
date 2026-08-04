@@ -6,7 +6,7 @@
  * @file    ganttTableProcessorNode.js
  * @brief   Разбор сырой Гант-подобной таблицы (заголовок/разделы/задачи) на три отдельных выхода
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

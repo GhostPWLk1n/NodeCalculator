@@ -153,6 +153,11 @@
             <div class="sidebar-section">
                 <div class="section-title">🔧 Преобразование</div>
                 <div class="node-list">
+                    <div class="node-item" data-type="text" onclick="window.addNode('text', 400, 300)">
+                        <span class="node-icon">📜</span>
+                        <span class="node-name">Текст</span>
+                        <span class="node-badge">Операция</span>
+                    </div>
                     <div class="node-item" data-type="scaleList" onclick="window.addNode('scaleList', 400, 300)">
                         <span class="node-icon">✖️</span>
                         <span class="node-name">Умножение списка</span>
@@ -374,6 +379,21 @@
     <!-- Холст Доски - альтернатива #workspace, показывается вместо него
          при переключении на вкладку Доски (см. boardManager.js) -->
     <div id="boardCanvasWrap" style="display:none;">
+        <!-- Раунд 125 (релиз 1.8.0, механика Досок, по запросу Mr.D:
+             "визуально переключение форматов расположим там же где на
+             Листах Ножницы, выделение рамкой... За основу берём ту же
+             панель. В эту же панель перенесём Export PDF") - тот же
+             CSS-класс canvas-toolbar, что уже используется на Листах
+             (position:fixed - появляется в ТОЙ ЖЕ точке экрана
+             независимо от того, где физически лежит в DOM) - видимость
+             переключает boardManager.showBoardView()/layoutManager (её
+             зеркало для обратного переключения). -->
+        <div id="boardToolbar" class="canvas-toolbar" style="display:none;">
+            <button class="canvas-tool-btn" id="boardFormatA4" data-format="a4" title="Формат страницы: A4 (фиксированная ширина, печать)">📄</button>
+            <button class="canvas-tool-btn" id="boardFormat169" data-format="16:9" title="Формат страницы: 16:9 (фиксированная ширина, презентация)">🖥️</button>
+            <button class="canvas-tool-btn" id="boardFormatWeb" data-format="web" title="Формат страницы: Web (ширина подстраивается под окно)">🌐</button>
+            <button class="canvas-tool-btn" id="exportBoardPdfBtn" title="Экспорт Доски в PDF" onclick="window.exportBoardPdf?.()">📄➜</button>
+        </div>
         <div id="boardCanvas" class="board-canvas">
             <!-- Сюда рендерится текущая Доска (boardManager.renderActiveBoard) -->
         </div>
@@ -415,9 +435,6 @@
         <div id="layoutTabs" class="layout-tabs"></div>
         <!-- Панель досок (Boards) - визуализация расчётных данных, отдельно от графа вычислений -->
         <div id="boardTabs" class="layout-tabs"></div>
-        <!-- Экспорт активной Доски в PDF (1.7.0) - видима только когда
-             реально смотрим на Доску, см. boardManager.renderTabs() -->
-        <button id="exportBoardPdfBtn" class="topbar-btn icon-only" title="Экспорт Доски в PDF" style="display:none;" onclick="window.exportBoardPdf?.()">📄</button>
     </div>
 
     <!-- Контекстное меню -->

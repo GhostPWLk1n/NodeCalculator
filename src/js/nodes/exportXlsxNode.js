@@ -6,7 +6,7 @@
  * @file    exportXlsxNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .xlsx по кнопке
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -14,6 +14,7 @@ import { BaseNode } from './baseNode.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { XlsxWriter } from '../utils/xlsxWriter.js';
 import { buildGanttCalendarGrid } from '../utils/ganttCalendarExport.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 /**
  * ExportXlsxNode - зеркало XlsxImportNode: вход Data, БЕЗ выхода
@@ -46,6 +47,9 @@ export class ExportXlsxNode extends BaseNode {
         // для календарного экспорта Ганта (см. _doExportGanttCalendar()).
         // Транзитное состояние, как this.tableData - не сериализуется.
         this._sourceNode = null;
+        // Раунд 124 (релиз 1.8.0, пилот "переключателя Доска") - см.
+        // utils/boardPublish.js.
+        initBoardPublishFields(this, config);
     }
 
     createContent() {
@@ -118,6 +122,43 @@ export class ExportXlsxNode extends BaseNode {
     // node.type === 'gantt' - на случай, если в будущем появится другой
     // тип ноды с такой же формой задач (см. тот же принцип "утиной
     // типизации", что уже используется в isCompatibleTable()).
+    // Раунд 124 (релиз 1.8.0, пилот "переключателя Доска") - у
+    // ExportXlsxNode такого метода раньше не было вообще (терминальная
+    // "нода-действие", не "нода-данные", как StringNode/NumberNode) -
+    // виджет здесь не столько показывает значение, сколько ДУБЛИРУЕТ
+    // саму кнопку экспорта прямо на Доске (тот же _doExport(), что и в
+    // теле ноды) - удобно, если Доска используется как "пульт
+    // управления" набором экспортов.
+    getDashboardWidget() {
+        return {
+            type: 'action',
+            title: this.customName || 'Экспорт в Excel',
+            render: (container) => {
+                const statusEl = document.createElement('div');
+                statusEl.className = 'board-widget-export-status';
+                statusEl.textContent = this._statusText();
+                container.appendChild(statusEl);
+
+                const btn = document.createElement('button');
+                btn.className = 'node-action-btn board-widget-export-btn';
+                btn.textContent = '💾 Экспорт в .xlsx';
+                btn.disabled = !this._hasData();
+                btn.addEventListener('mousedown', (e) => e.stopPropagation());
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._doExport();
+                });
+                container.appendChild(btn);
+            }
+        };
+    }
+
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+        fields.push(...buildBoardInspectorFields(this));
+        return fields;
+    }
+
     _isGanttSource() {
         return !!(this._sourceNode && Array.isArray(this._sourceNode.tasks));
     }
@@ -160,6 +201,7 @@ export class ExportXlsxNode extends BaseNode {
             this.clearBadge('export-no-data');
         }
 
+        syncNodeToBoards(this);
         return this.value;
     }
 

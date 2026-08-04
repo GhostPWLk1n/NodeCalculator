@@ -6,7 +6,7 @@
  * @file    tableRemoveNode.js
  * @brief   Обработчик: удаляет строки из таблицы (по номеру строки или диапазону)
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

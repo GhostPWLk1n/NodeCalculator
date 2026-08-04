@@ -6,7 +6,7 @@
  * @file    imageNode.js
  * @brief   Загрузка локального изображения, вывод через отдельный Image-сокет
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

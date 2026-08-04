@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -103,8 +103,26 @@ export class BoardManager {
         const board = {
             id,
             name: name || this.generateUniqueName(),
-            // widgetId (= id ноды "Дашборд") -> { order, type, title, render(container) }
-            widgets: new Map()
+            // widgetId (= id ноды, показывающей себя на Доске) -> { order, type, title, render(container) }
+            widgets: new Map(),
+            // Раунд 124 (релиз 1.8.0, по решению Mr.D: "уйдём от ручного
+            // ввода порядка виджетов, это был костыль для тестов -
+            // виджеты должны перетаскиваться драг-энд-дропом") - порядок
+            // ТЕПЕРЬ принадлежит ДОСКЕ (массив widgetId в нужной
+            // последовательности), а не отдельной ноде - drag&drop
+            // прямо на самой Доске (см. attachWidgetDrag()) двигает
+            // ИМЕННО этот массив. Новый widgetId, которого здесь ещё
+            // нет - дописывается в конец при первом рендере (см.
+            // renderActiveBoard()).
+            order: [],
+            // Раунд 125 (релиз 1.8.0, по запросу Mr.D: "сейчас есть одна
+            // фиксированная ширина, надо сделать чтобы формат можно было
+            // переключать - фиксированная ширина A4, 16:9, и Web") -
+            // 'a4' (дефолт - прежнее единственное поведение, без
+            // изменений для существующих Досок), '16:9', 'web' (ширина
+            // подстраивается под доступную ширину окна - см. CSS,
+            // .board-page[data-format="web"]).
+            format: 'a4'
         };
         this.boards.push(board);
         return board;
@@ -185,13 +203,43 @@ export class BoardManager {
         this.renderTabs();
     }
 
+    // Раунд 125 - переключение формата активной Доски (кнопки в
+    // #boardToolbar, см. index.html/_wireFormatButtons()).
+    setFormat(format) {
+        const board = this.getActiveBoard();
+        if (!board || board.format === format) return;
+        board.format = format;
+        this.renderActiveBoard();
+    }
+
+    _syncFormatButtons() {
+        const board = this.getActiveBoard();
+        const format = board?.format || 'a4';
+        ['boardFormatA4', 'boardFormat169', 'boardFormatWeb'].forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) btn.classList.toggle('active', btn.dataset.format === format);
+        });
+    }
+
+    // Вызывается один раз при старте приложения (см. main.js) - вешает
+    // клик-обработчики на три кнопки формата в #boardToolbar. Отдельно
+    // от _syncFormatButtons() (та просто подсвечивает активную кнопку
+    // при каждом рендере Доски, без пере-навешивания обработчиков).
+    _wireFormatButtons() {
+        document.querySelectorAll('#boardToolbar .canvas-tool-btn[data-format]').forEach(btn => {
+            btn.addEventListener('click', () => this.setFormat(btn.dataset.format));
+        });
+    }
+
     // Показать холст Доски вместо графа нод (и наоборот - см.
     // layoutManager.loadLayout(), которая вызывает обратный переключатель)
     showBoardView() {
         const workspace = document.getElementById('workspace');
         const boardCanvas = document.getElementById('boardCanvasWrap');
+        const boardToolbar = document.getElementById('boardToolbar');
         if (workspace) workspace.style.display = 'none';
         if (boardCanvas) boardCanvas.style.display = 'flex';
+        if (boardToolbar) boardToolbar.style.display = 'flex';
     }
 
     // ============================================
@@ -212,6 +260,41 @@ export class BoardManager {
     unregisterWidgetEverywhere(widgetId) {
         this.boards.forEach(board => {
             if (board.widgets.delete(widgetId)) this._dirtyBoardIds.add(board.id);
+            const idx = board.order.indexOf(widgetId);
+            if (idx !== -1) board.order.splice(idx, 1);
+        });
+    }
+
+    // Раунд 124 (релиз 1.8.0, по запросу Mr.D: "переключатель Доска...
+    // указать на каких досках мы хотим видеть отображение этого узла") -
+    // публикация ОДНОГО виджета сразу на НЕСКОЛЬКО досок - в отличие от
+    // registerWidget() (которая снимает виджет со ВСЕХ других досок,
+    // рассчитана на модель "один узел = одна доска", как у DashboardNode)
+    // здесь виджет может стоять на любом подмножестве досок одновременно.
+    // targetBoardIds - массив id досок, где виджет должен быть показан
+    // (пустой массив - снять со всех). data - объект виджета
+    // ({type, title, render, style, layout}), общий для всех целевых
+    // досок (та же ссылка - стиль/размер редактируются один раз, видны
+    // везде, тот же приём, что уже применён у DashboardNode).
+    syncWidgetToBoards(widgetId, targetBoardIds, data) {
+        const targetSet = new Set(targetBoardIds || []);
+        this.boards.forEach(board => {
+            const shouldBeOn = targetSet.has(board.id);
+            const isOn = board.widgets.has(widgetId);
+            if (shouldBeOn && !isOn) {
+                board.widgets.set(widgetId, data);
+                this._dirtyBoardIds.add(board.id);
+            } else if (shouldBeOn && isOn) {
+                // Уже есть - обновляем данные виджета (свежий render()
+                // после пересчёта), позицию в order не трогаем.
+                board.widgets.set(widgetId, data);
+                this._dirtyBoardIds.add(board.id);
+            } else if (!shouldBeOn && isOn) {
+                board.widgets.delete(widgetId);
+                const idx = board.order.indexOf(widgetId);
+                if (idx !== -1) board.order.splice(idx, 1);
+                this._dirtyBoardIds.add(board.id);
+            }
         });
     }
 
@@ -223,13 +306,6 @@ export class BoardManager {
         const tabsContainer = document.getElementById('boardTabs');
         if (!tabsContainer) return;
         tabsContainer.innerHTML = '';
-
-        // Кнопка "Экспорт в PDF" (1.7.0) имеет смысл, только пока на
-        // экране действительно Доска, а не граф нод - та же логика
-        // "видимо только когда реально смотрим на это", что уже
-        // используется ниже для isActive конкретной вкладки.
-        const pdfBtn = document.getElementById('exportBoardPdfBtn');
-        if (pdfBtn) pdfBtn.style.display = this.viewActive ? '' : 'none';
 
         this.boards.forEach(board => {
             const tab = document.createElement('div');
@@ -382,6 +458,13 @@ export class BoardManager {
             container.innerHTML = '';
             container.appendChild(page);
         }
+        const board = this.getActiveBoard();
+        // Раунд 125 - формат страницы (A4/16:9/Web) читается через
+        // CSS-атрибут (тот же приём, что data-size у виджетов) - вся
+        // геометрия (ширина/пропорции) описана в styles.css/
+        // day_styles.css, здесь только проставляем значение.
+        page.dataset.format = board?.format || 'a4';
+        this._syncFormatButtons();
 
         const activeEl = document.activeElement;
         const focusedWidgetEl = (activeEl && page.contains(activeEl))
@@ -389,11 +472,33 @@ export class BoardManager {
             : null;
         const focusedWidgetId = focusedWidgetEl ? focusedWidgetEl.dataset.widgetId : null;
 
-        const board = this.getActiveBoard();
+        // Раунд 124 - любой widgetId, которого ещё нет в board.order
+        // (только что зарегистрированный виджет) - дописывается в конец
+        // ПЕРЕД сортировкой, чтобы у него сразу было законное место в
+        // последовательности (а не "сортировка как попало" на первом
+        // рендере).
+        //
+        // Багфикс (Раунд 125) - раньше здесь ЕЩЁ была защитная строка
+        // `board.order = board.order.filter(id => board.widgets.has(id))`
+        // ("на случай рассинхронизации") - она СТИРАЛА весь сохранённый
+        // порядок сразу после loadFromData(): на этот момент
+        // board.widgets ВСЕГДА пуст (виджеты не сериализуются, см.
+        // докстринг класса - они появляются только когда ноды
+        // пересчитаются и САМИ зарегистрируются через
+        // syncWidgetToBoards()/registerWidget(), что происходит ПОЗЖЕ) -
+        // фильтр "по существующим widgets" удалял ВСЕ id из order,
+        // потому что ни одного widget'а ещё физически не было. Отдельная
+        // защита не нужна - unregisterWidgetEverywhere()/
+        // syncWidgetToBoards() и так корректно убирают id из order В
+        // ТОТ МОМЕНТ, когда виджет реально перестаёт публиковаться -
+        // проверено исполняемым тестом (см. CHANGES.md).
+        if (board) {
+            board.widgets.forEach((_, id) => {
+                if (!board.order.includes(id)) board.order.push(id);
+            });
+        }
         const widgets = board
-            ? [...board.widgets.entries()]
-                .map(([id, w]) => ({ id, ...w }))
-                .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id)
+            ? board.order.map(id => ({ id, ...board.widgets.get(id) }))
             : [];
 
         if (widgets.length === 0) {
@@ -510,6 +615,17 @@ export class BoardManager {
             this.selectWidget(widget.id);
         });
 
+        // Раунд 124 (по решению Mr.D: "уйдём от ручного ввода порядка
+        // виджетов, это был костыль для тестов - виджеты должны
+        // перетаскиваться драг-энд-дропом") - выделенная ручка (не весь
+        // виджет целиком - тот может содержать интерактивное
+        // содержимое, поля ввода и т.п., которым drag не должен мешать).
+        // Нативный HTML5 Drag&Drop (не mousedown/mousemove, как у
+        // attachResizeDrag() выше) - для "определить, над каким именно
+        // виджетом сейчас курсор" браузерный dragover/drop подходит
+        // лучше ручного hit-testing.
+        this.attachWidgetDrag(widgetEl, widget.id);
+
         if (widget.title) {
             const titleEl = document.createElement('div');
             titleEl.className = 'board-widget-title';
@@ -551,6 +667,69 @@ export class BoardManager {
         }
 
         return widgetEl;
+    }
+
+    // Раунд 124 - выделенная ручка перетаскивания (⠿, левый верхний
+    // угол виджета) - только ОНА реально draggable="true", сам виджет
+    // при этом остаётся кликабельным/редактируемым как обычно. dragover
+    // на ДРУГОМ виджете определяет цель, drop переставляет ПЕРЕТАСКИВАЕМЫЙ
+    // id на место ЦЕЛЕВОГО в board.order (простой swap-по-позиции, не
+    // полноценная 2D-раскладка с учётом colSpan/rowSpan - для сетки с
+    // разноразмерными виджетами этого достаточно для "визуально перед/
+    // после" без лишней сложности).
+    attachWidgetDrag(widgetEl, widgetId) {
+        const handle = document.createElement('div');
+        handle.className = 'board-widget-drag-handle';
+        handle.title = 'Перетащите, чтобы изменить порядок виджетов';
+        handle.textContent = '⠿';
+        handle.draggable = true;
+        handle.addEventListener('mousedown', (e) => e.stopPropagation());
+        handle.addEventListener('click', (e) => e.stopPropagation());
+
+        handle.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(widgetId));
+            widgetEl.classList.add('dragging');
+        });
+        handle.addEventListener('dragend', () => {
+            widgetEl.classList.remove('dragging');
+        });
+
+        widgetEl.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes('text/plain')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            widgetEl.classList.add('drop-target');
+        });
+        widgetEl.addEventListener('dragleave', () => {
+            widgetEl.classList.remove('drop-target');
+        });
+        widgetEl.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            widgetEl.classList.remove('drop-target');
+            const draggedId = Number(e.dataTransfer.getData('text/plain'));
+            const targetId = widgetId;
+            if (!Number.isFinite(draggedId) || draggedId === targetId) return;
+
+            const board = this.getActiveBoard();
+            if (!board) return;
+            const fromIdx = board.order.indexOf(draggedId);
+            const toIdx = board.order.indexOf(targetId);
+            if (fromIdx === -1 || toIdx === -1) return;
+
+            board.order.splice(fromIdx, 1);
+            // toIdx мог сдвинуться после удаления draggedId выше, если
+            // draggedId стоял ПЕРЕД целью - пересчитываем заново вместо
+            // использования устаревшего индекса.
+            const newToIdx = board.order.indexOf(targetId);
+            board.order.splice(newToIdx, 0, draggedId);
+
+            this.renderActiveBoard();
+        });
+
+        widgetEl.insertBefore(handle, widgetEl.firstChild);
     }
 
     // Перетаскивание ручки на грани виджета - меняет colSpan (e/w) или
@@ -643,7 +822,7 @@ export class BoardManager {
         return {
             activeBoardId: this.activeBoardId,
             boardIdCounter: this.boardIdCounter,
-            boards: this.boards.map(b => ({ id: b.id, name: b.name }))
+            boards: this.boards.map(b => ({ id: b.id, name: b.name, order: b.order, format: b.format }))
         };
     }
 
@@ -658,7 +837,7 @@ export class BoardManager {
             return;
         }
 
-        this.boards = boardsData.map(b => ({ id: b.id, name: b.name, widgets: new Map() }));
+        this.boards = boardsData.map(b => ({ id: b.id, name: b.name, widgets: new Map(), order: Array.isArray(b.order) ? b.order : [], format: b.format || 'a4' }));
         this.boardIdCounter = data.boardIdCounter ?? (Math.max(...this.boards.map(b => b.id)) + 1);
         this.activeBoardId = this.boards.some(b => b.id === data.activeBoardId)
             ? data.activeBoardId

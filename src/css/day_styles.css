@@ -3620,3 +3620,139 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     line-height: 1.5;
     margin-top: 8px;
 }
+
+/* Ручка перетаскивания виджета и виджет "Экспорт в Excel" - парность со styles.css */
+.board-widget-drag-handle {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--md-text-disabled);
+    cursor: grab;
+    padding: 2px 4px;
+    border-radius: 4px;
+    user-select: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s ease;
+}
+.board-widget:hover .board-widget-drag-handle {
+    opacity: 1;
+    visibility: visible;
+}
+.board-widget-drag-handle:hover {
+    color: var(--md-text);
+    background: var(--md-surface-2);
+}
+.board-widget.dragging {
+    opacity: 0.4;
+}
+.board-widget.drop-target {
+    outline: 2px dashed var(--md-primary);
+    outline-offset: 2px;
+}
+.board-widget-export-status {
+    font-size: 12px;
+    color: var(--md-text-secondary);
+    margin-bottom: 8px;
+}
+.board-widget-export-btn {
+    width: 100%;
+}
+
+/* Формат страницы Доски - парность со styles.css */
+.board-page[data-format="16:9"] {
+    width: 1280px;
+    min-height: 720px;
+}
+.board-page[data-format="web"] {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: 1600px;
+    min-height: 600px;
+}
+
+/* Виджет "Календарь" на Доске - парность со styles.css */
+.board-widget-calendar-summary {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--board-widget-accent, var(--md-text));
+    margin-bottom: 6px;
+}
+.board-widget-calendar-list {
+    font-size: 11px;
+    color: var(--md-text-secondary);
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+/* Предпросмотр Markdown у узла "Текст" - парность со styles.css */
+.text-node-preview h1, .text-node-preview h2, .text-node-preview h3,
+.text-node-preview h4, .text-node-preview h5, .text-node-preview h6,
+.board-widget-text-preview h1, .board-widget-text-preview h2, .board-widget-text-preview h3,
+.board-widget-text-preview h4, .board-widget-text-preview h5, .board-widget-text-preview h6 {
+    margin: 0.4em 0 0.3em 0;
+    color: var(--md-text);
+    line-height: 1.3;
+}
+.text-node-preview h1, .board-widget-text-preview h1 { font-size: 1.5em; }
+.text-node-preview h2, .board-widget-text-preview h2 { font-size: 1.3em; }
+.text-node-preview h3, .board-widget-text-preview h3 { font-size: 1.15em; }
+.text-node-preview p, .board-widget-text-preview p {
+    margin: 0.3em 0;
+}
+.text-node-preview ul, .text-node-preview ol,
+.board-widget-text-preview ul, .board-widget-text-preview ol {
+    margin: 0.3em 0;
+    padding-left: 1.4em;
+}
+.text-node-preview blockquote, .board-widget-text-preview blockquote {
+    margin: 0.4em 0;
+    padding: 4px 10px;
+    border-left: 3px solid var(--md-primary);
+    color: var(--md-text-secondary);
+    background: var(--md-surface);
+}
+.text-node-preview code, .board-widget-text-preview code {
+    background: var(--md-surface);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+.text-node-preview pre, .board-widget-text-preview pre {
+    background: var(--md-surface);
+    border-radius: var(--md-radius);
+    padding: 8px 10px;
+    overflow-x: auto;
+    margin: 0.4em 0;
+}
+.text-node-preview pre code, .board-widget-text-preview pre code {
+    background: none;
+    padding: 0;
+}
+.text-node-preview table, .board-widget-text-preview table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.4em 0;
+    font-size: 0.9em;
+}
+.text-node-preview th, .text-node-preview td,
+.board-widget-text-preview th, .board-widget-text-preview td {
+    border: 1px solid var(--md-divider);
+    padding: 4px 8px;
+    text-align: left;
+}
+.text-node-preview hr, .board-widget-text-preview hr {
+    border: none;
+    border-top: 1px solid var(--md-divider);
+    margin: 0.6em 0;
+}
+.text-node-preview a, .board-widget-text-preview a {
+    color: var(--md-primary);
+}
+.text-node-preview img, .board-widget-text-preview img {
+    max-width: 100%;
+    border-radius: 4px;
+}

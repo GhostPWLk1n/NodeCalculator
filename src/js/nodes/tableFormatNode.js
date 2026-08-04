@@ -6,7 +6,7 @@
  * @file    tableFormatNode.js
  * @brief   Обработчик: применяет оформление (формат/ширина/итог/цвет/зебра/линии) к любой Data-таблице
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

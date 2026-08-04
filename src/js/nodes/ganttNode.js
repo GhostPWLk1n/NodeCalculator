@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -17,6 +17,7 @@ import { SocketFactory } from '../utils/socketFactory.js';
 import { HolidayParser } from '../utils/holidayParser.js';
 import { attachColumnResizeHandle } from '../utils/columnResize.js';
 import { COLOR_PALETTE } from '../utils/columnFormatting.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 const ROW_HEIGHT = 26;      // px на строку задачи
 const MAX_VISIBLE_ROWS = 6; // после скольки задач включается вертикальный скролл
@@ -367,6 +368,8 @@ export class GanttNode extends BaseNode {
         // не меняющемуся при самом переименовании).
         this.taskNameOverrides = config.taskNameOverrides ? { ...config.taskNameOverrides } : {};
         this.deletedTaskKeys = Array.isArray(config.deletedTaskKeys) ? [...config.deletedTaskKeys] : [];
+        // Раунд 126 (релиз 1.8.0, механика Досок) - см. utils/boardPublish.js.
+        initBoardPublishFields(this, config);
 
         this.tasks = [];               // вычисленные задачи для рендера (плоский список, groupIndex/taskKey у каждой при группировке)
         // Раунд 78 - null, если подключён ровно один источник (обычное
@@ -2745,6 +2748,7 @@ export class GanttNode extends BaseNode {
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
             this.value = 0;
+            syncNodeToBoards(this);
             return this.value;
         }
 
@@ -2850,6 +2854,7 @@ export class GanttNode extends BaseNode {
                 this._detectResponsiblesAndGroups();
                 this.tableData = this.buildOutputTable();
                 this.value = this.tasks.length;
+                syncNodeToBoards(this);
                 return this.value;
             }
 
@@ -2888,6 +2893,7 @@ export class GanttNode extends BaseNode {
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
             this.value = this.tasks.length;
+            syncNodeToBoards(this);
             return this.value;
         }
 
@@ -2966,6 +2972,7 @@ export class GanttNode extends BaseNode {
         this._detectResponsiblesAndGroups();
         this.tableData = this.buildOutputTable();
         this.value = this.tasks.length;
+        syncNodeToBoards(this);
         return this.value;
     }
 
@@ -3326,6 +3333,9 @@ export class GanttNode extends BaseNode {
                 });
             });
         }
+
+        // Раунд 126 (релиз 1.8.0, механика Досок).
+        fields.push(...buildBoardInspectorFields(this));
 
         return fields;
     }

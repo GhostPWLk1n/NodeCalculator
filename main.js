@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Electron main-процесс: создание окна, меню, IPC-обработчики сохранения/загрузки .ncp и экспорта изображения
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -14,14 +14,85 @@ const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Раунд 128 (багфикс, по жалобе Mr.D: ошибки "Unable to move the
+// cache"/"Gpu Cache Creation failed" при каждом запуске на Windows) -
+// известная особенность Chromium на Windows: внутренний дисковый кэш
+// (сетевой + GPU shader) не может создаться/переместиться, обычно
+// из-за прав доступа к папке userData или блокировки файлов другим
+// (в т.ч. уже запущенным) процессом - antivirus тоже нередкая причина.
+// НЕ связано с default-workspace.ncp (Раунд 127) - это ВНУТРЕННИЙ кэш
+// самого Chromium, инициализируется ДО того, как выполняется хоть
+// какой-то код main.js. Приложение при этом продолжало РАБОТАТЬ (кэш
+// просто не создавался, не блокирующая ошибка) - но эти строки
+// засоряли консоль при каждом запуске. Стандартное решение - отключить
+// сам дисковый кэш явно, ДО app.whenReady() (переключатели командной
+// строки Chromium должны быть выставлены раньше готовности приложения,
+// иначе не подхватятся).
+app.commandLine.appendSwitch('disable-http-cache');
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
 let mainWindow;
 
-// Раунд 123 (релиз 1.8.0, "стартап-конфиги") - файл дефолтного рабочего
-// пространства. ХРАНИТСЯ ПОКА В ПАПКЕ ПРОГРАММЫ (__dirname), не в
-// пользовательской директории (app.getPath('userData')) - явное
-// временное решение Mr.D, см. докстринг saveDefaultWorkspace в
-// preload.js про то, почему это откладывается на будущее.
-const DEFAULT_WORKSPACE_PATH = path.join(__dirname, 'default-workspace.ncp');
+// Раунд 129 (по подтверждению Mr.D: ошибки disk_cache из Раунда 128
+// были вызваны именно повторным запуском - второй процесс пытался
+// использовать ТЕ ЖЕ файлы кэша, что уже держал открытыми первый) -
+// requestSingleInstanceLock() - штатный механизм Electron: получает
+// "замок" на уровне ОС при первом запуске - если он уже занят (второй
+// запуск, пока первый ещё открыт), возвращает false. ДОЛЖЕН вызываться
+// ДО app.whenReady() (и вообще максимально рано) - иначе второй
+// процесс успеет создать СВОЁ окно/начать инициализацию до того, как
+// поймёт, что он лишний.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+    // Это - ВТОРОЙ (лишний) процесс. quit() + return здесь безопасны -
+    // до этого момента окно/что-либо ещё не создавалось (проверка -
+    // самое начало файла, выше только commandLine.appendSwitch()).
+    // Верхнеуровневый return допустим - CommonJS-модуль Node.js целиком
+    // оборачивается в функцию самой системой модулей.
+    app.quit();
+    return;
+}
+
+// Это - ПЕРВЫЙ (основной) процесс. second-instance - срабатывает
+// именно НА НЁМ, когда кто-то попытался запустить приложение ПОВТОРНО,
+// пока оно уже открыто - вместо создания второго окна (или вместо
+// непонятной ошибки disk_cache, как было раньше) - возвращаем фокус на
+// уже существующее окно, разворачиваем, если было свёрнуто.
+app.on('second-instance', () => {
+    if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+});
+
+// Раунд 127 (багфикс, по жалобе Mr.D: ENOENT при сохранении - путь
+// вёл внутрь app.asar) - __dirname в УПАКОВАННОМ приложении указывает
+// внутрь app.asar (сжатый архив, доступен ТОЛЬКО для чтения - запись
+// туда физически невозможна, отсюда ENOENT) - в режиме разработки
+// (npm start, без упаковки) __dirname указывает на обычную папку с
+// исходниками, поэтому баг не проявлялся при разработке.
+//
+// По решению Mr.D: приоритет - AppData (`app.getPath('userData')`,
+// переживает переустановку программы), а если туда почему-то не
+// получилось записать (права доступа и т.п.) - рядом с exe самой
+// программы (`path.dirname(process.execPath)` - и в упакованном виде,
+// и в режиме разработки корректно указывает на исполняемый файл, не
+// внутрь asar). Чтение при старте - симметрично, тот же приоритет.
+function getAppDataWorkspacePath() {
+    return path.join(app.getPath('userData'), 'default-workspace.ncp');
+}
+function getExeDirWorkspacePath() {
+    return path.join(path.dirname(process.execPath), 'default-workspace.ncp');
+}
+// Находит СУЩЕСТВУЮЩИЙ файл по приоритету AppData -> рядом с exe, или
+// null, если нет ни там, ни там (в частности - самый первый запуск,
+// когда стартовое рабочее пространство ещё ни разу не сохранялось).
+function findDefaultWorkspacePath() {
+    if (fs.existsSync(getAppDataWorkspacePath())) return getAppDataWorkspacePath();
+    if (fs.existsSync(getExeDirWorkspacePath())) return getExeDirWorkspacePath();
+    return null;
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -48,9 +119,10 @@ function createWindow() {
     // ready-to-show) - нужно, чтобы к этому моменту скрипты рендерера
     // (main.js, регистрирующий onLoadProject) уже успели выполниться.
     mainWindow.webContents.once('did-finish-load', () => {
-        if (fs.existsSync(DEFAULT_WORKSPACE_PATH)) {
+        const foundPath = findDefaultWorkspacePath();
+        if (foundPath) {
             try {
-                const data = JSON.parse(fs.readFileSync(DEFAULT_WORKSPACE_PATH, 'utf8'));
+                const data = JSON.parse(fs.readFileSync(foundPath, 'utf8'));
                 mainWindow.webContents.send('load-project', data);
             } catch (error) {
                 console.error('Не удалось загрузить дефолтное рабочее пространство:', error.message);
@@ -312,23 +384,44 @@ ipcMain.on('request-export-board-pdf', async () => {
 // пространство: тихое сохранение (без диалога "Сохранить как" - всегда
 // один и тот же путь, DEFAULT_WORKSPACE_PATH), проверка наличия и
 // удаление (сброс к отладочному примеру/пустому листу).
+// Раунд 123 (релиз 1.8.0, "стартап-конфиги") - дефолтное рабочее
+// пространство: тихое сохранение (без диалога "Сохранить как"),
+// проверка наличия и удаление (сброс к отладочному примеру/пустому
+// листу). Раунд 127 (багфикс ENOENT - __dirname в упакованном
+// приложении указывает внутрь app.asar, только для чтения) - приоритет
+// AppData -> рядом с exe (см. getAppDataWorkspacePath()/
+// getExeDirWorkspacePath()/findDefaultWorkspacePath() выше).
 ipcMain.handle('save-default-workspace', (event, data) => {
+    const json = JSON.stringify(data, null, 2);
     try {
-        fs.writeFileSync(DEFAULT_WORKSPACE_PATH, JSON.stringify(data, null, 2));
+        fs.writeFileSync(getAppDataWorkspacePath(), json);
         mainWindow.webContents.send('status-update', '⭐ Сохранено как стартовое рабочее пространство');
         return { success: true };
-    } catch (error) {
-        return { success: false, error: error.message };
+    } catch (errAppData) {
+        // AppData не получилось (права доступа и т.п.) - пробуем рядом
+        // с exe программы, как и просил Mr.D.
+        try {
+            fs.writeFileSync(getExeDirWorkspacePath(), json);
+            mainWindow.webContents.send('status-update', '⭐ Сохранено как стартовое рабочее пространство (рядом с программой)');
+            return { success: true };
+        } catch (errExeDir) {
+            return { success: false, error: `AppData: ${errAppData.message}; рядом с программой: ${errExeDir.message}` };
+        }
     }
 });
 
 ipcMain.handle('has-default-workspace', () => {
-    return fs.existsSync(DEFAULT_WORKSPACE_PATH);
+    return findDefaultWorkspacePath() !== null;
 });
 
 ipcMain.handle('clear-default-workspace', () => {
     try {
-        if (fs.existsSync(DEFAULT_WORKSPACE_PATH)) fs.unlinkSync(DEFAULT_WORKSPACE_PATH);
+        // Раунд 127 - файл мог осесть в ЛЮБОМ из двух мест (в зависимости
+        // от того, какая попытка сохранения в тот раз сработала) -
+        // удаляем ОБА, если существуют, не только "найденный первым".
+        [getAppDataWorkspacePath(), getExeDirWorkspacePath()].forEach(p => {
+            if (fs.existsSync(p)) fs.unlinkSync(p);
+        });
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };

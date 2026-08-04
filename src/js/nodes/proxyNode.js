@@ -6,7 +6,7 @@
  * @file    proxyNode.js
  * @brief   "Точка" - минимальный узел-прокси (reroute) для аккуратной прокладки соединений
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -33,6 +33,7 @@ import { LayoutOutputNode } from './nodes/layoutOutputNode.js';
 import { ListViewerNode } from './nodes/listViewerNode.js';
 import { ListInputNode } from './nodes/listInputNode.js';
 import { StringNode } from './nodes/stringNode.js';
+import { TextNode } from './nodes/textNode.js';
 import { TableNode } from './nodes/tableNode.js';
 import { TableViewerNode } from './nodes/tableViewerNode.js';
 import { PercentConvertNode } from './nodes/percentConvertNode.js';
@@ -135,6 +136,7 @@ nodeManager.registerNodeType('layoutOutput', LayoutOutputNode);
 nodeManager.registerNodeType('listViewer', ListViewerNode);
 nodeManager.registerNodeType('listInput', ListInputNode);
 nodeManager.registerNodeType('string', StringNode);
+nodeManager.registerNodeType('text', TextNode);
 nodeManager.registerNodeType('table', TableNode);
 nodeManager.registerNodeType('tableViewer', TableViewerNode);
 nodeManager.registerNodeType('percentConvert', PercentConvertNode);
@@ -175,6 +177,9 @@ console.log('✅ Менеджеры созданы и зарегистриров
 // Инициализируем первый лист (Layout)
 layoutManager.initFirstLayout('Лист 1');
 boardManager.initFirstBoard('Доска 1');
+// Раунд 125 (релиз 1.8.0, механика Досок) - обработчики кнопок формата
+// страницы (#boardToolbar) вешаются один раз при старте.
+boardManager._wireFormatButtons();
 
 // ============================================
 // 3. МАСШТАБИРОВАНИЕ (ZOOM)

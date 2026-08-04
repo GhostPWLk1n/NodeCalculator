@@ -6,7 +6,7 @@
  * @file    tableUniqueNode.js
  * @brief   Обработчик: находит уникальные значения столбца, схлопывая или исключая остальные
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

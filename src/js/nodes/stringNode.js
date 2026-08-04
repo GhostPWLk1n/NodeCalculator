@@ -6,12 +6,13 @@
  * @file    stringNode.js
  * @brief   Компактная нода ввода текста (по образцу NumberNode)
  * @author  Pavel Fomin
- * @version 1.8.4
+ * @version 1.8.9
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { SocketFactory } from '../utils/socketFactory.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 /**
  * StringNode - ввод текста (по аналогии с NumberNode, но для строк).
@@ -29,6 +30,9 @@ export class StringNode extends BaseNode {
         this.displayName = config.displayName || config.customName || 'Строка';
         // Важно: как и у NumberNode, нода не должна быть свёрнутой по умолчанию
         this.collapsed = config.collapsed || false;
+        // Раунд 124 (релиз 1.8.0, пилот "переключателя Доска") - см.
+        // utils/boardPublish.js.
+        initBoardPublishFields(this, config);
     }
 
     createContent() {
@@ -80,7 +84,14 @@ export class StringNode extends BaseNode {
 
     calculate() {
         // Строка - конечный продукт, никаких resultListData/listData не нужно
+        syncNodeToBoards(this);
         return this.value;
+    }
+
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+        fields.push(...buildBoardInspectorFields(this));
+        return fields;
     }
 
     // Виджет для Доски (см. dashboardNode.js/boardManager.js) - РЕДАКТИРУЕМОЕ
