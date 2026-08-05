@@ -6,7 +6,7 @@
  * @file    tableInjectNode.js
  * @brief   Обработчик: вставляет строки из одной таблицы в другую (в конец/начало/по номеру строки)
  * @author  Pavel Fomin
- * @version 1.8.9
+ * @version 1.8.20
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

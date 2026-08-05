@@ -6,7 +6,7 @@
  * @file    xlsxReader.js
  * @brief   Чтение .xlsx (ZIP + OOXML) без сторонних библиотек - только браузерные API
  * @author  Pavel Fomin
- * @version 1.8.9
+ * @version 1.8.20
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -173,13 +173,29 @@ function parseWorkbookSheets(workbookXml, relsXml) {
 // подавляющее большинство "цветного кодирования" в реальных файлах
 // (как у Mr.D) использует ПРЯМЫЕ rgb-цвета, не темы - см. её
 // докстринг в xlsxReader.js о разборе Гант-таблиц ниже.
+// Раунд 96 - разбор xl/styles.xml (Раунд 96, чек-лист - "научим
+// обработчик цеплять данные для заполнения диаграммы"). Возвращает
+// {fillColors, italics} - ОБА индексированы ПО ИНДЕКСУ СТИЛЯ ЯЧЕЙКИ
+// (атрибут s="N" у <c>) - то есть сразу готовы к прямому обращению
+// fillColors[cellStyleIndex]/italics[cellStyleIndex], без промежуточного
+// поиска fillId/fontId. Тема-цвета (fgColor theme="N", без прямого rgb)
+// НЕ поддерживаются - потребовали бы отдельного разбора theme1.xml и
+// палитры темы, а подавляющее большинство "цветного кодирования" в
+// реальных файлах (как у Mr.D) использует ПРЯМЫЕ rgb-цвета, не темы -
+// см. её докстринг в xlsxReader.js о разборе Гант-таблиц ниже.
+//
+// Раунд 134 (по решению Mr.D - курсив нужен как признак иерархии,
+// "пустое значение № п/п + курсив в 'Вид работ' = подуровень") -
+// italics[cellStyleIndex] = true, если у ШРИФТА этого стиля есть
+// <i/> (курсив, атрибут OOXML) - тот же общий приём, что fillId у
+// заливки, просто по fontId вместо fillId.
 function parseStylesXml(xmlText) {
-    if (!xmlText) return [];
+    if (!xmlText) return { fillColors: [], italics: [] };
     const doc = parseXml(xmlText);
 
     const fillsParent = doc.getElementsByTagName('fills')[0];
     const fillEls = fillsParent ? [...fillsParent.getElementsByTagName('fill')] : [];
-    const fillColors = fillEls.map(fillEl => {
+    const fillColorsByFillId = fillEls.map(fillEl => {
         const patternEl = fillEl.getElementsByTagName('patternFill')[0];
         if (!patternEl || patternEl.getAttribute('patternType') !== 'solid') return null;
         const fgColorEl = patternEl.getElementsByTagName('fgColor')[0];
@@ -189,12 +205,26 @@ function parseStylesXml(xmlText) {
         return null; // тема-цвет или иной формат - не поддерживаем
     });
 
+    // Раунд 134 - <fonts><font>...<i/>...</font></fonts> - <i/>
+    // (пустой элемент-флаг, без атрибутов - само его ПРИСУТСТВИЕ внутри
+    // <font> и означает курсив, как <b/> означает жирный) - индекс
+    // ЭТОГО массива = fontId, на который ссылается <xf fontId="N">.
+    const fontsParent = doc.getElementsByTagName('fonts')[0];
+    const fontEls = fontsParent ? [...fontsParent.getElementsByTagName('font')] : [];
+    const italicByFontId = fontEls.map(fontEl => fontEl.getElementsByTagName('i').length > 0);
+
     const cellXfsParent = doc.getElementsByTagName('cellXfs')[0];
     const xfEls = cellXfsParent ? [...cellXfsParent.getElementsByTagName('xf')] : [];
-    return xfEls.map(xf => {
+    const fillColors = xfEls.map(xf => {
         const fillId = parseInt(xf.getAttribute('fillId'), 10);
-        return Number.isNaN(fillId) ? null : (fillColors[fillId] || null);
+        return Number.isNaN(fillId) ? null : (fillColorsByFillId[fillId] || null);
     });
+    const italics = xfEls.map(xf => {
+        const fontId = parseInt(xf.getAttribute('fontId'), 10);
+        return Number.isNaN(fontId) ? false : !!italicByFontId[fontId];
+    });
+
+    return { fillColors, italics };
 }
 
 function readCellColor(cellEl, styleFillColors) {
@@ -202,6 +232,14 @@ function readCellColor(cellEl, styleFillColors) {
     if (s === null) return null;
     const idx = parseInt(s, 10);
     return Number.isNaN(idx) ? null : (styleFillColors[idx] || null);
+}
+
+// Раунд 134 - симметрично readCellColor(), только для курсива.
+function readCellItalic(cellEl, styleItalics) {
+    const s = cellEl.getAttribute('s');
+    if (s === null) return false;
+    const idx = parseInt(s, 10);
+    return Number.isNaN(idx) ? false : !!styleItalics[idx];
 }
 
 function readCellValue(cellEl, sharedStrings) {
@@ -273,41 +311,47 @@ function parseSheetRows(xmlText, sharedStrings) {
 // цвета не нужны (только текст заголовков), поэтому они по-прежнему
 // используют старые (более быстрые) функции без цвета - никакого
 // риска регрессии там.
-function parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors) {
+// Раунд 134 - ТАКЖЕ несёт курсив каждой ячейки (styleItalics) - тем же
+// приёмом, параллельным массивом.
+function parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors, styleItalics) {
     const cells = [...rowEl.getElementsByTagName('c')];
-    if (cells.length === 0) return { values: [], colors: [] };
+    if (cells.length === 0) return { values: [], colors: [], italics: [] };
     const parsed = cells.map(c => ({ ref: parseCellRef(c.getAttribute('r')), cell: c }));
     const maxCol = Math.max(-1, ...parsed.map(p => (p.ref ? p.ref.col : -1)));
     const values = new Array(maxCol + 1).fill(null);
     const colors = new Array(maxCol + 1).fill(null);
+    const italics = new Array(maxCol + 1).fill(false);
     parsed.forEach(({ ref, cell }) => {
         if (ref) {
             values[ref.col] = readCellValue(cell, sharedStrings);
             colors[ref.col] = readCellColor(cell, styleFillColors);
+            italics[ref.col] = readCellItalic(cell, styleItalics);
         }
     });
-    return { values, colors };
+    return { values, colors, italics };
 }
 
-function parseSheetRowsWithColors(xmlText, sharedStrings, styleFillColors) {
+function parseSheetRowsWithColors(xmlText, sharedStrings, styleFillColors, styleItalics) {
     const rowEls = [...parseXml(xmlText).getElementsByTagName('row')];
     let maxRow = 0;
     const byRowNum = new Map();
     rowEls.forEach(rowEl => {
         const rNum = parseInt(rowEl.getAttribute('r'), 10);
         if (Number.isNaN(rNum)) return;
-        byRowNum.set(rNum, parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors));
+        byRowNum.set(rNum, parseRowCellsWithColors(rowEl, sharedStrings, styleFillColors, styleItalics));
         if (rNum > maxRow) maxRow = rNum;
     });
 
     const values = [];
     const colors = [];
+    const italics = [];
     for (let r = 1; r <= maxRow; r++) {
-        const entry = byRowNum.get(r) || { values: [], colors: [] };
+        const entry = byRowNum.get(r) || { values: [], colors: [], italics: [] };
         values.push(entry.values);
         colors.push(entry.colors);
+        italics.push(entry.italics);
     }
-    return { values, colors };
+    return { values, colors, italics };
 }
 
 export const XlsxReader = {
@@ -330,8 +374,9 @@ export const XlsxReader = {
         // Раунд 96 - styles.xml для цвета заливки ячеек (см.
         // parseStylesXml()) - разбирается здесь ОДИН раз (как и
         // sharedStrings), кэшируется в outline для readSheet() ниже.
+        // Раунд 134 - ТАКЖЕ курсив (styleItalics), той же функцией.
         const stylesXml = await extractText(arrayBuffer, entries, 'xl/styles.xml');
-        const styleFillColors = parseStylesXml(stylesXml);
+        const { fillColors: styleFillColors, italics: styleItalics } = parseStylesXml(stylesXml);
 
         const sheets = [];
         for (const meta of sheetsMeta) {
@@ -343,7 +388,7 @@ export const XlsxReader = {
             sheets.push({ name: meta.name, path: meta.path, headers });
         }
 
-        return { sheets, _entries: entries, _sharedStrings: sharedStrings, _styleFillColors: styleFillColors };
+        return { sheets, _entries: entries, _sharedStrings: sharedStrings, _styleFillColors: styleFillColors, _styleItalics: styleItalics };
     },
 
     // Полный разбор ОДНОГО листа (все строки, включая первую строку-
@@ -356,10 +401,11 @@ export const XlsxReader = {
     // раньше) - colors[row][col] - HEX-цвет заливки той же ячейки, или
     // null (нет заливки/тема-цвет, см. parseStylesXml()). Единственный
     // вызывающий код (xlsxImportNode.js) обновлён под новую форму.
+    // Раунд 134 - ТАКЖЕ italics[row][col] (true/false), тем же принципом.
     async readSheet(arrayBuffer, outline, sheetPath) {
         const xml = await extractText(arrayBuffer, outline._entries, sheetPath);
         if (!xml) throw new Error(`Лист не найден в архиве: ${sheetPath}`);
-        return parseSheetRowsWithColors(xml, outline._sharedStrings, outline._styleFillColors || []);
+        return parseSheetRowsWithColors(xml, outline._sharedStrings, outline._styleFillColors || [], outline._styleItalics || []);
     },
 
     // Заголовки НЕ обязательно в первой строке листа (в реальных файлах

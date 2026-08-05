@@ -3756,3 +3756,32 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     max-width: 100%;
     border-radius: 4px;
 }
+
+/* Связи между задачами - парность со styles.css */
+.gantt-connect-handle {
+    position: absolute;
+    right: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--md-surface);
+    border: 2px solid var(--md-primary);
+    cursor: crosshair;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+    z-index: 4;
+}
+.gantt-bar:hover .gantt-connect-handle,
+.gantt-group-indicator:hover .gantt-connect-handle {
+    opacity: 1;
+}
+.gantt-bar.gantt-bar-drop-target {
+    outline: 2px dashed var(--md-primary);
+    outline-offset: 2px;
+}
+.gantt-dependency-lines path:hover {
+    stroke-width: 3;
+    opacity: 0.8;
+}

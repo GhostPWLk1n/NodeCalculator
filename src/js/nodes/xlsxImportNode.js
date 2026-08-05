@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.8.9
+ * @version 1.8.20
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -95,6 +95,15 @@ export class XlsxImportNode extends BaseNode {
         // файла заново после каждой загрузки. Полезность важнее размера
         // файла - теперь сериализуется, как и importedRows.
         this.cellColors = Array.isArray(config.cellColors) ? config.cellColors : [];
+        // Раунд 134 - курсив каждой ячейки, тем же принципом и с той же
+        // сериализацией, что cellColors (Раунд 96/114) - без неё
+        // повторился бы ровно тот же баг, что чинили в Раунде 114:
+        // GanttTableProcessorNode читает this.cellItalics НА КАЖДОМ
+        // calculate() (не только сразу после импорта), включая после
+        // загрузки сохранённого проекта - без сериализации курсив
+        // молча пропадал бы, распознавание иерархии по курсиву
+        // переставало бы работать после каждой перезагрузки.
+        this.cellItalics = Array.isArray(config.cellItalics) ? config.cellItalics : [];
 
         // Транзитное состояние текущей сессии - НЕ сериализуется
         this._outline = null;
@@ -251,13 +260,17 @@ export class XlsxImportNode extends BaseNode {
             // Раунд 96 - readSheet() теперь возвращает {values, colors},
             // не голый rows-массив, как раньше - colors нужны "Обработке
             // таблиц Ганта" для разбора цветового кодирования дат.
-            const { values: allRows, colors: allColors } = await XlsxReader.readSheet(this._arrayBuffer, this._outline, sheet.path);
+            // Раунд 134 - ТАКЖЕ italics (курсив каждой ячейки) - нужен
+            // для распознавания подуровней иерархии ("пустое значение №
+            // п/п + курсив = подуровень", см. GanttTableProcessorNode).
+            const { values: allRows, colors: allColors, italics: allItalics } = await XlsxReader.readSheet(this._arrayBuffer, this._outline, sheet.path);
             // this.headerRow - 1-based номер строки заголовков (Раунд 44,
             // по умолчанию 1 - первая строка, как было раньше); данные
             // начинаются СРАЗУ ПОСЛЕ неё - 0-based индекс первой строки
             // данных численно равен 1-based номеру строки заголовков
             const dataRows = allRows.slice(this.headerRow);
             const dataColors = allColors.slice(this.headerRow);
+            const dataItalics = allItalics.slice(this.headerRow);
             
             // Определяем, какие столбцы будем показывать
             let colsToKeep = this.selectedColumns.length
@@ -281,6 +294,12 @@ export class XlsxImportNode extends BaseNode {
             this.cellColors = dataColors
                 .filter((_, i) => keepMask[i])
                 .map(row => colsToKeep.map(i => (row?.[i] ?? null)));
+            // Раунд 134 - та же фильтрация, что cellColors - importedRows[i]/
+            // cellItalics[i] должны соответствовать ОДНОЙ и той же исходной
+            // строке листа.
+            this.cellItalics = dataItalics
+                .filter((_, i) => keepMask[i])
+                .map(row => colsToKeep.map(i => !!(row?.[i])));
 
             this.tableData = this._buildTableData();
             this.value = this.importedRows.length;

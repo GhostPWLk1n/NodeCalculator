@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.9
+ * @version 1.8.20
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -333,6 +333,9 @@ export class LayoutManager {
                     workdaysColWidthOverride: n.type === 'gantt' ? n.workdaysColWidthOverride : undefined,
                     responsibleColWidthOverride: n.type === 'gantt' ? n.responsibleColWidthOverride : undefined,
                     calDaysColWidthOverride: n.type === 'gantt' ? n.calDaysColWidthOverride : undefined,
+                    // Раунд 133 - колонка "Раздел"
+                    showSectionColumn: n.type === 'gantt' ? n.showSectionColumn : undefined,
+                    sectionColWidthOverride: n.type === 'gantt' ? n.sectionColWidthOverride : undefined,
                     // Раунд 109 - пользовательские цвета ответственных/групп
                     responsibleColors: n.type === 'gantt' && n.responsibleColors ? { ...n.responsibleColors } : undefined,
                     groupColors: n.type === 'gantt' && n.groupColors ? { ...n.groupColors } : undefined,
@@ -340,7 +343,14 @@ export class LayoutManager {
                     manualTasks: n.type === 'gantt' && n.manualTasks?.length ? n.manualTasks.map(t => ({ ...t })) : undefined,
                     deletedTaskKeys: n.type === 'gantt' && n.deletedTaskKeys?.length ? [...n.deletedTaskKeys] : undefined,
                     taskNameOverrides: n.type === 'gantt' && n.taskNameOverrides && Object.keys(n.taskNameOverrides).length ? { ...n.taskNameOverrides } : undefined,
+                    // Раунд 136 - ручное редактирование колонки "Раздел"
+                    taskSectionOverrides: n.type === 'gantt' && n.taskSectionOverrides && Object.keys(n.taskSectionOverrides).length ? { ...n.taskSectionOverrides } : undefined,
+                    // Раунд 137 - связи между задачами
+                    dependencies: n.type === 'gantt' && n.dependencies?.length ? n.dependencies.map(d => ({ ...d })) : undefined,
                     collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,
+                    // Раунд 130 (иерархия Ганта)
+                    collapsedBlocks: n.type === 'gantt' && n.collapsedBlocks && Object.keys(n.collapsedBlocks).length ? { ...n.collapsedBlocks } : undefined,
+                    collapsedStages: n.type === 'gantt' && n.collapsedStages && Object.keys(n.collapsedStages).length ? { ...n.collapsedStages } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
                     deadlineDate: n.type === 'gantt' ? n.deadlineDate : undefined,
@@ -369,6 +379,8 @@ export class LayoutManager {
                     importedRows: n.type === 'xlsxImport' ? n.importedRows.map(r => [...r]) : undefined,
                     // Раунд 114 - см. докстринг this.cellColors в конструкторе
                     cellColors: n.type === 'xlsxImport' && n.cellColors?.length ? n.cellColors.map(r => [...r]) : undefined,
+                    // Раунд 134 - см. докстринг this.cellItalics в конструкторе
+                    cellItalics: n.type === 'xlsxImport' && n.cellItalics?.length ? n.cellItalics.map(r => [...r]) : undefined,
 
                     // ImageNode: сама картинка целиком (base64 data URL) -
                     // см. докстринг imageNode.js про то, почему тут (в
