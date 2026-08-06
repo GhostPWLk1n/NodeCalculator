@@ -3814,14 +3814,22 @@ export class GanttNode extends BaseNode {
         if (this._isRerendering) return;
         this._isRerendering = true;
         const el = document.querySelector(`[data-node-id="${this.id}"]`);
-        if (el) {
-            el.remove();
-            if (window.nodeManager) {
+        if (el && window.nodeManager) {
+            try {
+                el.remove();
                 window.nodeManager.renderNode(this);
                 if (window.renderer) {
                     window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
                 }
+            } catch (err) {
+                console.error('[GanttNode.rerender] ошибка перерисовки:', err);
+                // В случае ошибки пробуем восстановить ноду
+                if (el.parentNode) {
+                    el.style.display = 'none';
+                }
             }
+        } else if (!el) {
+            console.warn('[GanttNode.rerender] элемент ноды не найден в DOM, пропускаем перерисовку');
         }
         setTimeout(() => { this._isRerendering = false; }, 100);
     }
