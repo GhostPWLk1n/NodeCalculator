@@ -2828,6 +2828,13 @@ export class GanttNode extends BaseNode {
                     const anchor = parseISODate(this.startDate) || new Date();
                     newOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
                     
+                    // Багфикс: при сдвиге начала задачи на выходной день
+                    // сохраняем актуальное количество рабочих дней для текущей
+                    // визуальной длительности, чтобы при следующем редактировании
+                    // не использовалось устаревшее значение override
+                    const visualDuration = task.durationDays; // текущая визуальная длительность в календарных днях
+                    this.taskDurationOverrides[taskKey] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, visualDuration));
+                    
                     this.taskDates[taskKey] = newOffset;
                     delete barEl.dataset.pendingOffset;
                     // Раунд 139 (по уточнению Mr.D: "зависимость в одну
