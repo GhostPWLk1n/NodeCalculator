@@ -2893,15 +2893,10 @@ export class GanttNode extends BaseNode {
                     newOffset = startOffset + clampedDelta;
                     newDuration = startDuration - clampedDelta;
                     
-                    // Если сдвиг за левый край попал на выходной, корректируем
-                    const anchor = parseISODate(this.startDate) || new Date();
-                    const testOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
-                    if (testOffset !== newOffset) {
-                        // Корректируем и длительность, чтобы конец остался на месте
-                        const offsetDiff = testOffset - newOffset;
-                        newOffset = testOffset;
-                        newDuration = Math.max(0.5, newDuration - offsetDiff);
-                    }
+                    // Исправление: НЕ корректируем длительность при сдвиге на выходной.
+                    // Вместо этого запоминаем "сырое" смещение, а коррекция на рабочий день
+                    // будет применена в onUp(). Длительность остается неизменной в рабочих днях.
+                    // Это предотвращает накопление ошибок при последующих перетаскиваниях.
                 }
 
                 barEl.style.left = (newOffset * dayWidth) + 'px';
