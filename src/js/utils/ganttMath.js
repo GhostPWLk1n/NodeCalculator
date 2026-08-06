@@ -6,7 +6,7 @@
  * @file    ganttMath.js
  * @brief   Математический модуль для диаграммы Ганта: функции работы с датами и расчёта рабочих дней
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.9.0
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -92,8 +92,7 @@ export function isWeekend(date) {
 
 /**
  * Проверяет, является ли дата нерабочим днём по календарю праздников
- * Выходные (сб, вс) больше НЕ считаются автоматически нерабочими -
- * только явно указанные в holidaySet.
+ * Все расчеты длительности ведутся в рабочих днях с учетом holidaySet.
  * @param {Date} date - Дата для проверки
  * @param {Set<string>} holidaySet - Set ISO-дат ('YYYY-MM-DD') праздников
  * @returns {boolean} true, если дата есть в holidaySet
@@ -105,6 +104,7 @@ export function isNonWorkingDay(date, holidaySet) {
 /**
  * Сдвигает смещение вперёд до ближайшего рабочего дня
  * Если offsetDays попадает на выходной/праздник - сдвигает пока не найдёт рабочий день
+ * Применяется автоматически после всех вычислений (перетаскивание, связи, редактирование)
  * @param {Date} anchor - Базовая дата (якорь)
  * @param {number} offsetDays - Смещение в днях от anchor
  * @param {Set<string>} holidaySet - Set праздников
@@ -122,6 +122,7 @@ export function nextWorkingOffset(anchor, offsetDays, holidaySet) {
  * Вычисляет смещение конца задачи при расходе durationDays РАБОЧИХ дней
  * Пропускает выходные/праздники (время на них не тратится, но они остаются
  * внутри итогового календарного диапазона).
+ * Применяется автоматически ко всем задачам независимо от источника данных.
  * @param {Date} anchor - Базовая дата (якорь)
  * @param {number} startOffsetDays - Смещение начала (гарантированно рабочий день)
  * @param {number} durationDays - Длительность в рабочих днях (может быть дробной)
@@ -142,4 +143,24 @@ export function spanWorkingDays(anchor, startOffsetDays, durationDays, holidaySe
         offset += consume;
     }
     return offset;
+}
+
+/**
+ * Подсчитывает количество рабочих дней в диапазоне [startOffset, startOffset+duration)
+ * Используется для конвертации календарной длительности в рабочие дни при сохранении override
+ * @param {Date} anchor - Базовая дата (якорь)
+ * @param {number} startOffset - Смещение начала
+ * @param {number} duration - Длительность в календарных днях
+ * @param {Set<string>} holidaySet - Set праздников
+ * @returns {number} Количество рабочих дней
+ */
+export function countWorkingDaysInRange(anchor, startOffset, duration, holidaySet) {
+    if (duration <= 0) return 0;
+    let count = 0;
+    for (let i = 0; i < duration; i++) {
+        if (!isNonWorkingDay(addDays(anchor, startOffset + i), holidaySet)) {
+            count++;
+        }
+    }
+    return Math.max(0.5, count);
 }

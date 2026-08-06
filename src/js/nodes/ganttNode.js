@@ -96,12 +96,9 @@ export class GanttNode extends BaseNode {
         // periodPreset === 'custom' - см. totalDays в createGanttArea().
         this.customPeriodDays = Math.max(1, config.customPeriodDays ?? 60);
         this.durationUnit = config.durationUnit === 'hours' ? 'hours' : 'days';
-        // Режим расчёта длительности: 'calendar' (как раньше - длительность
-        // это просто N календарных дней подряд, включая выходные) или
-        // 'working' (N РАБОЧИХ дней - выходные внутри диапазона пропускаются
-        // "бесплатно", см. spanWorkingDays/nextWorkingOffset выше и их
-        // применение в calculate())
-        this.scheduleMode = config.scheduleMode === 'working' ? 'working' : 'calendar';
+        // Все расчеты ведутся в рабочих днях с учетом подключенного графика
+        // праздников и выходных (holidaySet). Логика применяется автоматически
+        // после всех остальных вычислений (перетаскивание, связи, редактирование).
         // Масштаб линейки (плотность/шаг делений) - отдельно от периода
         // отображения (period определяет ОБЩУЮ ширину шкалы в днях,
         // rulerScale - насколько "растянут" каждый день)
@@ -2276,9 +2273,7 @@ export class GanttNode extends BaseNode {
         // Раунд 140 (по жалобе Mr.D: "при расчёте по рабочим дням,
         // когда устанавливаем зависимость у дочернего элемента, теряется
         // приоритет переноса даты с выходного дня") - обычное
-        // планирование (см. calculate() выше, `if (this.scheduleMode
-        // === 'working') startOffsetDays = nextWorkingOffset(...)`)
-        // ВСЕГДА "прилипает" к ближайшему рабочему дню - но связь
+        // планирование (см. calculate() выше) ВСЕГДА "прилипает" к ближайшему рабочему дню - но связь
         // двигает задачу ЧИСТОЙ АРИФМЕТИКОЙ (start += delta) уже ПОСЛЕ
         // этого шага, теряя правило. Применяем ТО ЖЕ nextWorkingOffset()
         // к вычисленной позиции цели.
@@ -2290,9 +2285,7 @@ export class GanttNode extends BaseNode {
                 const to = this._resolveEndpointTask(dep.to);
                 if (!from || !to) return;
                 let desiredStart = from.startOffsetDays + from.durationDays + (dep.gap ?? 0);
-                if (this.scheduleMode === 'working') {
-                    desiredStart = nextWorkingOffset(anchor, desiredStart, this.holidaySet);
-                }
+                desiredStart = nextWorkingOffset(anchor, desiredStart, this.holidaySet);
                 const delta = desiredStart - to.startOffsetDays;
                 if (delta === 0) return;
                 // to.memberTasks - ССЫЛКИ на реальные объекты задач (не
@@ -2449,24 +2442,17 @@ export class GanttNode extends BaseNode {
     // протяжённость рабочих дней, график перестаёт прибавлять
     // выходные") - таблица-источник ПОСЛЕ Раунда 105 ВСЕГДА считает
     // свою длительность через spanWorkingDays() (Начало+Раб.дни, вне
-    // зависимости от scheduleMode - см. calculate()) - override для неё
+    // зависимости от режима - см. calculate()) - override для неё
     // теперь ТОЖЕ должен быть числом РАБОЧИХ дней (не готовой
     // календарной шириной, как было раньше) - иначе, если календарь
     // (список праздников) изменится ПОСЛЕ редактирования, уже
     // отредактированная задача "замерзала" на старой календарной
     // ширине и переставала реагировать - именно это Mr.D описал как
-    // "перестаёт прибавлять выходные". Список/группы (scheduleMode ===
-    // 'working') - тот же принцип, calendar-режим списка - override
-    // остаётся готовой календарной шириной (там spanWorkingDays() не
-    // применяется вообще, конвертировать нечего).
+    // "перестаёт прибавлять выходные". Override всегда хранит число
+    // рабочих дней (spanWorkingDays() применяется везде).
     _applyWorkDaysEdit(task, newWorkDays, anchor) {
         const key = task.taskKey || task.name;
-        if (this.sourceMode === 'table' || this.scheduleMode === 'working') {
-            this.taskDurationOverrides[key] = Math.max(0.5, newWorkDays);
-        } else {
-            const endOffset = spanWorkingDays(anchor, task.startOffsetDays, newWorkDays, this.holidaySet);
-            this.taskDurationOverrides[key] = Math.max(0.5, endOffset - task.startOffsetDays);
-        }
+        this.taskDurationOverrides[key] = Math.max(0.5, newWorkDays);
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
@@ -2628,12 +2614,7 @@ export class GanttNode extends BaseNode {
     }
 
     _countWorkingDaysInRange(anchor, startOffsetDays, durationDays) {
-        let count = 0;
-        const wholeDays = Math.ceil(durationDays);
-        for (let d = 0; d < wholeDays; d++) {
-            if (!isNonWorkingDay(addDays(anchor, startOffsetDays + d), this.holidaySet)) count++;
-        }
-        return count;
+        return countWorkingDaysInRange(anchor, startOffsetDays, durationDays, this.holidaySet);
     }
 
     // Рабочих дней суммарно по списку задач - каждая задача СВОИМ
@@ -2953,17 +2934,11 @@ export class GanttNode extends BaseNode {
                     // повторного spanWorkingDays()), из-за чего задача
                     // "замерзала" на старой ширине и переставала
                     // реагировать на изменения календаря/праздников,
-                    // сделанные ПОСЛЕ редактирования. Таблица теперь ТОЖЕ
-                    // всегда конвертирует через _countWorkingDaysInRange()
-                    // перед сохранением override (не хранит готовую
-                    // календарную ширину как раньше) - см. докстринг
-                    // _applyWorkDaysEdit() про то, почему.
-                    if (this.sourceMode === 'table' || this.scheduleMode === 'working') {
-                        const anchor = parseISODate(this.startDate) || new Date();
-                        this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
-                    } else {
-                        this.taskDurationOverrides[key] = newDuration;
-                    }
+                    // сделанные ПОСЛЕ редактирования. Override всегда
+                    // хранит число рабочих дней (конвертация через
+                    // _countWorkingDaysInRange()).
+                    const anchor = parseISODate(this.startDate) || new Date();
+                    this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }
@@ -3634,13 +3609,9 @@ export class GanttNode extends BaseNode {
                     this.taskDates[name] = startOffsetDays;
                 }
 
-                let endOffsetDays;
-                if (this.scheduleMode === 'working') {
-                    startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
-                    endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
-                } else {
-                    endOffsetDays = startOffsetDays + duration;
-                }
+                // Все расчеты ведутся в рабочих днях с учетом holidaySet
+                startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
+                const endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
 
                 cursor = Math.max(cursor, endOffsetDays);
                 return { name, taskKey: name, durationDays: endOffsetDays - startOffsetDays, startOffsetDays, responsible: '' };
@@ -3694,13 +3665,9 @@ export class GanttNode extends BaseNode {
                     this.taskDates[key] = startOffsetDays;
                 }
 
-                let endOffsetDays;
-                if (this.scheduleMode === 'working') {
-                    startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
-                    endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
-                } else {
-                    endOffsetDays = startOffsetDays + duration;
-                }
+                // Все расчеты ведутся в рабочих днях с учетом holidaySet
+                startOffsetDays = nextWorkingOffset(anchor, startOffsetDays, this.holidaySet);
+                const endOffsetDays = spanWorkingDays(anchor, startOffsetDays, duration, this.holidaySet);
 
                 cursor = Math.max(cursor, endOffsetDays);
                 return {
@@ -3906,18 +3873,6 @@ export class GanttNode extends BaseNode {
             ],
             get: () => this.durationUnit,
             set: (v) => { this.durationUnit = v; }
-        });
-
-        fields.push({
-            key: 'scheduleMode',
-            label: 'Расчёт длительности',
-            type: 'select',
-            options: [
-                { value: 'calendar', label: 'Календарные дни' },
-                { value: 'working', label: 'Рабочие дни (искл. выходные)' }
-            ],
-            get: () => this.scheduleMode,
-            set: (v) => { this.scheduleMode = v === 'working' ? 'working' : 'calendar'; }
         });
 
         fields.push({ type: 'section', label: '📊 Отображение', collapsible: true, collapsed: true });

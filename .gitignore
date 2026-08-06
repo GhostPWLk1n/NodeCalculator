@@ -1,11 +1,1 @@
-(src/js/utils/ganttConstants.js, src/js/utils/ganttMath.js)
-
-### Deleted files:
-[]
-
-### Modified files:
-['src/js/nodes/ganttNode.js']
-
-###current .gitignore Content
-
-Your output: Only the optimized .gitignore content (or empty if no ignores needed).
+(src/js/nodes/ganttNode.js, src/js/utils/ganttMath.js)
