@@ -2073,9 +2073,14 @@ export class GanttNode extends BaseNode {
                 const deltaDays = parseInt(indicatorEl.dataset.pendingDeltaDays || '0', 10);
                 delete indicatorEl.dataset.pendingDeltaDays;
                 if (deltaDays !== 0) {
+                    const anchor = parseISODate(this.startDate) || new Date();
                     group.tasks.forEach(task => {
-                        const current = this.taskDates[task.taskKey] ?? task.startOffsetDays;
-                        this.taskDates[task.taskKey] = Math.max(0, current + deltaDays);
+                        let current = this.taskDates[task.taskKey] ?? task.startOffsetDays;
+                        current = Math.max(0, current + deltaDays);
+                        // Применяем nextWorkingOffset к каждой задаче группы,
+                        // чтобы гарантировать старт с рабочего дня
+                        current = nextWorkingOffset(anchor, current, this.holidaySet);
+                        this.taskDates[task.taskKey] = current;
                     });
                     // Раунд 139 - тот же принцип, что у attachBarDrag() -
                     // если ЭТОТ раздел ("group:Имя") - цель какой-то
@@ -2815,8 +2820,14 @@ export class GanttNode extends BaseNode {
                 document.removeEventListener('mouseup', onUp);
                 barEl.style.cursor = 'grab';
                 if (barEl.dataset.pendingOffset !== undefined) {
-                    const newOffset = parseInt(barEl.dataset.pendingOffset, 10);
+                    let newOffset = parseInt(barEl.dataset.pendingOffset, 10);
                     const taskKey = task.taskKey || task.name;
+                    
+                    // Применяем nextWorkingOffset сразу после перетаскивания,
+                    // чтобы задача гарантированно начиналась с рабочего дня
+                    const anchor = parseISODate(this.startDate) || new Date();
+                    newOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
+                    
                     this.taskDates[taskKey] = newOffset;
                     delete barEl.dataset.pendingOffset;
                     // Раунд 139 (по уточнению Mr.D: "зависимость в одну
@@ -2891,8 +2902,14 @@ export class GanttNode extends BaseNode {
                 delete handleEl.dataset.pendingDuration;
                 if (pendingOffset !== undefined && pendingDuration !== undefined) {
                     const key = task.taskKey || task.name;
-                    const newOffset = parseFloat(pendingOffset);
+                    let newOffset = parseFloat(pendingOffset);
                     const newDuration = parseFloat(pendingDuration);
+                    
+                    // Применяем nextWorkingOffset к началу задачи,
+                    // чтобы гарантировать старт с рабочего дня
+                    const anchor = parseISODate(this.startDate) || new Date();
+                    newOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
+                    
                     this.taskDates[key] = newOffset;
                     // Багфикс (Раунд 83, по жалобе Mr.D: "перемешались
                     // фактические и рабочие дни... к дню опять
@@ -2937,7 +2954,6 @@ export class GanttNode extends BaseNode {
                     // сделанные ПОСЛЕ редактирования. Override всегда
                     // хранит число рабочих дней (конвертация через
                     // _countWorkingDaysInRange()).
-                    const anchor = parseISODate(this.startDate) || new Date();
                     this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
