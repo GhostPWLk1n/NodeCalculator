@@ -2225,13 +2225,24 @@ export class GanttNode extends BaseNode {
             const sectionName = key.slice('group:'.length);
             const members = this._tasksInSection(sectionName);
             if (members.length === 0) return null;
-            const minStart = Math.min(...members.map(t => t.startOffsetDays));
-            const maxEnd = Math.max(...members.map(t => t.startOffsetDays + t.durationDays));
+            const minStart = Math.min(...members.map(t => this.taskDates[t.taskKey] ?? t.startOffsetDays));
+            const maxEnd = Math.max(...members.map(t => {
+                const start = this.taskDates[t.taskKey] ?? t.startOffsetDays;
+                const duration = this.taskDurationOverrides[t.taskKey] ?? t.rawWorkDays;
+                const anchor = parseISODate(this.startDate) || new Date();
+                const endOffset = spanWorkingDays(anchor, start, duration, this.holidaySet);
+                return endOffset;
+            }));
             return { startOffsetDays: minStart, durationDays: maxEnd - minStart, memberTasks: members };
         }
         const task = (this.tasks || []).find(t => (t.taskKey || t.name) === key);
         if (!task) return null;
-        return { startOffsetDays: task.startOffsetDays, durationDays: task.durationDays, memberTasks: [task] };
+        const startOffsetDays = this.taskDates[task.taskKey || task.name] ?? task.startOffsetDays;
+        const workDaysForSpan = this.taskDurationOverrides[task.taskKey || task.name] ?? task.rawWorkDays;
+        const anchor = parseISODate(this.startDate) || new Date();
+        const endOffset = spanWorkingDays(anchor, startOffsetDays, workDaysForSpan, this.holidaySet);
+        const durationDays = Math.max(0, endOffset - startOffsetDays);
+        return { startOffsetDays, durationDays, memberTasks: [task] };
     }
 
     // Раунд 138 - все задачи, чьё groupName/blockName/stageName
