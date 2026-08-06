@@ -20,7 +20,7 @@ import { COLOR_PALETTE } from '../utils/columnFormatting.js';
 import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 import {
     parseISODate, addDays, formatISODate, formatDateRu, parseDateRu, daysBetween,
-    isWeekend, isNonWorkingDay, nextWorkingOffset, spanWorkingDays
+    isWeekend, isNonWorkingDay, nextWorkingOffset, spanWorkingDays, countWorkingDaysInRange
 } from '../utils/ganttMath.js';
 import {
     ROW_HEIGHT, MAX_VISIBLE_ROWS, LABEL_WIDTH, HOURS_COL_WIDTH, WORKDAYS_COL_WIDTH,
