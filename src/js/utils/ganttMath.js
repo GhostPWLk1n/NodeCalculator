@@ -82,6 +82,8 @@ export function daysBetween(a, b) {
  * Проверяет, является ли дата выходным (суббота/воскресенье)
  * Используется ТОЛЬКО как цветовая подсказка при отрисовке.
  * Для определения рабочего/нерабочего дня используйте isNonWorkingDay().
+ * ВНИМАНИЕ: Эта функция НЕ влияет на расчёт длительности задач -
+ * только подключенный календарь (holidaySet) определяет рабочие дни.
  * @param {Date} date - Дата для проверки
  * @returns {boolean} true, если суббота или воскресенье
  */
@@ -93,9 +95,11 @@ export function isWeekend(date) {
 /**
  * Проверяет, является ли дата нерабочим днём по календарю праздников
  * Все расчеты длительности ведутся в рабочих днях с учетом holidaySet.
+ * ВНИМАНИЕ: Суббота и воскресенье НЕ считаются автоматически выходными -
+ * только если они явно указаны в holidaySet (подключенный календарь).
  * @param {Date} date - Дата для проверки
  * @param {Set<string>} holidaySet - Set ISO-дат ('YYYY-MM-DD') праздников
- * @returns {boolean} true, если дата есть в holidaySet
+ * @returns {boolean} true, если дата есть в holidaySet (праздник)
  */
 export function isNonWorkingDay(date, holidaySet) {
     return !!(holidaySet && holidaySet.size > 0 && holidaySet.has(formatISODate(date)));
@@ -148,6 +152,8 @@ export function spanWorkingDays(anchor, startOffsetDays, durationDays, holidaySe
 /**
  * Подсчитывает количество рабочих дней в диапазоне [startOffset, startOffset+duration)
  * Используется для конвертации календарной длительности в рабочие дни при сохранении override
+ * ВАЖНО: Считает дни, НЕ входящие в holidaySet (праздники по подключенному календарю).
+ * Суббота/воскресенье сами по себе НЕ исключаются - только если явно в holidaySet.
  * @param {Date} anchor - Базовая дата (якорь)
  * @param {number} startOffset - Смещение начала
  * @param {number} duration - Длительность в календарных днях
