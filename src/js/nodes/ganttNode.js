@@ -2828,12 +2828,11 @@ export class GanttNode extends BaseNode {
                     const anchor = parseISODate(this.startDate) || new Date();
                     newOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
                     
-                    // Багфикс: при сдвиге начала задачи на выходной день
-                    // сохраняем актуальное количество рабочих дней для текущей
-                    // визуальной длительности, чтобы при следующем редактировании
-                    // не использовалось устаревшее значение override
-                    const visualDuration = task.durationDays; // текущая визуальная длительность в календарных днях
-                    this.taskDurationOverrides[taskKey] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, visualDuration));
+                    // ИСПРАВЛЕНИЕ: Не конвертируем визуальную длительность в рабочие дни.
+                    // Храним ТОЛЬКО смещение (offset). Длительность в рабочих днях
+                    // вычисляется динамически при экспорте/расчете через holidaySet.
+                    // Это предотвращает двойную конвертацию и накопление ошибок.
+                    // Визуальная длительность (durationDays) остается неизменной.
                     
                     this.taskDates[taskKey] = newOffset;
                     delete barEl.dataset.pendingOffset;
@@ -2893,6 +2892,16 @@ export class GanttNode extends BaseNode {
                     const clampedDelta = Math.min(Math.max(deltaDays, -startOffset), maxDelta);
                     newOffset = startOffset + clampedDelta;
                     newDuration = startDuration - clampedDelta;
+                    
+                    // Если сдвиг за левый край попал на выходной, корректируем
+                    const anchor = parseISODate(this.startDate) || new Date();
+                    const testOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
+                    if (testOffset !== newOffset) {
+                        // Корректируем и длительность, чтобы конец остался на месте
+                        const offsetDiff = testOffset - newOffset;
+                        newOffset = testOffset;
+                        newDuration = Math.max(0.5, newDuration - offsetDiff);
+                    }
                 }
 
                 barEl.style.left = (newOffset * dayWidth) + 'px';
@@ -2918,50 +2927,15 @@ export class GanttNode extends BaseNode {
                     newOffset = nextWorkingOffset(anchor, newOffset, this.holidaySet);
                     
                     this.taskDates[key] = newOffset;
-                    // Багфикс (Раунд 83, по жалобе Mr.D: "перемешались
-                    // фактические и рабочие дни... к дню опять
-                    // прибавляются праздники"). newDuration - это
-                    // ВИЗУАЛЬНАЯ (календарная) ширина полосы после
-                    // растягивания - то, что фактически показывает bar на
-                    // экране. Но this.taskDurationOverrides читается на
-                    // следующем calculate() как "сколько РАБОЧИХ дней
-                    // отработать" (аргумент spanWorkingDays(), которая
-                    // САМА пропускает выходные/праздники внутри диапазона).
-                    // Если положить туда календарную ширину как есть,
-                    // spanWorkingDays() пропустит выходные ВНУТРИ уже
-                    // растянутого диапазона ЕЩЁ РАЗ - календарная ширина
-                    // раздувается на каждое редактирование ("опять
-                    // прибавляются праздники"). В режиме 'working'
-                    // сохраняем не календарную ширину, а число РАБОЧИХ
-                    // дней внутри неё (_countWorkingDaysInRange) - тогда
-                    // spanWorkingDays() на следующем пересчёте
-                    // восстановит РОВНО ТОТ ЖЕ календарный диапазон, а не
-                    // расширит его. В режиме 'calendar' (кроме таблицы -
-                    // см. ниже) пропуска выходных нет вообще - календарная
-                    // ширина и есть исходная длительность, конвертировать
-                    // нечего.
-                    //
-                    // Раунд 118 (багфикс, по жалобе Mr.D: "меняю
-                    // протяжённость рабочих дней, график перестаёт
-                    // прибавлять выходные") - ДО этого раунда здесь стояло
-                    // "в sourceMode==='table' override используется
-                    // НАПРЯМУЮ как календарная ширина" - было верно ДО
-                    // Раунда 105 (тогда таблица читала готовую дату
-                    // "Окончание", override просто перекрывал её без
-                    // spanWorkingDays()). Раунд 105 переделал таблицу на
-                    // ВСЕГДА пересчитывать через spanWorkingDays()
-                    // (Начало+Раб.дни) - но эта конвертация "забыла"
-                    // обновиться вместе с ним: override для уже
-                    // отредактированной задачи оставался готовой
-                    // календарной шириной и подсовывался НАПРЯМУЮ (см.
-                    // calculate() - таблица тоже читает override без
-                    // повторного spanWorkingDays()), из-за чего задача
-                    // "замерзала" на старой ширине и переставала
-                    // реагировать на изменения календаря/праздников,
-                    // сделанные ПОСЛЕ редактирования. Override всегда
-                    // хранит число рабочих дней (конвертация через
-                    // _countWorkingDaysInRange()).
-                    this.taskDurationOverrides[key] = Math.max(0.5, this._countWorkingDaysInRange(anchor, newOffset, newDuration));
+                    // ИСПРАВЛЕНИЕ: Не конвертируем визуальную длительность в рабочие дни.
+                    // Храним ТОЛЬКО смещение (offset) и визуальную длительность (durationDays).
+                    // Длительность в рабочих днях вычисляется динамически при экспорте/расчете
+                    // через holidaySet. Это предотвращает двойную конвертацию и накопление ошибок.
+                    // Визуальная длительность (newDuration) остается неизменной.
+                    // 
+                    // Примечание: taskDurationOverrides теперь используется только для явного
+                    // переопределения длительности пользователем, а не для хранения результатов
+                    // конвертации после перетаскивания/растягивания.
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }
