@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.8.27
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -318,7 +318,8 @@ export class LayoutManager {
                     periodPreset: n.type === 'gantt' ? n.periodPreset : undefined,
                     customPeriodDays: n.type === 'gantt' ? n.customPeriodDays : undefined,
                     durationUnit: n.type === 'gantt' ? n.durationUnit : undefined,
-                    scheduleMode: n.type === 'gantt' ? n.scheduleMode : undefined,
+                    // Раунд 141 - scheduleMode убран целиком (все расчёты
+                    // теперь всегда в рабочих днях, переключать нечего).
                     taskDates: n.type === 'gantt' ? { ...n.taskDates } : undefined,
                     taskDurationOverrides: n.type === 'gantt' ? { ...n.taskDurationOverrides } : undefined,
                     taskResponsible: n.type === 'gantt' ? { ...n.taskResponsible } : undefined,
@@ -341,6 +342,8 @@ export class LayoutManager {
                     groupColors: n.type === 'gantt' && n.groupColors ? { ...n.groupColors } : undefined,
                     // Раунд 115 (чек-лист, раздел 4) - ручные добавления/удаления строк
                     manualTasks: n.type === 'gantt' && n.manualTasks?.length ? n.manualTasks.map(t => ({ ...t })) : undefined,
+                    // Раунд 146 - строки, превращённые в разделы
+                    promotedSectionKeys: n.type === 'gantt' && n.promotedSectionKeys?.size ? [...n.promotedSectionKeys] : undefined,
                     deletedTaskKeys: n.type === 'gantt' && n.deletedTaskKeys?.length ? [...n.deletedTaskKeys] : undefined,
                     taskNameOverrides: n.type === 'gantt' && n.taskNameOverrides && Object.keys(n.taskNameOverrides).length ? { ...n.taskNameOverrides } : undefined,
                     // Раунд 136 - ручное редактирование колонки "Раздел"
@@ -353,6 +356,8 @@ export class LayoutManager {
                     collapsedStages: n.type === 'gantt' && n.collapsedStages && Object.keys(n.collapsedStages).length ? { ...n.collapsedStages } : undefined,
                     rulerScale: n.type === 'gantt' ? n.rulerScale : undefined,
                     showGridLines: n.type === 'gantt' ? n.showGridLines : undefined,
+                    // Раунд 144 - подписи дат на полосах
+                    showBarDateLabels: n.type === 'gantt' ? n.showBarDateLabels : undefined,
                     deadlineDate: n.type === 'gantt' ? n.deadlineDate : undefined,
                     showYearRow: n.type === 'gantt' ? n.showYearRow : undefined,
                     showMonthRow: n.type === 'gantt' ? n.showMonthRow : undefined,

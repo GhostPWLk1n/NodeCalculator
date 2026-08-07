@@ -3763,10 +3763,14 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 
 /* Значки добавления/удаления строки Ганта при наведении на номер
    (Раунд 115, чек-лист 1.7.21 раздел 4) */
-.gantt-row-add-btn,
-.gantt-row-remove-btn {
+/* Раунд 147 - компактная кнопка общего назначения (та же геометрия,
+   что была у старого 3-кнопочного набора строки задачи, но под НОВЫМ
+   именем - строка задачи теперь их не использует, см. .gantt-row-handle
+   выше - остаётся для ДВУХ легитимных мест, которых Раунд 147 не
+   касался: "удалить группу целиком" (наведение на toggleWrap группы) и
+   "+" в шапке (добавить первую строку списка). */
+.gantt-small-btn {
     position: absolute;
-    left: -13px;
     width: 11px;
     height: 11px;
     font-size: 9px;
@@ -3781,10 +3785,47 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     justify-content: center;
     z-index: 10;
 }
-.gantt-row-add-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
-.gantt-row-remove-btn:hover { background: var(--md-error); color: var(--md-surface); }
-.gantt-row-add-btn { top: 1px; }
-.gantt-row-remove-btn { top: 13px; }
+.gantt-small-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
+
+   очень мелкие. Вместо кнопок поставим ручку, а на строке в фокусе
+   сделаем контекстное меню по ПКМ") - одна ручка вместо трёх кнопок
+   (было .gantt-row-add-btn/.gantt-row-remove-btn/.gantt-row-promote-btn,
+   Раунд 115/146) - тот же визуальный символ (⠿), что уже используют
+   ручки виджетов Досок (.board-widget-drag-handle). */
+.gantt-row-handle {
+    position: absolute;
+    left: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    line-height: 1;
+    color: var(--md-text-secondary);
+    cursor: default;
+    user-select: none;
+    z-index: 10;
+}
+
+/* Контекстное меню строки Диаграммы Ганта - самодостаточное, НЕ
+   переиспользует .context-menu (тот жёстко привязан к операциям над
+   нодами графа) - похожий внешний вид, отдельный класс. */
+.gantt-row-context-menu {
+    background: var(--md-surface-variant);
+    border: 1px solid var(--md-divider);
+    border-radius: var(--md-radius-lg);
+    padding: 6px 0;
+    min-width: 180px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.gantt-row-context-menu-item {
+    padding: 8px 20px;
+    color: var(--md-text);
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.gantt-row-context-menu-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
 
 /* Drag&drop импорта файлов на холст (Раунд 119, релиз 1.8.0) */
 #workspace.drag-file-over::after {

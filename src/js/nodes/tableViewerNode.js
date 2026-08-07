@@ -6,7 +6,7 @@
  * @file    tableViewerNode.js
  * @brief   Нода просмотра таблицы (Data), без выходов
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.8.27
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    helpers.js
  * @brief   Форматирование чисел/значений, generateId, определение типа сокета
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.8.27
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    markdown.js
  * @brief   Лёгкий markdown->HTML рендерер без внешних библиотек - для узла "Текст" (TextNode)
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.8.27
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

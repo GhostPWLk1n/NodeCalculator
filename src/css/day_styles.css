@@ -3545,10 +3545,8 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 }
 
 /* Значки добавления/удаления строки Ганта - парность со styles.css */
-.gantt-row-add-btn,
-.gantt-row-remove-btn {
+.gantt-small-btn {
     position: absolute;
-    left: -13px;
     width: 11px;
     height: 11px;
     font-size: 9px;
@@ -3563,10 +3561,39 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     justify-content: center;
     z-index: 10;
 }
-.gantt-row-add-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
-.gantt-row-remove-btn:hover { background: var(--md-error); color: var(--md-surface); }
-.gantt-row-add-btn { top: 1px; }
-.gantt-row-remove-btn { top: 13px; }
+.gantt-small-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
+
+.gantt-row-handle {
+    position: absolute;
+    left: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    line-height: 1;
+    color: var(--md-text-secondary);
+    cursor: default;
+    user-select: none;
+    z-index: 10;
+}
+
+.gantt-row-context-menu {
+    background: var(--md-surface-variant);
+    border: 1px solid var(--md-divider);
+    border-radius: var(--md-radius-lg);
+    padding: 6px 0;
+    min-width: 180px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.gantt-row-context-menu-item {
+    padding: 8px 20px;
+    color: var(--md-text);
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.gantt-row-context-menu-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
 
 /* Drag&drop импорта файлов на холст - парность со styles.css */
 #workspace.drag-file-over::after {
