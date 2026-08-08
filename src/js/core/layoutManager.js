@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -327,6 +327,9 @@ export class LayoutManager {
                     showWorkingDaysColumn: n.type === 'gantt' ? n.showWorkingDaysColumn : undefined,
                     showResponsibleColumn: n.type === 'gantt' ? n.showResponsibleColumn : undefined,
                     showCalDaysColumn: n.type === 'gantt' ? n.showCalDaysColumn : undefined,
+                    // Раунд 157 - новые колонки суммы раб.дней/часов
+                    showSumWorkingDaysColumn: n.type === 'gantt' ? n.showSumWorkingDaysColumn : undefined,
+                    showSumHoursColumn: n.type === 'gantt' ? n.showSumHoursColumn : undefined,
                     subtitleText: n.type === 'gantt' ? n.subtitleText : undefined,
                     numColWidthOverride: n.type === 'gantt' ? n.numColWidthOverride : undefined,
                     labelColWidthOverride: n.type === 'gantt' ? n.labelColWidthOverride : undefined,
@@ -344,6 +347,8 @@ export class LayoutManager {
                     manualTasks: n.type === 'gantt' && n.manualTasks?.length ? n.manualTasks.map(t => ({ ...t })) : undefined,
                     // Раунд 146 - строки, превращённые в разделы
                     promotedSectionKeys: n.type === 'gantt' && n.promotedSectionKeys?.size ? [...n.promotedSectionKeys] : undefined,
+                    // Раунд 150 - уровни вложенности разделов/подразделов
+                    sectionLevels: n.type === 'gantt' && n.sectionLevels?.size ? [...n.sectionLevels.entries()] : undefined,
                     deletedTaskKeys: n.type === 'gantt' && n.deletedTaskKeys?.length ? [...n.deletedTaskKeys] : undefined,
                     taskNameOverrides: n.type === 'gantt' && n.taskNameOverrides && Object.keys(n.taskNameOverrides).length ? { ...n.taskNameOverrides } : undefined,
                     // Раунд 136 - ручное редактирование колонки "Раздел"

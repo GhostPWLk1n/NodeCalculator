@@ -6,7 +6,7 @@
  * @file    connectionManager.js
  * @brief   Создание и разрыв соединений между сокетами нод
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

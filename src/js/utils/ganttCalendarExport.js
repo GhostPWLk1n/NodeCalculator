@@ -6,7 +6,7 @@
  * @file    ganttCalendarExport.js
  * @brief   Сборка сетки {value,color,border} для экспорта GanttNode в Excel-календарь - обратный механизм к GanttTableProcessorNode
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -60,6 +60,20 @@ const PX_TO_EXCEL_UNITS = 22 / 153;
 
 function pxToExcelUnits(px) {
     return Math.round(px * PX_TO_EXCEL_UNITS * 100) / 100; // округление до 2 знаков - Excel всё равно не показывает точнее
+}
+
+// Раунд 156 (по запросу Mr.D: "цвета подзадач пусть задаются немного
+// бледнее") - смешивает HEX-цвет с белым на долю amount (0..1) -
+// применяется к ЗАДАЧАМ (не к самим разделам - те сохраняют "полный"
+// цвет, чтобы визуально оставаться "главнее" своих подзадач в списке).
+const SUBTASK_LIGHTEN_AMOUNT = 0.35;
+function lightenHex(hex, amount) {
+    const clean = hex.replace('#', '');
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    const mix = (c) => Math.round(c + (255 - c) * amount);
+    return [mix(r), mix(g), mix(b)].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
 function parseISODate(s) {
@@ -137,6 +151,12 @@ function buildBaseColumns(ganttNode) {
     if (ganttNode.showCalDaysColumn) {
         cols.push({ key: 'caldays', header: 'Кал. дни', width: typeof ganttNode._calDaysW === 'function' ? ganttNode._calDaysW() : 40 });
     }
+    if (ganttNode.showSumWorkingDaysColumn) {
+        cols.push({ key: 'sumworkdays', header: 'Сум.раб.дн.', width: typeof ganttNode._sumWorkdaysW === 'function' ? ganttNode._sumWorkdaysW() : 44 });
+    }
+    if (ganttNode.showSumHoursColumn) {
+        cols.push({ key: 'sumhours', header: 'Сум.ч.ч.', width: typeof ganttNode._sumHoursW === 'function' ? ganttNode._sumHoursW() : 44 });
+    }
     return cols;
 }
 
@@ -198,16 +218,66 @@ export function buildGanttCalendarGrid(ganttNode) {
         merges.push({ r1: 3, c1: baseColCount + g.startIdx, r2: 3, c2: baseColCount + g.endIdx });
     });
 
-    tasks.forEach((task, i) => {
+    // Раунд 155 (по запросу Mr.D: "нету строки общего 'Итого'. Должна
+    // быть жирной светло-серой, так же с днём начала и конца") - та же
+    // семантика, что buildTotalRow() на самой диаграмме (см.
+    // ganttNode.js) - идёт СРАЗУ после заголовков, ДО первой задачи
+    // (тот же порядок, что и в приложении). Считается по ВСЕМ задачам
+    // (ganttNode.tasks - уже плоский, полный список после
+    // _applyPromotedSections(), включает вложенные подразделы).
+    const LIGHT_GRAY = 'D9D9D9';
+    if (tasks.length > 0) {
+        const totalRow = new Array(baseColCount + dateColumns.length).fill(null).map(() => ({ value: null, border: true, bold: true, color: LIGHT_GRAY }));
+        const nameColIdx = baseCols.findIndex(c => c.key === 'name');
+        if (nameColIdx >= 0) totalRow[nameColIdx].value = 'Итого';
+
+        const tMinStart = Math.min(...tasks.map(t => t.startOffsetDays));
+        const tMaxEnd = Math.max(...tasks.map(t => t.startOffsetDays + t.durationDays));
+        const tHours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
+        const tWorkdays = typeof ganttNode._countWorkingDaysInRange === 'function'
+            ? ganttNode._countWorkingDaysInRange(anchor, tMinStart, tMaxEnd - tMinStart)
+            : (tMaxEnd - tMinStart);
+        baseCols.forEach((col, ci) => {
+            switch (col.key) {
+                case 'hours': totalRow[ci].value = Math.round(tHours); break;
+                case 'workdays': totalRow[ci].value = tWorkdays; break;
+                case 'caldays': totalRow[ci].value = tMaxEnd - tMinStart; break;
+                case 'sumworkdays': totalRow[ci].value = typeof ganttNode._sumWorkdaysForTasks === 'function' ? ganttNode._sumWorkdaysForTasks(tasks) : null; break;
+                case 'sumhours': totalRow[ci].value = typeof ganttNode._sumHoursForTasks === 'function' ? Math.round(ganttNode._sumHoursForTasks(tasks)) : null; break;
+            }
+        });
+
+        const tStartDate = addDays(anchor, tMinStart);
+        const tEndDate = addDays(anchor, tMaxEnd);
+        const tStartColIdx = findColIndex(dateColumns, tStartDate);
+        const tEndColIdx = findColIndex(dateColumns, tEndDate);
+        if (tStartColIdx >= 0) totalRow[baseColCount + tStartColIdx].value = tStartDate.getDate();
+        if (tEndColIdx >= 0 && tEndColIdx !== tStartColIdx) totalRow[baseColCount + tEndColIdx].value = tEndDate.getDate();
+
+        grid.push(totalRow);
+    }
+
+    // Раунд 153 (по запросу Mr.D: "пропадает иерархия... В файл excel в
+    // столбик № п/п записываем то что находится в столбце Раздел...
+    // чтобы показать иерархию в xlsx мы не будем делать отступы, просто
+    // строки групп должны быть жирными") - обход ДЕРЕВА (this.taskGroups
+    // с subgroups, любая глубина - Раунд 150), не плоского this.tasks -
+    // строка-заголовок раздела (bold:true, без отступа - плоская, но
+    // визуально отличимая структура) чередуется с задачами В ТОМ ЖЕ
+    // порядке, что на самой диаграмме.
+    const pushTaskRow = (task) => {
         const row = new Array(baseColCount + dateColumns.length).fill(null).map(() => ({ value: null, border: true }));
         const responsible = typeof ganttNode._effectiveResponsible === 'function'
             ? ganttNode._effectiveResponsible(task)
             : (task.responsible || '');
-        // Раунд 113 - значения базовых колонок по их key (тот же набор
-        // и порядок, что buildBaseColumns() выше).
+        // Раунд 153 - "№ п/п" теперь = значение колонки "Раздел" (не
+        // сквозной порядковый номер, как было раньше) - тот же принцип,
+        // что уже применён на самой диаграмме (см. _effectiveSection()
+        // в ganttNode.js) - пусто, если разделу задача не назначена.
+        const sectionValue = typeof ganttNode._effectiveSection === 'function' ? ganttNode._effectiveSection(task) : '';
         baseCols.forEach((col, ci) => {
             switch (col.key) {
-                case 'num': row[ci].value = i + 1; break;
+                case 'num': row[ci].value = sectionValue || null; break;
                 case 'name': row[ci].value = task.name; break;
                 case 'hours': row[ci].value = Math.round(task.durationDays * HOURS_PER_WORKDAY); break;
                 case 'workdays': row[ci].value = typeof ganttNode._countWorkingDaysInRange === 'function'
@@ -216,27 +286,138 @@ export function buildGanttCalendarGrid(ganttNode) {
                     break;
                 case 'responsible': row[ci].value = responsible; break;
                 case 'caldays': row[ci].value = task.durationDays; break;
+                case 'sumworkdays': row[ci].value = typeof ganttNode._sumWorkdaysForTasks === 'function' ? ganttNode._sumWorkdaysForTasks([task]) : null; break;
+                case 'sumhours': row[ci].value = typeof ganttNode._sumHoursForTasks === 'function' ? Math.round(ganttNode._sumHoursForTasks([task])) : null; break;
             }
         });
 
-        // Раунд 109 - цвет ответственного в приоритете, иначе цвет
-        // группы задачи, иначе цвет по умолчанию (тот же принцип
-        // приоритета, что уже применён к самой полосе на диаграмме,
-        // см. buildTaskRow() в ganttNode.js).
-        const color = (responsible && ganttNode.responsibleColors[responsible])
-            || (task.groupName && ganttNode.groupColors[task.groupName])
-            || DEFAULT_COLOR;
-        const cleanColor = color.replace('#', '').toUpperCase();
+        // Раунд 153 (по запросу Mr.D: "строки с задачами должны
+        // окрашиваться в цвет раздела... разделы меняют цвет, а задачи
+        // остаются по умолчанию") - _colorForTask() (единая точка,
+        // ganttNode.js) - цвет ответственного в приоритете, иначе цвет
+        // БЛИЖАЙШЕГО ПОКРАШЕННОГО раздела в цепочке предков (не только
+        // самого глубокого, как было раньше - наследование сверху вниз).
+        const color = (typeof ganttNode._colorForTask === 'function' ? ganttNode._colorForTask(task) : null) || DEFAULT_COLOR;
+        const cleanColor = lightenHex(color.replace('#', ''), SUBTASK_LIGHTEN_AMOUNT);
 
         const startDate = addDays(anchor, task.startOffsetDays);
         const endDate = addDays(anchor, task.startOffsetDays + task.durationDays);
         const startColIdx = findColIndex(dateColumns, startDate);
         const endColIdx = findColIndex(dateColumns, endDate);
-        if (startColIdx >= 0) { row[baseColCount + startColIdx].value = startDate.getDate(); row[baseColCount + startColIdx].color = cleanColor; }
-        if (endColIdx >= 0 && endColIdx !== startColIdx) { row[baseColCount + endColIdx].value = endDate.getDate(); row[baseColCount + endColIdx].color = cleanColor; }
+        // Раунд 155 (по запросу Mr.D: "протяжённые задачи должны быть
+        // полностью залиты цветом. Все клеточки. От даты начала задачи,
+        // до её конца") - раньше цветом красились ТОЛЬКО две крайние
+        // ячейки (точки начала/конца - тот же "точечный маркер", что
+        // разбирает _decodeTaskDates() при обратном чтении) - теперь
+        // ВСЕ ячейки диапазона [startColIdx, endColIdx] заливаются
+        // цветом, значение (число дня) остаётся ТОЛЬКО в двух крайних -
+        // промежуточные несут цвет, но без числа (визуально сплошная
+        // цветная полоса, как на самой диаграмме).
+        if (startColIdx >= 0 && endColIdx >= 0) {
+            const lo = Math.min(startColIdx, endColIdx);
+            const hi = Math.max(startColIdx, endColIdx);
+            for (let i = lo; i <= hi; i++) row[baseColCount + i].color = cleanColor;
+            row[baseColCount + startColIdx].value = startDate.getDate();
+            if (endColIdx !== startColIdx) row[baseColCount + endColIdx].value = endDate.getDate();
+        } else if (startColIdx >= 0) {
+            row[baseColCount + startColIdx].value = startDate.getDate();
+            row[baseColCount + startColIdx].color = cleanColor;
+        }
 
         grid.push(row);
-    });
+    };
+
+    const pushGroupHeaderRow = (group) => {
+        const row = new Array(baseColCount + dateColumns.length).fill(null).map(() => ({ value: null, border: true, bold: true }));
+        // Имя раздела - в колонку "Вид работ" (та же колонка, что имя
+        // задачи - раздел визуально "занимает" всю строку своим
+        // названием, без отступа, только жирным начертанием).
+        const nameColIdx = baseCols.findIndex(c => c.key === 'name');
+        if (nameColIdx >= 0) row[nameColIdx].value = group.name;
+
+        // Раунд 154 (по жалобе Mr.D: "заголовки появились, но данные
+        // заголовков пустые. Надо их заполнить как и данные задач") -
+        // ТА ЖЕ агрегация, что уже показывает строка-заголовок раздела
+        // НА САМОЙ диаграмме (см. buildGroupHeaderRow() в ganttNode.js) -
+        // часы = ПРЯМАЯ сумма по всем задачам раздела (включая вложенные
+        // подразделы - _allTasksRecursive()), раб.дни/кал.дни = по
+        // ДИАПАЗОНУ (от начала самой ранней задачи до конца самой
+        // поздней), не сумма - та же семантика, что "Итого"/группа на
+        // экране.
+        const groupTasks = typeof ganttNode._allTasksRecursive === 'function' ? ganttNode._allTasksRecursive(group) : (group.tasks || []);
+        if (groupTasks.length > 0) {
+            const gMinStart = Math.min(...groupTasks.map(t => t.startOffsetDays));
+            const gMaxEnd = Math.max(...groupTasks.map(t => t.startOffsetDays + t.durationDays));
+            const hoursTotal = groupTasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
+            const workdaysTotal = typeof ganttNode._countWorkingDaysInRange === 'function'
+                ? ganttNode._countWorkingDaysInRange(anchor, gMinStart, gMaxEnd - gMinStart)
+                : (gMaxEnd - gMinStart);
+
+            baseCols.forEach((col, ci) => {
+                switch (col.key) {
+                    case 'hours': row[ci].value = Math.round(hoursTotal); break;
+                    case 'workdays': row[ci].value = workdaysTotal; break;
+                    case 'caldays': row[ci].value = gMaxEnd - gMinStart; break;
+                    case 'sumworkdays': row[ci].value = typeof ganttNode._sumWorkdaysForTasks === 'function' ? ganttNode._sumWorkdaysForTasks(groupTasks) : null; break;
+                    case 'sumhours': row[ci].value = typeof ganttNode._sumHoursForTasks === 'function' ? Math.round(ganttNode._sumHoursForTasks(groupTasks)) : null; break;
+                }
+            });
+
+            // Раунд 156 (по жалобе Mr.D: "диапазоны групп не заливаются
+            // цветом" - обнаружено в прикреплённом файле-результате) -
+            // тот же класс недоделки, что чинил для задач в Раунде 155 -
+            // тогда сплошную заливку применил ТОЛЬКО к pushTaskRow(),
+            // забыв про pushGroupHeaderRow() - здесь была ещё старая
+            // "точечная" раскраска (только начало/конец). Теперь ВСЕ
+            // ячейки диапазона заливаются собственным цветом раздела.
+            const ownColor = (ganttNode.groupColors && ganttNode.groupColors[group.name]) || DEFAULT_COLOR;
+            const cleanOwnColor = ownColor.replace('#', '').toUpperCase();
+            const startDate = addDays(anchor, gMinStart);
+            const endDate = addDays(anchor, gMaxEnd);
+            const startColIdx = findColIndex(dateColumns, startDate);
+            const endColIdx = findColIndex(dateColumns, endDate);
+            if (startColIdx >= 0 && endColIdx >= 0) {
+                const lo = Math.min(startColIdx, endColIdx);
+                const hi = Math.max(startColIdx, endColIdx);
+                for (let i = lo; i <= hi; i++) row[baseColCount + i].color = cleanOwnColor;
+                row[baseColCount + startColIdx].value = startDate.getDate();
+                if (endColIdx !== startColIdx) row[baseColCount + endColIdx].value = endDate.getDate();
+            } else if (startColIdx >= 0) {
+                row[baseColCount + startColIdx].value = startDate.getDate();
+                row[baseColCount + startColIdx].color = cleanOwnColor;
+            }
+        }
+
+        // "Раздел"/"Ответственный" раздела - только если назначены явно
+        // через инспектор (Раунд 149, taskSectionOverrides/taskResponsible
+        // по originKey) - иначе пусто (расчётные величины уже заполнены
+        // выше, эти два поля - НЕ агрегат, ручной ввод).
+        if (group.originKey) {
+            const sectionVal = ganttNode.taskSectionOverrides && ganttNode.taskSectionOverrides[group.originKey];
+            const respVal = ganttNode.taskResponsible && ganttNode.taskResponsible[group.originKey];
+            baseCols.forEach((col, ci) => {
+                if (col.key === 'num' && sectionVal) row[ci].value = sectionVal;
+                if (col.key === 'responsible' && respVal) row[ci].value = respVal;
+            });
+        }
+
+        grid.push(row);
+    };
+
+    const walkGroup = (group) => {
+        // "" - синтетическая безымянная корзина для задач ДО первого
+        // раздела (см. _applyPromotedSections() в ganttNode.js) - у неё
+        // самой заголовка не показываем, только её задачи.
+        if (group.name) pushGroupHeaderRow(group);
+        group.tasks.forEach(pushTaskRow);
+        (group.subgroups || []).forEach(walkGroup);
+    };
+
+    if (Array.isArray(ganttNode.taskGroups) && ganttNode.taskGroups.length > 0) {
+        ganttNode.taskGroups.forEach(walkGroup);
+    } else {
+        tasks.forEach(pushTaskRow);
+    }
 
     // Раунд 111 (по запросу Mr.D: "остальные столбики тоже") + Раунд 112
     // (реальный коэффициент px->units, см. pxToExcelUnits()) - ширина

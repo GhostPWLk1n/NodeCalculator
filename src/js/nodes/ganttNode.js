@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -26,6 +26,8 @@ const HOURS_COL_WIDTH = 34; // px, колонка "ч.ч." (Раунд 78)
 const WORKDAYS_COL_WIDTH = 34; // px, колонка "Раб.дн." (Раунд 81)
 const RESPONSIBLE_COL_WIDTH = 70; // px, колонка "Ответственный" (Раунд 88, чек-лист 1.7.21)
 const CALDAYS_COL_WIDTH = 40; // px, колонка "Кал. дни" (Раунд 101, чек-лист)
+const SUM_WORKDAYS_COL_WIDTH = 44; // px, колонка "Сум.раб.дн." (Раунд 157)
+const SUM_HOURS_COL_WIDTH = 44; // px, колонка "Сум.ч.ч." (Раунд 157)
 // Раунд 133 (по запросу Mr.D: "нужно добавить столбик 'Раздел' сразу
 // после № п/п. Туда нужно будет перенести разделы из таблицы как есть") -
 // на самой диаграмме, рядом с уже существующим экранным "№ п/п".
@@ -36,6 +38,12 @@ const SECTION_COL_WIDTH = 100;
 // присутствует (не toggle-able, как остальные - это часть самого
 // механизма фокуса/редактирования, не опциональное отображение данных).
 const FOCUS_COL_WIDTH = 16;
+// Раунд 130/151 - отступ на КАЖДЫЙ уровень вложенности (иерархия Блок/
+// Стадия, ИЛИ произвольная вложенность Раздел/Подраздел) - единая
+// константа на уровне модуля (не внутри createGanttArea()) - нужна и
+// buildTaskRow()/buildGroupHeaderRow() для перевода indentPx обратно в
+// "сколько линий-проводников рисовать" (см. Раунд 151).
+const GROUP_INDENT_PX_CONST = 16;
 // Багфикс (Раунд 81, по замечанию Mr.D): пересчёт дни<->часы вёлся
 // через КАЛЕНДАРНЫЕ 24ч/сутки - для рабочего планирования это неверно,
 // нужен человеко-день (стандартный рабочий день, 8ч). Единая константа
@@ -234,6 +242,18 @@ export class GanttNode extends BaseNode {
         // же принцип, что showResponsibleColumn - не захламляет
         // существующие диаграммы новым столбцом без явного запроса.
         this.showCalDaysColumn = config.showCalDaysColumn ?? false;
+        // Раунд 157 (по запросу Mr.D: "нужны ещё колонки 'сум. раб.
+        // дней', 'сум. ч.ч.' - показывают суммарно отработанные дни по
+        // всем работам, а не по дате начала и конца в разделе") - ИСТИННАЯ
+        // сумма (не диапазон начало-конец, как у "Раб.дн."/"Кал.дни") -
+        // отдельная метрика: "Раб.дн." отвечает на вопрос "сколько
+        // календарного времени займёт раздел", "Сум.раб.дн." - "сколько
+        // РЕАЛЬНОГО труда вложено суммарно во все его задачи" (у задач с
+        // параллельным выполнением внутри раздела эти две величины
+        // РАЗЛИЧАЮТСЯ). По умолчанию выключены - тот же принцип, что у
+        // остальных опциональных колонок.
+        this.showSumWorkingDaysColumn = config.showSumWorkingDaysColumn ?? false;
+        this.showSumHoursColumn = config.showSumHoursColumn ?? false;
         // Раунд 133 (по запросу Mr.D: "нужно добавить столбик 'Раздел'
         // сразу после № п/п") - показывает имя Блока/раздела задачи
         // прямо на диаграмме (task.blockName, см. buildTaskRow()) - по
@@ -297,6 +317,13 @@ export class GanttNode extends BaseNode {
         // становится заголовком группы для ВСЕХ СЛЕДУЮЩИХ задач до
         // следующего раздела - см. _applyPromotedSections().
         this.promotedSectionKeys = new Set(Array.isArray(config.promotedSectionKeys) ? config.promotedSectionKeys : []);
+        // Раунд 150 (по запросу Mr.D: "у нас ещё была возможность
+        // создавать подразделы") - taskKey -> 1 ("Раздел", верхний
+        // уровень) | 'sub' ("Подраздел", СТЕКОВАЯ семантика - на один
+        // глубже ближайшего открытого раздела, см. _applyPromotedSections()).
+        // Сериализуется как массив пар [key, level] (Map несериализуем
+        // напрямую в JSON).
+        this.sectionLevels = new Map(Array.isArray(config.sectionLevels) ? config.sectionLevels : []);
         // Раунд 147 - см. докстринг _applyPromotedSections() - пересобирается
         // при каждом calculate(), инициализация здесь просто на случай
         // обращения ДО первого пересчёта.
@@ -547,7 +574,7 @@ export class GanttNode extends BaseNode {
             const subtitle = this._resolvedSubtitle ?? this.subtitleText;
             return { value: subtitle, tableData: new TableData([{ header: 'Подзаголовок', format: 'text', values: [subtitle] }]), listData: new ListData(), resultListData: null };
         }
-        return { value: this.value, tableData: this.tableData, listData: this.listData, resultListData: this.resultListData };
+        return { value: this.value, tableData: this.tableData, treeData: this.treeData, listData: this.listData, resultListData: this.resultListData };
     }
 
     // === Диаграмма: линейка дат + строки задач с перетаскиваемыми полосами ===
@@ -569,7 +596,9 @@ export class GanttNode extends BaseNode {
             + (this.showDurationColumn ? this._hoursW() : 0)
             + (this.showWorkingDaysColumn ? this._workdaysW() : 0)
             + (this.showResponsibleColumn ? this._respW() : 0)
-            + (this.showCalDaysColumn ? this._calDaysW() : 0);
+            + (this.showCalDaysColumn ? this._calDaysW() : 0)
+            + (this.showSumWorkingDaysColumn ? this._sumWorkdaysW() : 0)
+            + (this.showSumHoursColumn ? this._sumHoursW() : 0);
 
         const outer = document.createElement('div');
         outer.className = 'gantt-outer-scroll';
@@ -687,7 +716,16 @@ export class GanttNode extends BaseNode {
         // (см. комментарий выше), и не ломает sticky.
         rowsWrap.style.cssText = 'overflow-y: auto; overflow-x: clip; scrollbar-gutter: stable;';
 
-        if (this.tasks.length === 0) {
+        // Раунд 152 (по жалобе Mr.D: "создана только 1 задача, превращаю
+        // в раздел - раздел не отрисован, хотя уже существует в
+        // иерархии") - "Нет задач" показывался ЧИСТО по this.tasks.length,
+        // не учитывая this.taskGroups - если ВСЕ задачи превращены в
+        // разделы (this.tasks становится пуст), но сами разделы (пусть
+        // даже пустые) есть в this.taskGroups, диаграмма ошибочно
+        // считалась "пустой" целиком и уходила в ветку "Нет задач",
+        // полностью пропуская отрисовку групп.
+        const hasNothingToRender = this.tasks.length === 0 && (!Array.isArray(this.taskGroups) || this.taskGroups.length === 0);
+        if (hasNothingToRender) {
             const empty = document.createElement('div');
             empty.className = 'gantt-empty';
             empty.style.cssText = `
@@ -799,23 +837,70 @@ export class GanttNode extends BaseNode {
                     });
                 });
             } else if (this.taskGroups) {
-                let taskNumber = 1; // сквозная нумерация ЗАДАЧ (не строк) через все группы
-                this.taskGroups.forEach((group, groupIndex) => {
-                    const collapsed = !!this.collapsedGroups[groupIndex];
-                    rowsInner.appendChild(this.buildGroupHeaderRow(group, groupIndex, numColWidth, timelineWidth, dayWidth, collapsed, anchor));
+                // Раунд 150 (по запросу Mr.D: "у нас ещё была возможность
+                // создавать подразделы... произвольная вложенность") -
+                // рекурсивный обход - каждая группа может нести
+                // group.subgroups (массив вложенных разделов, см.
+                // _applyPromotedSections()) - индент растёт НА КАЖДЫЙ
+                // уровень вложенности (тот же приём, что уже применён к
+                // иерархии Блок/Стадия чуть выше, HIERARCHY_INDENT_PX).
+                // collapsedGroups индексируется по originKey (стабильный
+                // ключ раздела), НЕ по позиционному индексу - позиция
+                // вложенной группы в общем порядке отрисовки "плавает"
+                // при сворачивании/разворачивании СОСЕДНИХ разделов,
+                // числовой индекс путал бы состояние сворачивания между
+                // РАЗНЫМИ разделами.
+                const GROUP_INDENT_PX = 16;
+                let taskNumber = 1; // сквозная нумерация ЗАДАЧ через ВСЮ вложенность
+                let groupIndex = 0;
+
+                const renderGroupRecursive = (group, indentPx) => {
+                    const myIndex = groupIndex++;
+                    // Раунд 151 (по жалобе Mr.D: "строки с одинаковым
+                    // именем иногда вызывают непредвиденное поведение") -
+                    // originKey теперь хранится НАПРЯМУЮ на самой группе
+                    // (group.originKey, см. _applyPromotedSections()), а
+                    // не ищется через promotedNameToKey.get(group.name) -
+                    // тот поиск по ИМЕНИ ломался при совпадении имён двух
+                    // разных разделов (Map перезаписывала запись).
+                    const originKey = group.originKey;
+                    const collapseKey = originKey || myIndex;
+                    const collapsed = !!this.collapsedGroups[collapseKey];
+                    // Раунд 151 (багфикс: "не работает кнопка
+                    // сворачивания подразделов") - hierarchyOpts ОБЯЗАН
+                    // нести setCollapsed(), если он вообще передан (см.
+                    // buildGroupHeaderRow() - toggle-обработчик вызывает
+                    // hierarchyOpts.setCollapsed(), только если
+                    // hierarchyOpts truthy) - раньше здесь передавался
+                    // ГОЛЫЙ {indentPx} без setCollapsed - клик по
+                    // стрелке вложенного раздела падал с ошибкой
+                    // (setCollapsed не функция), молча "не работая".
+                    const hierarchyOpts = indentPx ? {
+                        indentPx,
+                        setCollapsed: (val) => { this.collapsedGroups[collapseKey] = val; }
+                    } : null;
+                    rowsInner.appendChild(this.buildGroupHeaderRow(
+                        group, collapseKey, numColWidth, timelineWidth, dayWidth, collapsed, anchor,
+                        hierarchyOpts
+                    ));
                     if (!collapsed) {
                         group.tasks.forEach(task => {
-                            rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, null, anchor));
+                            rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, null, anchor, indentPx));
                             taskNumber++;
                         });
+                        (group.subgroups || []).forEach(sub => renderGroupRecursive(sub, indentPx + GROUP_INDENT_PX));
                     } else {
-                        // Свёрнута - задачи по-прежнему расписаны и есть в
-                        // this.tasks/выходной таблице, просто не рисуются -
-                        // но сквозную нумерацию всё равно продолжаем, чтобы
-                        // номера видимых задач не "прыгали" при разворачивании
-                        taskNumber += group.tasks.length;
+                        // Свёрнута - задачи (и вложенные подразделы) по-
+                        // прежнему расписаны и есть в this.tasks/выходной
+                        // таблице, просто не рисуются - сквозную
+                        // нумерацию всё равно продолжаем, чтобы номера
+                        // видимых задач не "прыгали" при разворачивании.
+                        const countRecursive = (g) => g.tasks.length + (g.subgroups || []).reduce((sum, sg) => sum + countRecursive(sg), 0);
+                        taskNumber += countRecursive(group);
                     }
-                });
+                };
+
+                this.taskGroups.forEach(group => renderGroupRecursive(group, 0));
             } else {
                 this.tasks.forEach((task, i) => {
                     rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, i + 1, null, anchor));
@@ -1641,12 +1726,21 @@ export class GanttNode extends BaseNode {
             leftGroup.appendChild(sectionCell);
         }
 
-        // Раунд 130 (иерархия Ганта) - отступ под уровень вложенности
-        // (0 для обычных задач - без изменений).
+        // Раунд 130/151 (иерархия Ганта, по запросу Mr.D: "добавить
+        // полосы для отслеживания разделов, мы это уже делали в ноде
+        // 'просмотр дерева'") - вместо одного пустого спейсера - линии-
+        // проводники (по одной НА КАЖДЫЙ уровень вложенности) - тот же
+        // визуальный приём, что уже есть у TreeViewerNode
+        // (.board-widget-tree-guide, см. treeWidgetRenderer.js) -
+        // переиспользован класс 1-в-1 (тот же CSS уже есть в проекте).
         if (indentPx) {
-            const indentSpacer = document.createElement('div');
-            indentSpacer.style.cssText = `width:${indentPx}px; flex-shrink:0;`;
-            leftGroup.appendChild(indentSpacer);
+            const depth = Math.round(indentPx / GROUP_INDENT_PX_CONST);
+            for (let d = 0; d < depth; d++) {
+                const guide = document.createElement('span');
+                guide.className = 'board-widget-tree-guide';
+                guide.style.cssText = 'align-self: stretch;';
+                leftGroup.appendChild(guide);
+            }
         }
 
         // Раунд 116 - "Вид работ" РЕДАКТИРУЕМО, пока строка в фокусе
@@ -1675,8 +1769,9 @@ export class GanttNode extends BaseNode {
             label.addEventListener('mousedown', (e) => e.stopPropagation());
             label.addEventListener('click', (e) => e.stopPropagation());
             label.addEventListener('change', (e) => {
-                const newName = e.target.value.trim();
-                if (!newName || newName === task.name) return;
+                const rawNewName = e.target.value.trim();
+                if (!rawNewName || rawNewName === task.name) return;
+                const newName = this._uniqueTaskName(rawNewName);
                 const manualTask = this.manualTasks.find(t => t.key === taskKey);
                 if (manualTask) {
                     manualTask.name = newName;
@@ -1834,6 +1929,25 @@ export class GanttNode extends BaseNode {
             leftGroup.appendChild(calDaysCell);
         }
 
+        // Раунд 157 - "Сум.раб.дн."/"Сум.ч.ч." - у ОДНОЙ задачи это
+        // истинное число реально отработанных дней/часов (может
+        // отличаться от "Раб.дн."/"ч.ч." выше, если сама задача
+        // перескакивает через выходной внутри своего диапазона).
+        if (this.showSumWorkingDaysColumn) {
+            const sumWdCell = document.createElement('div');
+            sumWdCell.style.cssText = `width:${this._sumWorkdaysW()}px; flex-shrink:0; font-size:10px; color:var(--md-text-secondary); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumWdCell.textContent = String(this._sumWorkdaysForTasks([task]));
+            sumWdCell.title = 'Сумма реально отработанных рабочих дней';
+            leftGroup.appendChild(sumWdCell);
+        }
+        if (this.showSumHoursColumn) {
+            const sumHCell = document.createElement('div');
+            sumHCell.style.cssText = `width:${this._sumHoursW()}px; flex-shrink:0; font-size:10px; color:var(--md-text-secondary); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumHCell.textContent = Helpers.formatNumber(this._sumHoursForTasks([task]));
+            sumHCell.title = 'Сумма реально отработанных человеко-часов';
+            leftGroup.appendChild(sumHCell);
+        }
+
         const track = document.createElement('div');
         track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
 
@@ -1845,7 +1959,7 @@ export class GanttNode extends BaseNode {
         // диаграммы") - если у task.responsible назначен цвет в
         // this.responsibleColors - красим полосу им, иначе - прежний
         // единый var(--md-primary).
-        const barColor = (this._effectiveResponsible(task) && this.responsibleColors[this._effectiveResponsible(task)]) || 'var(--md-primary)';
+        const barColor = this._colorForTask(task) || 'var(--md-primary)';
         bar.style.cssText = `
             position: absolute;
             top: 4px; bottom: 4px;
@@ -2006,7 +2120,7 @@ export class GanttNode extends BaseNode {
         // естественно образовавшихся групп (из нескольких источников
         // или колонки "Группа") нет исходной строки, разворачивать
         // некуда.
-        const originKey = this.promotedNameToKey?.get(group.name);
+        const originKey = group.originKey;
         // Раунд 148 (по жалобе Mr.D: "раздел не может быть в фокусе,
         // чтобы можно было редактировать его колонки") - тот же
         // this._focusedTaskKey, что у задач (единое поле - раздел и
@@ -2032,16 +2146,34 @@ export class GanttNode extends BaseNode {
         // строки групп её не используют, но должны занимать то же место
         // для выравнивания столбцов.
         const focusSpacerG = document.createElement('div');
-        focusSpacerG.style.cssText = `width:${FOCUS_COL_WIDTH}px; flex-shrink:0;`;
+        focusSpacerG.style.cssText = `width:${FOCUS_COL_WIDTH}px; flex-shrink:0; position:relative; height:100%;`;
+        // Раунд 149 (по запросу Mr.D: "давай доделаем строки разделов") -
+        // та же ручка, что у сфокусированной строки задачи (Раунд 147) -
+        // визуальная согласованность (иначе непонятно, что раздел вообще
+        // "в фокусе" - у него нет собственного оформления, кроме
+        // редактируемых полей).
+        if (isGroupFocused) {
+            const handle = document.createElement('div');
+            handle.className = 'gantt-row-handle';
+            handle.textContent = '⠿';
+            handle.title = 'ПКМ - меню раздела (добавить/раздел в строку/удалить)';
+            handle.addEventListener('mousedown', (e) => e.stopPropagation());
+            handle.addEventListener('click', (e) => e.stopPropagation());
+            focusSpacerG.appendChild(handle);
+        }
         leftGroup.appendChild(focusSpacerG);
 
-        // Раунд 130 - отступ под уровень иерархии (Блок/Стадия) - НЕ
-        // влияет на обычные (не иерархические) группы, indentPx там
-        // всегда 0.
+        // Раунд 130/151 - линии-проводники под уровень вложенности
+        // (Блок/Стадия, ИЛИ Раздел/Подраздел) - та же логика, что у
+        // buildTaskRow() выше.
         if (hierarchyOpts?.indentPx) {
-            const indentSpacer = document.createElement('div');
-            indentSpacer.style.cssText = `width:${hierarchyOpts.indentPx}px; flex-shrink:0;`;
-            leftGroup.appendChild(indentSpacer);
+            const depth = Math.round(hierarchyOpts.indentPx / GROUP_INDENT_PX_CONST);
+            for (let d = 0; d < depth; d++) {
+                const guide = document.createElement('span');
+                guide.className = 'board-widget-tree-guide';
+                guide.style.cssText = 'align-self: stretch;';
+                leftGroup.appendChild(guide);
+            }
         }
 
         // Стрелка сворачивания - делит место со столбцом номера строки.
@@ -2101,14 +2233,46 @@ export class GanttNode extends BaseNode {
 
         leftGroup.appendChild(toggleWrap);
 
-        // Раунд 133 - спейсер под колонку "Раздел" (см. buildTaskRow()) -
-        // строки группы/Блока/Стадии её не используют (собственное имя
-        // уже показано в label ниже - дублировать в "Раздел" незачем) -
-        // просто занимает место для выравнивания столбцов.
+        // Раунд 133/148 - колонка "Раздел". Раунд 149 (по запросу Mr.D:
+        // "давай доделаем строки разделов") - для разделов, полученных
+        // ИМЕННО через promoteToSection() (originKey), теперь
+        // редактируема при фокусе - та же логика, что у имени (Раунд
+        // 148) - у естественно образовавшихся групп нет исходной строки
+        // для хранения override, остаётся простым спейсером.
         if (this.showSectionColumn) {
-            const sectionSpacer = document.createElement('div');
-            sectionSpacer.style.cssText = `width:${this._sectionW()}px; flex-shrink:0;`;
-            leftGroup.appendChild(sectionSpacer);
+            if (isGroupFocused && originKey) {
+                const sectionInput = document.createElement('input');
+                sectionInput.type = 'text';
+                sectionInput.className = 'gantt-section-cell gantt-section-input';
+                sectionInput.value = this.taskSectionOverrides[originKey] || '';
+                sectionInput.style.cssText = `
+                    width: ${this._sectionW()}px;
+                    flex-shrink: 0;
+                    font-size: 10px;
+                    color: var(--md-text-secondary);
+                    padding-right: 6px;
+                    background: transparent;
+                    border: none;
+                    border-bottom: 1px solid var(--md-accent);
+                    font-family: inherit;
+                `;
+                sectionInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                sectionInput.addEventListener('click', (e) => e.stopPropagation());
+                sectionInput.addEventListener('change', (e) => {
+                    this.taskSectionOverrides[originKey] = e.target.value.trim();
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                    if (window.renderer) window.renderer.updateAllDisplays();
+                });
+                leftGroup.appendChild(sectionInput);
+            } else {
+                const sectionSpacer = document.createElement('div');
+                sectionSpacer.style.cssText = `width:${this._sectionW()}px; flex-shrink:0;`;
+                if (originKey && this.taskSectionOverrides[originKey]) {
+                    sectionSpacer.textContent = this.taskSectionOverrides[originKey];
+                    sectionSpacer.style.cssText += 'font-size:10px; color:var(--md-text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:6px;';
+                }
+                leftGroup.appendChild(sectionSpacer);
+            }
         }
 
         const label = (() => {
@@ -2140,8 +2304,9 @@ export class GanttNode extends BaseNode {
                 input.addEventListener('mousedown', (e) => e.stopPropagation());
                 input.addEventListener('click', (e) => e.stopPropagation());
                 input.addEventListener('change', (e) => {
-                    const newName = e.target.value.trim();
-                    if (!newName || newName === group.name) return;
+                    const rawNewName = e.target.value.trim();
+                    if (!rawNewName || rawNewName === group.name) return;
+                    const newName = this._uniqueTaskName(rawNewName);
                     // Та же логика, что переименование задачи (Раунд 116) -
                     // если раздел пришёл из вручную добавленной строки
                     // (manualTasks), пишем напрямую, иначе - в
@@ -2186,7 +2351,7 @@ export class GanttNode extends BaseNode {
                 padding-right: 6px;
                 font-variant-numeric: tabular-nums;
             `;
-            totalCell.textContent = this._formatTotalCell(group.tasks);
+            totalCell.textContent = this._formatTotalCell(this._allTasksRecursive(group));
             leftGroup.appendChild(totalCell);
         }
 
@@ -2202,9 +2367,10 @@ export class GanttNode extends BaseNode {
                 font-variant-numeric: tabular-nums;
             `;
             let workdaysTotal = 0;
-            if (group.tasks.length > 0) {
-                const gMinStart = Math.min(...group.tasks.map(t => t.startOffsetDays));
-                const gMaxEnd = Math.max(...group.tasks.map(t => t.startOffsetDays + t.durationDays));
+            const gTasksWD = this._allTasksRecursive(group);
+            if (gTasksWD.length > 0) {
+                const gMinStart = Math.min(...gTasksWD.map(t => t.startOffsetDays));
+                const gMaxEnd = Math.max(...gTasksWD.map(t => t.startOffsetDays + t.durationDays));
                 workdaysTotal = this._countWorkingDaysInRange(anchor, gMinStart, gMaxEnd - gMinStart);
             }
             workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
@@ -2213,9 +2379,39 @@ export class GanttNode extends BaseNode {
         }
 
         if (this.showResponsibleColumn) {
-            const respSpacer = document.createElement('div');
-            respSpacer.style.cssText = `width:${this._respW()}px; flex-shrink:0;`;
-            leftGroup.appendChild(respSpacer);
+            if (isGroupFocused && originKey) {
+                const respInput = document.createElement('input');
+                respInput.type = 'text';
+                respInput.className = 'gantt-responsible-cell gantt-responsible-input';
+                respInput.value = this.taskResponsible[originKey] || '';
+                respInput.style.cssText = `
+                    width: ${this._respW()}px;
+                    flex-shrink: 0;
+                    font-size: 10px;
+                    color: var(--md-text-secondary);
+                    padding-right: 6px;
+                    background: transparent;
+                    border: none;
+                    border-bottom: 1px solid var(--md-accent);
+                    font-family: inherit;
+                `;
+                respInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                respInput.addEventListener('click', (e) => e.stopPropagation());
+                respInput.addEventListener('change', (e) => {
+                    this.taskResponsible[originKey] = e.target.value.trim();
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                    if (window.renderer) window.renderer.updateAllDisplays();
+                });
+                leftGroup.appendChild(respInput);
+            } else {
+                const respSpacer = document.createElement('div');
+                respSpacer.style.cssText = `width:${this._respW()}px; flex-shrink:0;`;
+                if (originKey && this.taskResponsible[originKey]) {
+                    respSpacer.textContent = this.taskResponsible[originKey];
+                    respSpacer.style.cssText += 'font-size:10px; color:var(--md-text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:6px;';
+                }
+                leftGroup.appendChild(respSpacer);
+            }
         }
 
         if (this.showCalDaysColumn) {
@@ -2230,9 +2426,10 @@ export class GanttNode extends BaseNode {
                 font-variant-numeric: tabular-nums;
             `;
             let calDaysTotal = 0;
-            if (group.tasks.length > 0) {
-                const gMinStart = Math.min(...group.tasks.map(t => t.startOffsetDays));
-                const gMaxEnd = Math.max(...group.tasks.map(t => t.startOffsetDays + t.durationDays));
+            const gTasksCD = this._allTasksRecursive(group);
+            if (gTasksCD.length > 0) {
+                const gMinStart = Math.min(...gTasksCD.map(t => t.startOffsetDays));
+                const gMaxEnd = Math.max(...gTasksCD.map(t => t.startOffsetDays + t.durationDays));
                 calDaysTotal = gMaxEnd - gMinStart;
             }
             calDaysCell.textContent = `${Helpers.formatNumber(calDaysTotal)}кд`;
@@ -2240,12 +2437,35 @@ export class GanttNode extends BaseNode {
             leftGroup.appendChild(calDaysCell);
         }
 
+        // Раунд 157 (по запросу Mr.D: "показывают суммарно отработанные
+        // дни по всем работам, а не по дате начала и конца в разделе") -
+        // ИСТИННАЯ сумма по ВСЕМ задачам раздела, включая вложенные
+        // подразделы (_allTasksRecursive()) - в отличие от "Раб.дн."/
+        // "Кал.дни" выше (те считают ДИАПАЗОН - от начала самой ранней
+        // задачи до конца самой поздней) - у раздела с параллельно
+        // идущими задачами эти две величины ЗАМЕТНО различаются.
+        if (this.showSumWorkingDaysColumn) {
+            const sumWdCell = document.createElement('div');
+            sumWdCell.style.cssText = `width:${this._sumWorkdaysW()}px; flex-shrink:0; font-size:10px; color:var(--md-text); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumWdCell.textContent = String(this._sumWorkdaysForTasks(this._allTasksRecursive(group)));
+            sumWdCell.title = 'Сумма реально отработанных рабочих дней по всем задачам раздела';
+            leftGroup.appendChild(sumWdCell);
+        }
+        if (this.showSumHoursColumn) {
+            const sumHCell = document.createElement('div');
+            sumHCell.style.cssText = `width:${this._sumHoursW()}px; flex-shrink:0; font-size:10px; color:var(--md-text); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumHCell.textContent = Helpers.formatNumber(this._sumHoursForTasks(this._allTasksRecursive(group)));
+            sumHCell.title = 'Сумма реально отработанных человеко-часов по всем задачам раздела';
+            leftGroup.appendChild(sumHCell);
+        }
+
         const track = document.createElement('div');
         track.style.cssText = `position: relative; width: ${timelineWidth}px; height: 100%; flex-shrink: 0;`;
 
-        if (group.tasks.length > 0) {
-            const minStart = Math.min(...group.tasks.map(t => t.startOffsetDays));
-            const maxEnd = Math.max(...group.tasks.map(t => t.startOffsetDays + t.durationDays));
+        const groupTasksForIndicator = this._allTasksRecursive(group);
+        if (groupTasksForIndicator.length > 0) {
+            const minStart = Math.min(...groupTasksForIndicator.map(t => t.startOffsetDays));
+            const maxEnd = Math.max(...groupTasksForIndicator.map(t => t.startOffsetDays + t.durationDays));
             const indicator = document.createElement('div');
             indicator.className = 'gantt-group-indicator';
             // Багфикс по замечанию Mr.D: раньше каждая группа красилась
@@ -2274,7 +2494,7 @@ export class GanttNode extends BaseNode {
                 border-radius: 3px;
                 cursor: grab;
             `;
-            indicator.title = `${group.name}: ${this._formatTotalCell(group.tasks)} - перетащите, чтобы сдвинуть всю группу`;
+            indicator.title = `${group.name}: ${this._formatTotalCell(this._allTasksRecursive(group))} - перетащите, чтобы сдвинуть всю группу`;
             this.attachGroupDrag(indicator, group, dayWidth);
 
             // Раунд 138 (по запросу Mr.D: "связи должны работать и
@@ -2346,16 +2566,39 @@ export class GanttNode extends BaseNode {
                 const deltaDays = parseInt(indicatorEl.dataset.pendingDeltaDays || '0', 10);
                 delete indicatorEl.dataset.pendingDeltaDays;
                 if (deltaDays !== 0) {
-                    group.tasks.forEach(task => {
+                    // Раунд 149 (по жалобе Mr.D: "не работает
+                    // перемещение раздела, если он был создан в
+                    // диаграмме Ганта, а не подключён к слоту") - тот же
+                    // класс бага, что уже чинил для attachBarDrag()/
+                    // attachBarResize() (Раунд 145/146/148) - каждая
+                    // задача ВНУТРИ раздела могла быть создана вручную
+                    // (manualTasks) - если так, пишем НАПРЯМУЮ в
+                    // manualTask.startOffsetDays, иначе - как раньше, в
+                    // общий this.taskDates (для задач ИЗ источника).
+                    // Раунд 151 (по запросу Mr.D: "родительский список
+                    // это иерархическая сумма всех дочерних") -
+                    // перетаскивание РОДИТЕЛЬСКОГО раздела ОБЯЗАНО
+                    // сдвигать задачи ВСЕХ вложенных подразделов
+                    // (_allTasksRecursive), не только его СОБСТВЕННЫЕ
+                    // прямые group.tasks - иначе вложенные подразделы
+                    // "отставали бы", визуально разваливая структуру.
+                    this._allTasksRecursive(group).forEach(task => {
                         const current = this.taskDates[task.taskKey] ?? task.startOffsetDays;
-                        this.taskDates[task.taskKey] = Math.max(0, current + deltaDays);
+                        const newStart = Math.max(0, current + deltaDays);
+                        const manualTask = this.manualTasks.find(t => t.key === task.taskKey);
+                        if (manualTask) {
+                            manualTask.startOffsetDays = newStart;
+                        } else {
+                            this.taskDates[task.taskKey] = newStart;
+                        }
                     });
                     // Раунд 139 - тот же принцип, что у attachBarDrag() -
                     // если ЭТОТ раздел ("group:Имя") - цель какой-то
                     // связи, пересчитываем её gap под новую позицию,
                     // вместо того чтобы _applyDependencyConstraints()
                     // тут же вернул раздел на старое место.
-                    const newMinStart = Math.min(...group.tasks.map(t => this.taskDates[t.taskKey] ?? t.startOffsetDays));
+                    const groupAllTasksForDrag = this._allTasksRecursive(group);
+                    const newMinStart = Math.min(...groupAllTasksForDrag.map(t => this.taskDates[t.taskKey] ?? t.startOffsetDays));
                     this._rebaseDependencyGapsForTarget(`group:${group.name}`, newMinStart);
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
@@ -2400,9 +2643,14 @@ export class GanttNode extends BaseNode {
 
         addItem('➕ Добавить строку', () => this.addTaskAfter(taskKey));
         if (isPromotedSection) {
+            // Раунд 150 - "Подраздел" на УЖЕ существующем разделе
+            // (promoteToSubsection на его же ключе) означает "углубить
+            // ещё на 1 уровень" (см. докстринг promoteToSubsection()).
+            addItem('📂 Углубить (сделать подразделом)', () => this.promoteToSubsection(taskKey));
             addItem('📤 Раздел в строку', () => this.demoteFromSection(taskKey));
         } else {
             addItem('📁 Строку в раздел', () => this.promoteToSection(taskKey));
+            addItem('📂 Строку в подраздел', () => this.promoteToSubsection(taskKey));
         }
         addItem('🗑️ Удалить', () => {
             if (isPromotedSection) this.demoteFromSection(taskKey);
@@ -2504,8 +2752,21 @@ export class GanttNode extends BaseNode {
             if (!(name in this.responsibleColors)) this.responsibleColors[name] = '';
         });
 
+        // Раунд 152 (по жалобе Mr.D: "окрашивается только корневой
+        // раздел, нужно чтобы окрашивались все разделы в иерархии") -
+        // раньше обход был ТОЛЬКО по верхнему уровню this.taskGroups -
+        // вложенные подразделы (group.subgroups) никогда не попадали в
+        // groups, значит никогда не появлялись в панели выбора цвета
+        // инспектора - рекурсивный обход собирает имена ВСЕХ уровней
+        // вложенности разом.
         const groups = new Set();
-        (this.taskGroups || []).forEach(g => { if (g.name) groups.add(g.name); });
+        const collectGroupNames = (list) => {
+            (list || []).forEach(g => {
+                if (g.name) groups.add(g.name);
+                collectGroupNames(g.subgroups);
+            });
+        };
+        collectGroupNames(this.taskGroups);
         this._detectedGroups = [...groups].sort();
         this._detectedGroups.forEach(name => {
             if (!(name in this.groupColors)) this.groupColors[name] = '';
@@ -2695,6 +2956,16 @@ export class GanttNode extends BaseNode {
         if (window.renderer) window.renderer.updateAllDisplays();
     }
 
+    // Раунд 151 (по запросу Mr.D: "родительский список это иерархическая
+    // сумма всех дочерних... начало подзадачи 1 и конец подзадачи 2, и
+    // так по всей иерархии потомков") - собирает задачи группы, включая
+    // ВСЕ вложенные подразделы любой глубины (не только прямые
+    // group.tasks) - используется везде, где считается диапазон/итог
+    // раздела (индикатор-полоса, ч.ч./Раб.дн., перетаскивание целиком).
+    _allTasksRecursive(group) {
+        return [...group.tasks, ...(group.subgroups || []).flatMap(sg => this._allTasksRecursive(sg))];
+    }
+
     _formatTotalCell(tasks) {
         const hours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
         return `${Helpers.formatNumber(hours)}ч`;
@@ -2716,6 +2987,26 @@ export class GanttNode extends BaseNode {
     // значение № п/п строки, см. GanttTableProcessorNode).
     _effectiveSection(task) {
         return this.taskSectionOverrides[task.taskKey] || task.sectionNumber || '';
+    }
+
+    // Раунд 153 (по запросу Mr.D: "строки с задачами должны окрашиваться
+    // в цвет раздела. Сейчас разделы меняют цвет а задачи остаются по
+    // умолчанию") - единая точка поиска цвета задачи (используется и
+    // самой полосой на диаграмме - buildTaskRow() ниже, и экспортом в
+    // Excel - ganttCalendarExport.js). Приоритет: цвет ОТВЕТСТВЕННОГО
+    // (если назначен) -> цвет БЛИЖАЙШЕГО ПОКРАШЕННОГО раздела в цепочке
+    // предков (от самого глубокого К КОРНЮ, не наоборот - "наследование
+    // сверху вниз" по умолчанию, но явно покрашенный БЛИЖНИЙ уровень
+    // важнее дальнего) -> null (вызывающий код сам решает дефолт - CSS-
+    // переменная для полосы на экране, HEX-константа для экспорта).
+    _colorForTask(task) {
+        const responsible = this._effectiveResponsible(task);
+        if (responsible && this.responsibleColors[responsible]) return this.responsibleColors[responsible];
+        const chain = task.groupChain || (task.groupName ? [task.groupName] : []);
+        for (let i = chain.length - 1; i >= 0; i--) {
+            if (this.groupColors[chain[i]]) return this.groupColors[chain[i]];
+        }
+        return null;
     }
 
     // Раунд 115 (чек-лист, раздел 4) - применяет ручные правки
@@ -2796,41 +3087,85 @@ export class GanttNode extends BaseNode {
         }
     }
 
-    // Раунд 146 (по запросу Mr.D: "добавим инструмент add_sub чтобы
-    // можно было любую строку превратить в раздел или подраздел") -
-    // строка с ключом в promotedSectionKeys ИЗЫМАЕТСЯ из this.tasks
-    // (перестаёт быть задачей - не несёт дат/длительности) и становится
-    // именем группы для ВСЕХ СЛЕДУЮЩИХ задач (в порядке this.tasks) до
-    // следующего раздела или конца списка. Принудительно переводит
-    // диаграмму в групповой режим (this.taskGroups становится массивом),
-    // если хотя бы один раздел есть - иначе группы просто не
-    // отрисовались бы (см. createGanttArea() - групповые строки-
-    // заголовки рисуются только когда this.taskGroups - массив).
-    //
-    // Раунд 148 (по жалобе Mr.D: "раздел не может существовать без
-    // задачи") - строит this.taskGroups НАПРЯМУЮ (не через отдельный
-    // byName-проход по this.tasks, как раньше) - КАЖДЫЙ раздел из
-    // promotedSectionKeys попадает в taskGroups, даже если у него ПОКА
-    // нет ни одной задачи (пустой tasks: []) - см. createGanttArea(),
-    // рендер группы САМ ПО СЕБЕ не требует непустого tasks.
+    // Раунд 146/150 (по запросу Mr.D: "добавим инструмент add, и add_sub
+    // чтобы можно было любую строку превратить в раздел или подраздел...
+    // у нас ещё была возможность создавать подразделы - произвольная
+    // вложенность") - строка с ключом в promotedSectionKeys ИЗЫМАЕТСЯ из
+    // this.tasks (перестаёт быть задачей) и становится ЗАГОЛОВКОМ
+    // раздела/подраздела - глубина вложенности ("уровень") хранится в
+    // this.sectionLevels: 1 = "Раздел" (всегда верхний уровень, сбрасывает
+    // вложенность), 'sub' = "Подраздел" (СТЕКОВАЯ семантика - на ОДИН
+    // уровень глубже, чем БЛИЖАЙШИЙ ОТКРЫТЫЙ на этот момент раздел, в
+    // порядке строк - см. алгоритм ниже). Именно эта стековая семантика
+    // даёт ПРОИЗВОЛЬНУЮ вложенность двумя простыми действиями:
+    // "Подраздел", применённый к строке ПОСЛЕ уже созданного "Подраздел 2"
+    // (который сам - уровень 2), автоматически становится уровнем 3
+    // ("ПодПодраздел") - вложенность определяется НЕ явным числом,
+    // выбираемым пользователем, а СТРУКТУРОЙ (что было открыто последним).
     _applyPromotedSections() {
         this.promotedNameToKey = new Map();
         if (!this.promotedSectionKeys || this.promotedSectionKeys.size === 0) return;
 
-        const groupsInOrder = [];
-        let currentGroup = null; // null = ещё не встретили ни одного раздела
+        // stack[i] - раздел, ОТКРЫТЫЙ на уровне i+1, в который сейчас
+        // попадают и задачи, и следующие "Подраздел"-строки (пока не
+        // встретится либо новый "Раздел" уровня 1, либо конец списка).
+        const stack = [];
+        const rootGroups = [];
         const ungroupedBefore = [];
         this.tasks.forEach(t => {
             const key = t.taskKey || t.name;
             if (this.promotedSectionKeys.has(key)) {
-                currentGroup = { name: t.name, tasks: [] };
-                groupsInOrder.push(currentGroup);
+                // Раунд 150 (уточнение по итогам обсуждения с Mr.D) -
+                // this.sectionLevels теперь хранит ЯВНОЕ число (не
+                // относительный маркер 'sub') - "Раздел" всегда пишет 1,
+                // "Подраздел" на СВЕЖЕЙ строке пишет 2 (сосед ближайшего
+                // "Раздела"), повторный клик "Подраздел" на УЖЕ
+                // существующем разделе/подразделе - increment (+1) -
+                // см. promoteToSubsection() ниже. Здесь просто читаем
+                // готовое число - никакой стековой арифметики на этом
+                // шаге больше не нужно, только truncation (закрытие
+                // более глубоких разделов) ниже.
+                const newLevel = this.sectionLevels.get(key) ?? 1;
+                // "Раздел" (level=1) закрывает ВСЕ текущие открытые
+                // разделы (stack становится пустым). "Подраздел"
+                // закрывает только те, что ГЛУБЖЕ нового уровня (стек
+                // обрезается до newLevel-1 элементов) - те, что
+                // МЕЛЬЧЕ/РАВНЫ, остаются открытыми как родители.
+                stack.length = Math.min(stack.length, newLevel - 1);
+                // Раунд 151 (по жалобе Mr.D: "строки с одинаковым
+                // именем иногда вызывают непредвиденное поведение") -
+                // originKey хранится НАПРЯМУЮ на объекте группы (не
+                // только в promotedNameToKey - та карта индексирована по
+                // ИМЕНИ и ломается, если два раздела совпадают по имени,
+                // вторая запись тихо перезаписывает первую) - все места,
+                // которым нужен originKey группы, теперь читают
+                // group.originKey напрямую, без поиска.
+                const newGroup = { name: t.name, level: newLevel, tasks: [], subgroups: [], originKey: key };
                 this.promotedNameToKey.set(t.name, key);
+                if (stack.length === 0) {
+                    rootGroups.push(newGroup);
+                } else {
+                    stack[stack.length - 1].subgroups.push(newGroup);
+                }
+                stack.push(newGroup);
                 return; // строка-раздел сама не остаётся задачей
             }
-            if (currentGroup) {
-                t.groupName = currentGroup.name;
-                currentGroup.tasks.push(t);
+            if (stack.length > 0) {
+                const deepest = stack[stack.length - 1];
+                t.groupName = deepest.name;
+                // Раунд 153 (по запросу Mr.D: "строки с задачами должны
+                // окрашиваться в цвет раздела... разделы меняют цвет, а
+                // задачи остаются по умолчанию") - причина: цвет искался
+                // ТОЛЬКО по имени САМОГО ГЛУБОКОГО раздела (t.groupName) -
+                // если пользователь покрасил ВЕРХНИЙ "Раздел 1", а
+                // задача лежит во вложенном "Подраздел 1" (у которого
+                // своего цвета нет), цвет не находился вообще. groupChain -
+                // ПОЛНАЯ цепочка предков (от корня до самого глубокого) -
+                // позволяет искать цвет СНИЗУ ВВЕРХ, наследуя от
+                // ближайшего ПОКРАШЕННОГО предка (см. _colorForTask()
+                // ниже и ganttCalendarExport.js).
+                t.groupChain = stack.map(g => g.name);
+                deepest.tasks.push(t);
             } else {
                 // Задачи ДО первого раздела (в порядке this.tasks) -
                 // остаются без группы, попадают в отдельную "безымянную"
@@ -2838,33 +3173,58 @@ export class GanttNode extends BaseNode {
                 // иерархической группировки, Раунд 78, для задач без
                 // заполненной колонки "Группа").
                 t.groupName = null;
+                t.groupChain = [];
                 ungroupedBefore.push(t);
             }
         });
 
-        this.tasks = [...ungroupedBefore, ...groupsInOrder.flatMap(g => g.tasks)];
+        // Плоский список ВСЕХ задач (для this.tasks/выходной таблицы) -
+        // обход дерева в глубину, в порядке появления разделов/подразделов.
+        const flattenTasks = (groups) => groups.flatMap(g => [...g.tasks, ...flattenTasks(g.subgroups)]);
+        this.tasks = [...ungroupedBefore, ...flattenTasks(rootGroups)];
         this.taskGroups = ungroupedBefore.length > 0
-            ? [{ name: '', tasks: ungroupedBefore }, ...groupsInOrder]
-            : groupsInOrder;
+            ? [{ name: '', level: 1, tasks: ungroupedBefore, subgroups: [] }, ...rootGroups]
+            : rootGroups;
         this._skipTaskGroupsRebuild = true;
     }
 
-    // Превращает СУЩЕСТВУЮЩУЮ задачу в раздел (см. _applyPromotedSections()
-    // выше про итоговое поведение). "add_sub" (подраздел) - для
-    // одноуровневой группировки (Раунд 78) отдельного понятия
-    // "подраздел" нет технически (только Блок/Стадия из иерархии,
-    // Раунд 130 - та отдельный, куда более сложный путь данных из
-    // GanttTableProcessorNode) - здесь единственный доступный уровень
-    // группировки ("раздел"), кнопка-стрелка переноса (см.
-    // buildTaskRow()) применяет именно этот, единственный, уровень.
+    // Превращает СУЩЕСТВУЮЩУЮ задачу в раздел ВЕРХНЕГО уровня (см.
+    // _applyPromotedSections() выше). Всегда level=1 - сбрасывает
+    // текущую вложенность (новый "Раздел" НЕ может оказаться внутри
+    // предыдущего - это, по определению, отдельный, соседний раздел).
     promoteToSection(taskKey) {
         this.promotedSectionKeys.add(taskKey);
+        this.sectionLevels.set(taskKey, 1);
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
+    // Раунд 150 (по запросу Mr.D: "у нас ещё была возможность создавать
+    // подразделы... произвольная вложенность") - тот самый "add_sub" из
+    // изначального запроса (Раунд 146). По итогам обсуждения (row-order
+    // и тип действия сами по себе НЕ различают "сосед" от "вложить" -
+    // доказано разбором на примере Mr.D: Подраздел1/Подраздел2 - соседи,
+    // но ПодПодраздел1 - вложен, хотя обе ситуации выглядят структурно
+    // одинаково без третьего сигнала) - решение: СВЕЖАЯ строка (ещё не
+    // раздел) всегда становится СОСЕДОМ ближайшего "Раздела" (level=2) -
+    // повторный клик "Подраздел" на УЖЕ существующем разделе/подразделе
+    // (эта же строка, любой текущий уровень) - УГЛУБЛЯЕТ его ещё на 1 -
+    // так "ПодПодраздел1" получается ДВУМЯ кликами на одной строке (1-й
+    // делает её level=2, сосед Подраздела1/2; 2-й - level=3, вложена в
+    // ближайший ОТКРЫТЫЙ на момент её строки раздел, т.е. в Подраздел2 -
+    // порядок строк здесь по-прежнему решает, КУДА именно она вложится
+    // на level=3, просто САМ level теперь явный, не выводится из стека).
+    promoteToSubsection(taskKey) {
+        this.promotedSectionKeys.add(taskKey);
+        const currentLevel = this.sectionLevels.get(taskKey);
+        this.sectionLevels.set(taskKey, currentLevel ? currentLevel + 1 : 2);
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
 
     demoteFromSection(taskKey) {
         this.promotedSectionKeys.delete(taskKey);
+        this.sectionLevels.delete(taskKey);
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
@@ -2881,16 +3241,34 @@ export class GanttNode extends BaseNode {
     // диаграмма ПОЛНОСТЬЮ пуста (нет ни одной задачи - самодостаточное
     // построение списка с нуля, по запросу Mr.D: "можно полностью
     // создать список в диаграмме с 0").
+    // Раунд 151 (по жалобе Mr.D: "строки с одинаковым именем иногда
+    // вызывают непредвиденное поведение... давай добавим автоинкремент") -
+    // проверяет имя на совпадение с ЛЮБОЙ уже существующей задачей
+    // (это же поле taskKey у большинства структур строится ИЗ имени -
+    // list-режим, например, - совпадение имён там означало бы совпадение
+    // ключей!) - при коллизии добавляет " (2)", " (3)" и т.д., пока имя
+    // не станет уникальным. baseName без изменений, если коллизий нет.
+    _uniqueTaskName(baseName) {
+        const existingNames = new Set([
+            ...(this.tasks || []).map(t => t.name),
+            ...(this.manualTasks || []).map(t => t.name)
+        ]);
+        if (!existingNames.has(baseName)) return baseName;
+        let n = 2;
+        while (existingNames.has(`${baseName} (${n})`)) n++;
+        return `${baseName} (${n})`;
+    }
+
     addTaskAtStart() {
         const key = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        this.manualTasks.push({ key, name: 'Новая задача', durationDays: 0, insertAfterKey: null, insertAtStart: true });
+        this.manualTasks.push({ key, name: this._uniqueTaskName('Новая задача'), durationDays: 0, insertAfterKey: null, insertAtStart: true });
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
 
     addTaskAfter(afterTaskKey) {
         const key = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        this.manualTasks.push({ key, name: 'Новая задача', durationDays: 0, insertAfterKey: afterTaskKey });
+        this.manualTasks.push({ key, name: this._uniqueTaskName('Новая задача'), durationDays: 0, insertAfterKey: afterTaskKey });
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
@@ -2992,7 +3370,28 @@ export class GanttNode extends BaseNode {
         return false;
     }
 
+    // Раунд 157 (по запросу Mr.D: "нужны колонки 'сум. раб. дней',
+    // 'сум. ч.ч.' - показывают суммарно отработанные дни по всем
+    // работам, а не по дате начала и конца в разделе") - ИСТИННАЯ сумма
+    // РЕАЛЬНО отработанных рабочих дней (через _countWorkingDaysInRange()
+    // для КАЖДОЙ задачи по отдельности, не диапазон "от начала до
+    // конца"). Отличается даже от существующей "ч.ч." для ОДНОЙ задачи:
+    // та считает часы через task.durationDays (КАЛЕНДАРНУЮ ширину) - если
+    // задача сама перескакивает через выходной внутри своего диапазона,
+    // "ч.ч." завышает результат (считает и выходной день тоже), эта
+    // сумма - нет.
+    _sumWorkdaysForTasks(tasks) {
+        const anchor = parseISODate(this.startDate) || new Date();
+        return tasks.reduce((sum, t) => sum + this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays), 0);
+    }
+
+    _sumHoursForTasks(tasks) {
+        return this._sumWorkdaysForTasks(tasks) * HOURS_PER_WORKDAY;
+    }
+
     _calDaysW() { return this.calDaysColWidthOverride || CALDAYS_COL_WIDTH; }
+    _sumWorkdaysW() { return this.sumWorkdaysColWidthOverride || SUM_WORKDAYS_COL_WIDTH; }
+    _sumHoursW() { return this.sumHoursColWidthOverride || SUM_HOURS_COL_WIDTH; }
     _sectionW() { return this.sectionColWidthOverride || SECTION_COL_WIDTH; }
 
     // Раунд 94 (по предложению Mr.D: "универсальное решение - всегда
@@ -3108,6 +3507,18 @@ export class GanttNode extends BaseNode {
         if (this.showCalDaysColumn) {
             leftGroup.appendChild(makeHeaderCell(this._calDaysW(), 'Кал. дни', (w) => {
                 this.calDaysColWidthOverride = w;
+                this._rerenderGanttSlot();
+            }));
+        }
+        if (this.showSumWorkingDaysColumn) {
+            leftGroup.appendChild(makeHeaderCell(this._sumWorkdaysW(), 'Сум.раб.дн.', (w) => {
+                this.sumWorkdaysColWidthOverride = w;
+                this._rerenderGanttSlot();
+            }));
+        }
+        if (this.showSumHoursColumn) {
+            leftGroup.appendChild(makeHeaderCell(this._sumHoursW(), 'Сум.ч.ч.', (w) => {
+                this.sumHoursColWidthOverride = w;
                 this._rerenderGanttSlot();
             }));
         }
@@ -3274,6 +3685,21 @@ export class GanttNode extends BaseNode {
             calDaysCell.textContent = `${Helpers.formatNumber(calDaysTotal)}кд`;
             calDaysCell.title = 'Календарных дней в общем диапазоне проекта';
             leftGroup.appendChild(calDaysCell);
+        }
+
+        if (this.showSumWorkingDaysColumn) {
+            const sumWdCell = document.createElement('div');
+            sumWdCell.style.cssText = `width:${this._sumWorkdaysW()}px; flex-shrink:0; font-size:10px; color:var(--md-text); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumWdCell.textContent = String(this._sumWorkdaysForTasks(this.tasks));
+            sumWdCell.title = 'Сумма реально отработанных рабочих дней по всему проекту';
+            leftGroup.appendChild(sumWdCell);
+        }
+        if (this.showSumHoursColumn) {
+            const sumHCell = document.createElement('div');
+            sumHCell.style.cssText = `width:${this._sumHoursW()}px; flex-shrink:0; font-size:10px; color:var(--md-text); text-align:right; padding-right:6px; font-variant-numeric:tabular-nums;`;
+            sumHCell.textContent = Helpers.formatNumber(this._sumHoursForTasks(this.tasks));
+            sumHCell.title = 'Сумма реально отработанных человеко-часов по всему проекту';
+            leftGroup.appendChild(sumHCell);
         }
 
         const track = document.createElement('div');
@@ -3734,6 +4160,64 @@ export class GanttNode extends BaseNode {
         return tasks;
     }
 
+    // Раунд 152 (по запросу Mr.D: "выходной сокет диаграммы... в теории
+    // диаграмма на выходе должна иметь стерилизованный [сериализованный]
+    // словарь, а просмотр дерева был создан как раз для просмотра
+    // различных словарей") - строит древовидный словарь ИЗ ТЕКУЩЕГО
+    // состояния диаграммы (this.taskGroups с subgroups, ЛЮБАЯ глубина
+    // вложенности) - формат УЖЕ совместим с тем, что производит
+    // GanttTableProcessorNode.treeData (см. её calculate()) и что УЖЕ
+    // умеет читать ЭТА ЖЕ нода на входе (см. calculate() выше,
+    // `if (output?.treeData...)`), а также TreeViewerNode (та "была
+    // создана как раз для просмотра различных словарей" - подключение
+    // ЭТОГО выхода к ней покажет структуру диаграммы как дерево).
+    //
+    // ВАЖНАЯ ОГОВОРКА (сообщаю честно, не молчу) - потребитель дерева
+    // на СТОРОНЕ ДРУГОЙ Диаграммы Ганта (_hierarchyBlocksFromTreeData(),
+    // построена в Раунде 130 ДО того, как появилась произвольная
+    // вложенность Раздел/Подраздел, Раунд 150) понимает ТОЛЬКО ДВА
+    // уровня (Блок -> Стадия -> сплющенные задачи) - если ЭТА диаграмма
+    // подключается к ДРУГОЙ Диаграмме Ганта, вложенность ГЛУБЖЕ второго
+    // уровня (Подраздел -> ПодПодраздел) будет сплющена на приёмнике
+    // (тот СПЛОЩИВАЕТ всё глубже Стадии в единый список задач). Через
+    // TreeViewerNode - произвольная глубина сохраняется ПОЛНОСТЬЮ (тот
+    // не имеет такого ограничения). Полное устранение ограничения
+    // потребует отдельной, более крупной доработки
+    // _hierarchyBlocksFromTreeData() под произвольную глубину.
+    _buildTreeDataOutput() {
+        const anchor = parseISODate(this.startDate) || new Date();
+        const taskToNode = (t) => ({
+            name: t.name,
+            type: 'task',
+            responsible: this._effectiveResponsible(t) || '',
+            start: formatISODate(addDays(anchor, t.startOffsetDays)),
+            rawWorkDays: this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays),
+            sectionNumber: this._effectiveSection(t) || null,
+            children: []
+        });
+        const groupToNode = (g) => ({
+            name: g.name,
+            type: 'stage',
+            responsible: '',
+            start: null,
+            rawWorkDays: 0,
+            sectionNumber: null,
+            children: [
+                ...g.tasks.map(taskToNode),
+                ...(g.subgroups || []).map(groupToNode)
+            ]
+        });
+
+        if (Array.isArray(this.taskGroups) && this.taskGroups.length > 0) {
+            return { roots: this.taskGroups.map(groupToNode) };
+        }
+        // Без разделов (плоский список задач) - один синтетический
+        // корень с именем ноды, дети - все задачи напрямую (тот же
+        // приём, что "безымянная" группа для задач без раздела внутри
+        // _applyPromotedSections()).
+        return { roots: [{ name: this.customName || this.getDisplayName(), type: 'stage', responsible: '', start: null, rawWorkDays: 0, sectionNumber: null, children: this.tasks.map(taskToNode) }] };
+    }
+
     buildOutputTable() {
         const anchor = parseISODate(this.startDate) || new Date();
         const blocks = [];
@@ -3899,6 +4383,7 @@ export class GanttNode extends BaseNode {
             this._applyDependencyConstraints();
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
+            this.treeData = this._buildTreeDataOutput();
             this.value = 0;
             syncNodeToBoards(this);
             return this.value;
@@ -3993,6 +4478,7 @@ export class GanttNode extends BaseNode {
                 this._applyDependencyConstraints();
                 this._detectResponsiblesAndGroups();
                 this.tableData = this.buildOutputTable();
+                this.treeData = this._buildTreeDataOutput();
                 this.value = this.tasks.length;
                 syncNodeToBoards(this);
                 return this.value;
@@ -4117,6 +4603,7 @@ export class GanttNode extends BaseNode {
                 this._applyDependencyConstraints();
                 this._detectResponsiblesAndGroups();
                 this.tableData = this.buildOutputTable();
+                this.treeData = this._buildTreeDataOutput();
                 this.value = this.tasks.length;
                 syncNodeToBoards(this);
                 return this.value;
@@ -4158,6 +4645,7 @@ export class GanttNode extends BaseNode {
             this._applyDependencyConstraints();
             this._detectResponsiblesAndGroups();
             this.tableData = this.buildOutputTable();
+            this.treeData = this._buildTreeDataOutput();
             this.value = this.tasks.length;
             syncNodeToBoards(this);
             return this.value;
@@ -4246,6 +4734,7 @@ export class GanttNode extends BaseNode {
         this._applyDependencyConstraints();
         this._detectResponsiblesAndGroups();
         this.tableData = this.buildOutputTable();
+        this.treeData = this._buildTreeDataOutput();
         this.value = this.tasks.length;
         syncNodeToBoards(this);
         return this.value;
@@ -4502,6 +4991,23 @@ export class GanttNode extends BaseNode {
             type: 'checkbox',
             get: () => this.showCalDaysColumn,
             set: (v) => { this.showCalDaysColumn = !!v; }
+        });
+
+        // Раунд 157 (по запросу Mr.D: "нужны ещё колонки 'сум. раб.
+        // дней', 'сум. ч.ч.'")
+        fields.push({
+            key: 'showSumWorkingDaysColumn',
+            label: 'Колонка "Сум.раб.дн."',
+            type: 'checkbox',
+            get: () => this.showSumWorkingDaysColumn,
+            set: (v) => { this.showSumWorkingDaysColumn = !!v; }
+        });
+        fields.push({
+            key: 'showSumHoursColumn',
+            label: 'Колонка "Сум.ч.ч."',
+            type: 'checkbox',
+            get: () => this.showSumHoursColumn,
+            set: (v) => { this.showSumHoursColumn = !!v; }
         });
 
         fields.push({

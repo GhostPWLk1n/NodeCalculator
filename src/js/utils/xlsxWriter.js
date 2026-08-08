@@ -6,7 +6,7 @@
  * @file    xlsxWriter.js
  * @brief   Запись .xlsx (ZIP + OOXML) без сторонних библиотек - только браузерные API
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -185,17 +185,24 @@ function buildStylesXml(styleKeys) {
         `<fill><patternFill patternType="solid"><fgColor rgb="FF${hex}"/><bgColor indexed="64"/></patternFill></fill>`
     ).join('');
 
-    const cellXfs = styleKeys.map(({ color, border }) => {
+    const cellXfs = styleKeys.map(({ color, border, bold }) => {
         const fillId = color ? colorToFillId.get(color) : 0;
         const borderId = border ? 1 : 0;
+        // Раунд 153 (по запросу Mr.D: "чтобы показать иерархию в xlsx мы
+        // не будем делать отступы, просто строки групп должны быть
+        // жирными") - fontId=1 (жирный, см. <fonts> ниже) для строк-
+        // заголовков разделов вместо отступов - плоская, но визуально
+        // отличимая структура.
+        const fontId = bold ? 1 : 0;
         const applyFill = color ? ' applyFill="1"' : '';
         const applyBorder = border ? ' applyBorder="1"' : '';
-        return `<xf numFmtId="0" fontId="0" fillId="${fillId}" borderId="${borderId}" xfId="0"${applyFill}${applyBorder}/>`;
+        const applyFont = bold ? ' applyFont="1"' : '';
+        return `<xf numFmtId="0" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${applyFill}${applyBorder}${applyFont}/>`;
     }).join('');
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
         `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
         `<fills count="${uniqueColors.length + 2}">` +
         `<fill><patternFill patternType="none"/></fill>` +
         `<fill><patternFill patternType="gray125"/></fill>` +
@@ -212,17 +219,17 @@ function buildStylesXml(styleKeys) {
 }
 
 // Раунд 111 - "ключ" стиля ячейки, по которому ищем/заводим индекс в
-// styleIndexByKey ("HEX|0" или "HEX|1" - цвет+граница, "|1" - только
-// граница без заливки). Единая функция - используется и при сборе
-// уникальных стилей, и при поиске индекса конкретной ячейки.
-function styleKeyFor(color, border) {
-    return `${color || ''}|${border ? 1 : 0}`;
+// styleIndexByKey ("HEX|0|0" - цвет+граница+жирность, Раунд 153 добавил
+// третье поле). Единая функция - используется и при сборе уникальных
+// стилей, и при поиске индекса конкретной ячейки.
+function styleKeyFor(color, border, bold) {
+    return `${color || ''}|${border ? 1 : 0}|${bold ? 1 : 0}`;
 }
 
 // Раунд 110 - собирает XML листа из ПРОИЗВОЛЬНОЙ сетки (не только
 // TableData, как buildSheetXml() выше) - каждая ячейка либо голое
-// значение, либо {value, color, border} (color - HEX без "#" или
-// null, border - bool). Нужен для календарного экспорта Ганта
+// значение, либо {value, color, border, bold} (color - HEX без "#" или
+// null, border/bold - bool). Нужен для календарного экспорта Ганта
 // (ganttCalendarExport.js) - там сетка нерегулярная (заголовочные
 // строки года/месяца/недели + строки задач), TableData (строго
 // табличная форма) для этого не подходит.
@@ -234,7 +241,8 @@ function buildGridSheetXml(grid, styleIndexByKey) {
             const value = isObj ? cell.value : cell;
             const color = isObj ? cell.color : null;
             const border = isObj ? !!cell.border : false;
-            const key = styleKeyFor(color, border);
+            const bold = isObj ? !!cell.bold : false;
+            const key = styleKeyFor(color, border, bold);
             const styleIdx = styleIndexByKey.get(key);
             const sAttr = styleIdx ? ` s="${styleIdx}"` : '';
             const ref = `${colLetter(ci)}${ri + 1}`;
@@ -345,14 +353,15 @@ export const XlsxWriter = {
 
         // Раунд 111 - уникальные КЛЮЧИ стиля (цвет+граница), не только
         // голые цвета - см. styleKeyFor()/buildStylesXml().
-        const styleKeysSet = new Map(); // key -> {color, border}
+        const styleKeysSet = new Map(); // key -> {color, border, bold}
         grid.forEach(row => row.forEach(cell => {
             const isObj = cell !== null && typeof cell === 'object' && !(cell instanceof Date);
             const color = isObj && cell.color ? String(cell.color).replace('#', '').toUpperCase() : null;
             const border = isObj && !!cell.border;
-            if (!color && !border) return; // дефолтный стиль (индекс 0) - заводить не нужно
-            const key = styleKeyFor(color, border);
-            if (!styleKeysSet.has(key)) styleKeysSet.set(key, { color, border });
+            const bold = isObj && !!cell.bold;
+            if (!color && !border && !bold) return; // дефолтный стиль (индекс 0) - заводить не нужно
+            const key = styleKeyFor(color, border, bold);
+            if (!styleKeysSet.has(key)) styleKeysSet.set(key, { color, border, bold });
         }));
         const styleKeys = [...styleKeysSet.values()];
         const styleIndexByKey = new Map([...styleKeysSet.keys()].map((k, i) => [k, i + 1]));

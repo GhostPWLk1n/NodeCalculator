@@ -6,7 +6,7 @@
  * @file    socketFactory.js
  * @brief   Единая точка создания DOM-элемента сокета
  * @author  Pavel Fomin
- * @version 1.8.27
+ * @version 1.8.36
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
