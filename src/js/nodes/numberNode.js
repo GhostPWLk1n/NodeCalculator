@@ -6,7 +6,7 @@
  * @file    numberNode.js
  * @brief   Компактная нода с ручным вводом числа и одним выходом
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    dataTypes.js
  * @brief   Единые форматы данных между нодами: ListData и TableData
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    exportXlsxNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .xlsx по кнопке
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -149,6 +149,31 @@ export class ExportXlsxNode extends BaseNode {
                     this._doExport();
                 });
                 container.appendChild(btn);
+
+                // Раунд 164 (по жалобе Mr.D: "виджет узла экспорта
+                // теряет кнопку Экспорт как календарь Ганта") - в теле
+                // самой ноды (createContent() выше) ВТОРАЯ кнопка есть
+                // (Раунд 110, видна только для источника-Диаграммы
+                // Ганта) - здесь её не было вовсе. Виджет пересобирается
+                // ЦЕЛИКОМ при каждой синхронизации (syncNodeToBoards() ->
+                // registerWidget() -> полный render(), не точечный
+                // updateDisplay()) - в отличие от тела ноды, тут не
+                // нужен трюк "всегда в DOM, переключать display" -
+                // просто добавляем кнопку условно, по актуальному
+                // состоянию НА МОМЕНТ этого рендера.
+                if (this._isGanttSource()) {
+                    const calendarBtn = document.createElement('button');
+                    calendarBtn.className = 'node-action-btn board-widget-export-btn';
+                    calendarBtn.style.marginTop = '6px';
+                    calendarBtn.textContent = '📅 Экспорт как календарь Ганта';
+                    calendarBtn.disabled = !(this._sourceNode?.tasks?.length > 0);
+                    calendarBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+                    calendarBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this._doExportGanttCalendar();
+                    });
+                    container.appendChild(calendarBtn);
+                }
             }
         };
     }

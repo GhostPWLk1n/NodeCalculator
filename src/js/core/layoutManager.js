@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -307,6 +307,9 @@ export class LayoutManager {
                     // wrapHeight подряд - JS в object-литерале молча берёт
                     // последний, из-за чего высота TableViewerNode терялась)
                     wrapHeight: (n.type === 'tableViewer' || n.type === 'gantt') ? n.wrapHeight : undefined,
+                    // Раунд 166 - высота виджета Доски у Диаграммы Ганта,
+                    // отдельно от wrapHeight холстовой ноды выше
+                    widgetWrapHeight: n.type === 'gantt' ? n.widgetWrapHeight : undefined,
                     // DashboardNode: привязка к Доске
                     targetBoardId: n.type === 'dashboard' ? n.targetBoardId : undefined,
                     overridden: n.type === 'dashboard' ? n.overridden : undefined,

@@ -6,7 +6,7 @@
  * @file    treeViewerNode.js
  * @brief   Просмотр иерархии "Дерева" - раскрываемые/сворачиваемые вложенные ветки
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

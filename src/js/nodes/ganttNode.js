@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -413,6 +413,17 @@ export class GanttNode extends BaseNode {
         // ручку ноды по вертикали (см. beginFreeResize/applyFreeResize) -
         // null = высота подбирается автоматически по числу задач
         this.wrapHeight = config.wrapHeight ?? null;
+        // Раунд 166 (по жалобе Mr.D: "получились связаны высота виджета
+        // и высота узла, нужно разделить, чтобы виджет диаграммы можно
+        // было подстраивать вручную под нужную высоту") - ДО этого
+        // раунда createGanttArea() (единственный метод, строящий тело
+        // диаграммы) вызывался И холстовой нодой, И виджетом Доски
+        // ОДИНАКОВО - оба читали ОДНО И ТО ЖЕ this.wrapHeight, поэтому
+        // растягивание ручкой ноды на Листе сразу меняло и высоту
+        // виджета на Доске, и наоборот. Отдельное поле - та же
+        // семантика (null = автоматически по числу задач), но НЕ
+        // разделяемая с холстовой нодой.
+        this.widgetWrapHeight = config.widgetWrapHeight ?? null;
         // Раунд 73 - набор дат-праздников из подключённого сокета 1 (см.
         // calculate()) - Set<string> ISO-дат, пустой до первого пересчёта
         this.holidaySet = new Set();
@@ -578,7 +589,15 @@ export class GanttNode extends BaseNode {
 
     // === Диаграмма: линейка дат + строки задач с перетаскиваемыми полосами ===
 
-    createGanttArea() {
+    // Раунд 166 (по жалобе Mr.D: "связаны высота виджета и высота узла,
+    // нужно разделить") - isWidget переключает, ИЗ КАКОГО поля брать
+    // высоту тела (this.widgetWrapHeight для Доски, this.wrapHeight для
+    // холстовой ноды - см. ниже) и добавляет СОБСТВЕННУЮ ручку
+    // растягивания для контекста Доски (у холстовой ноды растягивание
+    // идёт через общий механизм nodeManager.js, см.
+    // beginFreeResize()/applyFreeResize() - виджет Доски с ним не
+    // связан, у него своя, отдельная).
+    createGanttArea(isWidget = false) {
         const totalDays = this.periodPreset === 'custom'
             ? this.customPeriodDays
             : (PERIOD_PRESETS[this.periodPreset]?.days || 30);
@@ -849,11 +868,14 @@ export class GanttNode extends BaseNode {
         }
 
         // Высота ТОЛЬКО тела - шапка и ручка дедлайна физически вне этой
-        // области. this.wrapHeight - JS-свойство (см. beginFreeResize/
-        // applyFreeResize ниже), а не инспекция инлайн-стилей DOM.
-        if (this.wrapHeight) {
+        // области. Раунд 166 - какое ИМЕННО поле читать, зависит от
+        // контекста (isWidget) - холстовая нода и виджет Доски больше
+        // НЕ делят одно и то же состояние (см. докстринг widgetWrapHeight
+        // в конструкторе).
+        const effectiveWrapHeight = isWidget ? this.widgetWrapHeight : this.wrapHeight;
+        if (effectiveWrapHeight) {
             rowsWrap.style.maxHeight = 'none';
-            rowsWrap.style.height = this.wrapHeight + 'px';
+            rowsWrap.style.height = effectiveWrapHeight + 'px';
         } else {
             const visibleRows = Math.min(Math.max(this.tasks.length, 1), MAX_VISIBLE_ROWS);
             rowsWrap.style.maxHeight = `${visibleRows * ROW_HEIGHT}px`;
@@ -868,6 +890,41 @@ export class GanttNode extends BaseNode {
         if (deadlineLine) inner.appendChild(deadlineLine);
 
         outer.appendChild(inner);
+
+        // Раунд 166 (по жалобе Mr.D: "нужно разделить, чтобы виджет
+        // диаграммы можно было подстраивать вручную под нужную высоту") -
+        // собственная ручка растягивания ТОЛЬКО для контекста Доски - у
+        // холстовой ноды растягивание идёт через ОБЩИЙ механизм
+        // nodeManager.js (ручка в углу самой ноды, см.
+        // beginFreeResize()/applyFreeResize() ниже) - виджет на Доске с
+        // этим механизмом не связан (там своя, отдельная система
+        // resize по колонкам/строкам сетки, boardManager.js), поэтому
+        // растягивание ВНУТРЕННЕЙ области строк требует своей ручки.
+        if (isWidget) {
+            const widgetResizeHandle = document.createElement('div');
+            widgetResizeHandle.className = 'gantt-widget-resize-handle';
+            widgetResizeHandle.title = 'Потяните, чтобы изменить высоту диаграммы';
+            widgetResizeHandle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const startY = e.clientY;
+                const startHeight = rowsWrap.offsetHeight;
+                const onMove = (moveEvt) => {
+                    const newHeight = Math.max(ROW_HEIGHT, startHeight + (moveEvt.clientY - startY));
+                    rowsWrap.style.maxHeight = 'none';
+                    rowsWrap.style.height = newHeight + 'px';
+                    this.widgetWrapHeight = newHeight;
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    if (window.nodeManager) window.nodeManager.calculateAll();
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+            outer.appendChild(widgetResizeHandle);
+        }
 
         // Багфикс (Раунд 104, по жалобе Mr.D: "столбцы так и не
         // фиксируются") - CSS position:sticky НЕ может работать для
@@ -4027,7 +4084,7 @@ export class GanttNode extends BaseNode {
             type: 'gantt',
             title: this.customName || null,
             render: (container) => {
-                container.appendChild(this.createGanttArea());
+                container.appendChild(this.createGanttArea(true));
             }
         };
     }

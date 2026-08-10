@@ -2289,6 +2289,18 @@ body {
     display: none;
 }
 
+.gantt-widget-resize-handle {
+    height: 8px;
+    margin-top: 2px;
+    cursor: ns-resize;
+    border-radius: var(--md-radius);
+    background: var(--md-surface-2);
+    transition: background-color 0.15s ease;
+}
+.gantt-widget-resize-handle:hover {
+    background: var(--md-primary);
+}
+
 /* ============================================
    ИНЛАЙН-ПЕРЕИМЕНОВАНИЕ ВКЛАДКИ ЛИСТА
    ============================================ */

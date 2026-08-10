@@ -2409,6 +2409,24 @@ body {
     display: none;
 }
 
+/* Раунд 166 (по жалобе Mr.D: "связаны высота виджета и высота узла,
+   нужно разделить, чтобы виджет диаграммы можно было подстраивать
+   вручную под нужную высоту") - собственная ручка растягивания ТОЛЬКО
+   для контекста Доски (createGanttArea(isWidget=true)) - горизонтальная
+   полоса снизу (не угловой квадрат, как у .node-resize-handle - здесь
+   меняется ТОЛЬКО высота, не ширина), курсор ns-resize. */
+.gantt-widget-resize-handle {
+    height: 8px;
+    margin-top: 2px;
+    cursor: ns-resize;
+    border-radius: var(--md-radius);
+    background: var(--md-surface-2);
+    transition: background-color 0.15s ease;
+}
+.gantt-widget-resize-handle:hover {
+    background: var(--md-primary);
+}
+
 /* ============================================
    ИНЛАЙН-ПЕРЕИМЕНОВАНИЕ ВКЛАДКИ ЛИСТА
    ============================================ */

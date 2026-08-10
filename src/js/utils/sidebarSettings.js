@@ -6,7 +6,7 @@
  * @file    sidebarSettings.js
  * @brief   Настройки сайдбара - показ/скрытие нод, конфигурации, экспорт/импорт
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

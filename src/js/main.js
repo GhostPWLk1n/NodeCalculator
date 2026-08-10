@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

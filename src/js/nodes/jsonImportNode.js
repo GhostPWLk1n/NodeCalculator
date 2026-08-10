@@ -6,14 +6,14 @@
  * @file    jsonImportNode.js
  * @brief   Импорт .json - разбирает произвольный JSON в Data + иерархию веток (см. TreeViewerNode)
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
 import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
-import { TableWidgetRenderer } from '../utils/tableWidgetRenderer.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 /**
  * JsonImportNode ("Импорт JSON") - Раунд 60. Загружает произвольный
@@ -84,6 +84,14 @@ export class JsonImportNode extends BaseNode {
         this.boardColumnWidths = config.boardColumnWidths ? { ...config.boardColumnWidths } : {};
         this.boardSortColumn = config.boardSortColumn ?? null;
         this.boardSortDirection = config.boardSortDirection ?? null;
+
+        // Раунд 164 (по запросу Mr.D: "нужно добавить виджеты для
+        // узлов Импорта") - getDashboardWidget() ниже УЖЕ существовал,
+        // но был НЕДОСТИЖИМ через интерфейс - у этой ноды не было
+        // getInspectorSchema() вообще (использовался пустой дефолт из
+        // BaseNode), раздел "Доска" никогда не показывался, включить
+        // виджет было физически невозможно.
+        initBoardPublishFields(this, config);
     }
 
     createContent() {
@@ -293,6 +301,7 @@ export class JsonImportNode extends BaseNode {
             this.branches = [];
             this.value = 0;
             this.clearBadge('jsonParseError');
+            syncNodeToBoards(this);
             return this.value;
         }
 
@@ -310,6 +319,7 @@ export class JsonImportNode extends BaseNode {
             this.addBadge('jsonParseError', { type: 'error', text: `Ошибка разбора JSON: ${err.message}` });
         }
 
+        syncNodeToBoards(this);
         return this.value;
     }
 
@@ -317,19 +327,63 @@ export class JsonImportNode extends BaseNode {
         return this.customName || 'Импорт JSON';
     }
 
-    // Виджет Доски (см. dashboardNode.js/boardManager.js) - показывает
-    // ТОЛЬКО собственные примитивные поля корневого уровня (плоская
-    // таблица) - для полной иерархии на Доске нужна отдельная задача -
-    // тут просто тот же общий рендерер, что у остальных табличных нод.
+    // Раунд 164/165 (по запросу Mr.D: "нужно добавить виджеты для узлов
+    // Импорта", позже уточнено: "виджет импорта работает как просмотр,
+    // это не то. Мне нужно чтобы я мог импортировать файл через этот
+    // виджет не заходя на Лист. Функции должны просто дублироваться,
+    // просмотра не надо. Компактный вид похожий на то, что мы видим у
+    // узла") - раньше (Раунд 164) виджет показывал ПРОСМОТР уже
+    // импортированных данных (TableWidgetRenderer) - заменено
+    // (Раунд 165) на дубликат САМОГО ТЕЛА НОДЫ (createContent() выше) -
+    // выбор файла, имя файла, статус - ТЕ ЖЕ методы (_onFilePicked()),
+    // не копия логики. В отличие от XlsxImportNode - здесь ОДИН шаг
+    // (выбор файла сразу коммитит и вызывает calculateAll(), см.
+    // _onFilePicked() выше) - отдельная кнопка "Импортировать" не нужна.
     getDashboardWidget() {
-        const node = this;
         return {
-            type: 'table',
+            type: 'action',
             title: this.customName || null,
             render: (container) => {
-                container.appendChild(TableWidgetRenderer.build(node));
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = '.json,application/json';
+                fileInput.style.display = 'none';
+                fileInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                fileInput.addEventListener('change', (e) => {
+                    const file = e.target.files && e.target.files[0];
+                    e.target.value = '';
+                    if (file) this._onFilePicked(file);
+                });
+                container.appendChild(fileInput);
+
+                const pickBtn = document.createElement('button');
+                pickBtn.className = 'xlsx-pick-btn node-action-btn board-widget-export-btn';
+                pickBtn.textContent = '📄 Выбрать JSON-файл';
+                pickBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+                pickBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    fileInput.click();
+                });
+                container.appendChild(pickBtn);
+
+                const fileNameEl = document.createElement('div');
+                fileNameEl.className = 'board-widget-export-status';
+                fileNameEl.textContent = this.fileName || 'файл не выбран';
+                fileNameEl.title = this.fileName || '';
+                container.appendChild(fileNameEl);
+
+                const statusEl = document.createElement('div');
+                statusEl.className = 'board-widget-export-status';
+                statusEl.textContent = this._statusText();
+                container.appendChild(statusEl);
             }
         };
+    }
+
+    getInspectorSchema() {
+        const fields = super.getInspectorSchema();
+        fields.push(...buildBoardInspectorFields(this));
+        return fields;
     }
 
     updateDisplay(element) {

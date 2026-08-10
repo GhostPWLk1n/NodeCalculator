@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -14,6 +14,7 @@ import { BaseNode } from './baseNode.js';
 import { TableData } from '../utils/dataTypes.js';
 import { SocketFactory } from '../utils/socketFactory.js';
 import { XlsxReader } from '../utils/xlsxReader.js';
+import { initBoardPublishFields, syncNodeToBoards, buildBoardInspectorFields } from '../utils/boardPublish.js';
 
 /**
  * XlsxImportNode - источник данных (входов нет, как у ListInputNode),
@@ -109,6 +110,11 @@ export class XlsxImportNode extends BaseNode {
         this._outline = null;
         this._arrayBuffer = null;
         this._isRerendering = false;
+
+        // Раунд 164 (по запросу Mr.D: "нужно добавить виджеты для
+        // узлов Импорта") - см. utils/boardPublish.js, тот же приём,
+        // что уже применён к CalendarNode/GanttNode/и т.п.
+        initBoardPublishFields(this, config);
 
         this.tableData = this._buildTableData();
         this.value = this.importedRows.length;
@@ -368,7 +374,84 @@ export class XlsxImportNode extends BaseNode {
     calculate(nodeManager) {
         // Никакой работы с файлом тут не происходит - см. докстринг класса
         this.value = this.importedRows.length;
+        syncNodeToBoards(this);
         return this.value;
+    }
+
+    // Раунд 164/165 (по запросу Mr.D: "нужно добавить виджеты для узлов
+    // Импорта", позже уточнено: "виджет импорта работает как просмотр,
+    // это не то. Мне нужно чтобы я мог импортировать файл через этот
+    // виджет не заходя на Лист. Функции должны просто дублироваться,
+    // просмотра не надо. Компактный вид похожий на то, что мы видим у
+    // узла") - раньше (Раунд 164) виджет показывал ПРОСМОТР уже
+    // импортированных данных (TableWidgetRenderer, как у готовой
+    // таблицы) - заменено (Раунд 165) на дубликат САМОГО ТЕЛА НОДЫ
+    // (createContent() выше) - выбор файла, имя файла, статус, кнопка
+    // повторного импорта - ТЕ ЖЕ методы (_onFilePicked()/
+    // _importSelected()), не копия логики.
+    getDashboardWidget() {
+        return {
+            type: 'action',
+            title: this.customName || null,
+            render: (container) => {
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = '.xlsx';
+                fileInput.style.display = 'none';
+                fileInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                fileInput.addEventListener('change', async (e) => {
+                    const file = e.target.files && e.target.files[0];
+                    e.target.value = '';
+                    if (file) {
+                        await this._onFilePicked(file);
+                        // Раунд 165 - _onFilePicked() перерисовывает
+                        // ТОЛЬКО ноду на холсте (rerender(), см. её
+                        // докстринг) - виджет на Доске отдельный DOM,
+                        // без своего пересчёта calculateAll() не
+                        // получил бы сигнал обновиться сам. Полная
+                        // перерисовка активной Доски - тот же приём,
+                        // что уже применён в Раунде 162 (переключение
+                        // режима редактирования).
+                        window.boardManager?.renderActiveBoard();
+                    }
+                });
+                container.appendChild(fileInput);
+
+                const pickBtn = document.createElement('button');
+                pickBtn.className = 'xlsx-pick-btn node-action-btn board-widget-export-btn';
+                pickBtn.textContent = '📁 Выбрать файл';
+                pickBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+                pickBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    fileInput.click();
+                });
+                container.appendChild(pickBtn);
+
+                const fileNameEl = document.createElement('div');
+                fileNameEl.className = 'board-widget-export-status';
+                fileNameEl.textContent = this.fileName || 'файл не выбран';
+                fileNameEl.title = this.fileName || '';
+                container.appendChild(fileNameEl);
+
+                const statusEl = document.createElement('div');
+                statusEl.className = 'board-widget-export-status';
+                statusEl.textContent = this._statusText();
+                container.appendChild(statusEl);
+
+                const reimportBtn = document.createElement('button');
+                reimportBtn.className = 'node-action-btn board-widget-export-btn';
+                reimportBtn.style.marginTop = '4px';
+                reimportBtn.textContent = '⬇️ Импортировать';
+                reimportBtn.disabled = !this._outline || !this.selectedSheet;
+                reimportBtn.title = 'Импортирует уже выбранный лист/столбцы (настраиваются в панели ноды на Листе) - без похода на Лист, если настройки менять не нужно';
+                reimportBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+                reimportBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._importSelected();
+                });
+                container.appendChild(reimportBtn);
+            }
+        };
     }
 
     updateDisplay(element) {
@@ -416,6 +499,12 @@ export class XlsxImportNode extends BaseNode {
                     ? `Уже импортировано из «${this.fileName}» - выберите файл заново в теле ноды, чтобы сменить лист/столбцы`
                     : 'Сначала выберите файл в теле ноды'
             });
+            // Раунд 164 (по запросу Mr.D: "нужно добавить виджеты для
+            // узлов Импорта") - "Показывать на Досках" доступен
+            // НЕЗАВИСИМО от состояния импорта (файл можно выбрать
+            // позже) - добавляем ДО раннего return ниже, иначе поле
+            // вообще не появилось бы, пока файл не выбран.
+            fields.push(...buildBoardInspectorFields(this));
             return fields;
         }
 
@@ -515,6 +604,8 @@ export class XlsxImportNode extends BaseNode {
             disabled: !headers.length,
             onClick: () => this._importSelected()
         });
+
+        fields.push(...buildBoardInspectorFields(this));
 
         return fields;
     }

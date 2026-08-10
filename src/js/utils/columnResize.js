@@ -6,7 +6,7 @@
  * @file    columnResize.js
  * @brief   Общая drag-and-drop логика растягивания ширины столбца - переиспользуется во всех табличных представлениях
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

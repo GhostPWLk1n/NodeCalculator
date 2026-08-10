@@ -6,7 +6,7 @@
  * @file    calendarNode.js
  * @brief   Визуальный календарь (сетка месяца) для ручной разметки праздников/дней - источник для сокета "Праздники" у GanttNode
  * @author  Pavel Fomin
- * @version 1.8.42
+ * @version 1.8.46
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -243,28 +243,31 @@ export class CalendarNode extends BaseNode {
         return this.value;
     }
 
-    // Раунд 126 (релиз 1.8.0, механика Досок, по запросу Mr.D:
-    // "добавим виджет Календаря") - компактная сводка (не полная
-    // интерактивная сетка с навигацией по месяцам - та рассчитана на
-    // рабочее пространство графа, для Доски это избыточно) - количество
-    // дат + список первых нескольких, отсортированных по возрастанию.
+    // Раунд 126 (релиз 1.8.0, механика Досок, по запросу Mr.D: "добавим
+    // виджет Календаря") - изначально была компактная текстовая сводка.
+    // Раунд 164 (по прямому запросу Mr.D: "отображение календаря в
+    // виджетах должно быть такое же как у узла") - заменено на полную
+    // интерактивную сетку (см. ниже) - прежнее обоснование ("для Доски
+    // избыточно") отменено этим же явным решением.
     getDashboardWidget() {
         return {
             type: 'calendar',
             title: this.customName || null,
             render: (container) => {
-                const summary = document.createElement('div');
-                summary.className = 'board-widget-calendar-summary';
-                summary.textContent = `${this.holidayDates.length} дат`;
-                container.appendChild(summary);
-
-                if (this.holidayDates.length > 0) {
-                    const list = document.createElement('div');
-                    list.className = 'board-widget-calendar-list';
-                    const preview = this.holidayDates.slice(0, 12);
-                    list.textContent = preview.join(', ') + (this.holidayDates.length > preview.length ? '…' : '');
-                    container.appendChild(list);
-                }
+                // Раунд 164 (по запросу Mr.D: "отображение календаря в
+                // виджетах должно быть такое же как у узла") - раньше
+                // виджет показывал ЧИСТО текстовую сводку ("N дат" +
+                // список) - теперь та же сетка месяца, что и на самой
+                // ноде (buildCalendarGrid(), Раунд 74) - тот же класс
+                // .calendar-grid-slot, что использует createContent(),
+                // чтобы _rebuildGrid() (обновление после клика по дню)
+                // находила и обновляла ЭТУ сетку тоже (см. _rebuildGrid()
+                // ниже - теперь ищет ОБА места: и ноду на холсте, и
+                // виджет на Доске).
+                const gridSlot = document.createElement('div');
+                gridSlot.className = 'calendar-grid-slot';
+                gridSlot.appendChild(this.buildCalendarGrid());
+                container.appendChild(gridSlot);
             }
         };
     }
@@ -569,10 +572,24 @@ export class CalendarNode extends BaseNode {
     }
 
     _rebuildGrid() {
-        const el = document.querySelector(`[data-node-id="${this.id}"] .calendar-grid-slot`);
-        if (!el) return;
-        el.innerHTML = '';
-        el.appendChild(this.buildCalendarGrid());
+        const nodeEl = document.querySelector(`[data-node-id="${this.id}"] .calendar-grid-slot`);
+        if (nodeEl) {
+            nodeEl.innerHTML = '';
+            nodeEl.appendChild(this.buildCalendarGrid());
+        }
+        // Раунд 164 (по запросу Mr.D: "отображение календаря в виджетах
+        // должно быть такое же как у узла") - виджет на Доске несёт ту
+        // же интерактивную сетку (см. getDashboardWidget() выше), но
+        // раньше эта функция обновляла ТОЛЬКО ноду на холсте (искала по
+        // data-node-id) - клик по дню в виджете переключал бы дату
+        // корректно (обработчик тот же, this._ownDates и т.п.), но
+        // ВИЗУАЛЬНО виджет оставался бы старым до следующей полной
+        // перерисовки Доски. Тот же приём, но по data-widget-id.
+        const widgetEl = document.querySelector(`.board-widget[data-widget-id="${this.id}"] .calendar-grid-slot`);
+        if (widgetEl) {
+            widgetEl.innerHTML = '';
+            widgetEl.appendChild(this.buildCalendarGrid());
+        }
     }
 
     // Клик = переключить один день. Протяжка (mousedown -> mousemove по
