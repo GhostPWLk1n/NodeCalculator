@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.8.36
+ * @version 1.8.42
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -61,6 +61,19 @@ export class BoardManager {
         // initFirstBoard() ниже сознательно НЕ трогает этот флаг.
         this.viewActive = false;
 
+        // Раунд 162 (по запросу Mr.D: "добавим ещё одну кнопку - Режим
+        // редактирования. Без включённого режима редактирования мы
+        // можем только менять содержимое виджетов, не можем
+        // переставлять виджеты, менять их положение, рамка на активном
+        // виджете не появляется") - глобальный флаг (не за каждой
+        // Доской отдельно - переключение уровня "сейчас я расставляю
+        // макет" vs "сейчас я просто работаю с данными", один на всё
+        // приложение сразу, как и сам режим просмотра Досок).
+        // По умолчанию ВЫКЛЮЧЕН - безопаснее для повседневной работы
+        // (случайно не сдвинуть виджет мышью, читая данные) - явно
+        // включается кнопкой в тулбаре, когда нужно перестроить макет.
+        this.editMode = false;
+
         // Багфикс 1.6.1: registerWidget()/unregisterWidgetEverywhere()
         // раньше рендерили Доску СРАЗУ при каждом вызове. Оба метода
         // вызываются только изнутри DashboardNode.calculate() (плюс
@@ -75,6 +88,34 @@ export class BoardManager {
         // происходит один раз в конце calculateAll() через flush() (см.
         // nodeManager.js).
         this._dirtyBoardIds = new Set();
+
+        // Раунд 160 (по жалобе Mr.D: "формат Web должен подстраиваться
+        // под размер окна, но похоже берёт размер окна ТОЛЬКО при
+        // запуске - если потом развернуть окно на весь экран, не
+        // пересчитывает, DOM-элемент остаётся старой ширины") - причина
+        // найдена: во всём проекте не было НИ ОДНОГО обработчика
+        // 'resize' - CSS-контейнер формата "web" (flex-grow:1; width:auto)
+        // САМ по себе тянется корректно, но содержимое ВНУТРИ виджетов
+        // (например, диаграммы, читающие размер контейнера через JS при
+        // отрисовке) не получало сигнала пересчитать себя ЗАНОВО при
+        // последующем изменении окна - только при ПЕРВОМ рендере.
+        // Debounce (200мс) - 'resize' может сработать ДЕСЯТКИ раз за
+        // секунду при живом перетаскивании края окна мышью, полная
+        // перерисовка Доски на КАЖДЫЙ тик была бы избыточной нагрузкой.
+        let resizeDebounceTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeDebounceTimer);
+            resizeDebounceTimer = setTimeout(() => {
+                const board = this.getActiveBoard();
+                // Перерисовываем ТОЛЬКО когда реально на экране Доска
+                // (не граф нод) формата "web" - фиксированные форматы
+                // (A4/16:9) не завязаны на размер окна, лишняя
+                // перерисовка на resize им не нужна.
+                if (this.viewActive && board?.format === 'web') {
+                    this.renderActiveBoard();
+                }
+            }, 200);
+        });
     }
 
     // Перерисовывает активную Доску, если после предыдущего flush() в
@@ -219,6 +260,34 @@ export class BoardManager {
             const btn = document.getElementById(id);
             if (btn) btn.classList.toggle('active', btn.dataset.format === format);
         });
+    }
+
+    // Раунд 162 - переключение режима редактирования (перестановка/
+    // изменение размера виджетов, рамка выделения) - см. докстринг поля
+    // this.editMode выше про то, зачем он глобальный и выключен по
+    // умолчанию. Перерисовывает активную Доску сразу - выключение
+    // должно НЕМЕДЛЕННО убрать ручки/рамку с уже выбранного виджета
+    // (не ждать следующего клика), включение - вернуть их для уже
+    // выбранного (если выбор остался с прошлого раза).
+    toggleEditMode() {
+        this.editMode = !this.editMode;
+        // Раунд 162 - выключение должно НЕМЕДЛЕННО убрать рамку/панель
+        // уже выбранного виджета (не оставлять "осиротевшее" выделение,
+        // с которым больше нельзя взаимодействовать, раз клик-выбор
+        // теперь недоступен).
+        if (!this.editMode) this.selectedWidgetId = null;
+        this._syncEditModeButton();
+        this.renderActiveBoard();
+    }
+
+    _syncEditModeButton() {
+        const btn = document.getElementById('boardEditModeBtn');
+        if (btn) btn.classList.toggle('active', this.editMode);
+    }
+
+    _wireEditModeButton() {
+        const btn = document.getElementById('boardEditModeBtn');
+        if (btn) btn.addEventListener('click', () => this.toggleEditMode());
     }
 
     // Вызывается один раз при старте приложения (см. main.js) - вешает
@@ -465,6 +534,7 @@ export class BoardManager {
         // day_styles.css, здесь только проставляем значение.
         page.dataset.format = board?.format || 'a4';
         this._syncFormatButtons();
+        this._syncEditModeButton();
 
         const activeEl = document.activeElement;
         const focusedWidgetEl = (activeEl && page.contains(activeEl))
@@ -610,21 +680,31 @@ export class BoardManager {
             widgetEl.style.gridRow = `span ${Math.max(MIN_ROW_SPAN, layout.rowSpan)}`;
         }
 
-        widgetEl.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.selectWidget(widget.id);
-        });
+        // Раунд 162 (по запросу Mr.D: "без включённого режима
+        // редактирования мы можем только менять содержимое виджетов, не
+        // можем переставлять виджеты, менять их положение, рамка на
+        // активном виджете не появляется") - клик-выбор (рамка + панель
+        // инспектора) и ручка перетаскивания доступны ТОЛЬКО в режиме
+        // редактирования - вне его клик по виджету просто "проваливается"
+        // до его СОБСТВЕННОГО содержимого (bodyEl.render() уже навесил
+        // на него свои обработчики - тем ничего не мешает).
+        if (this.editMode) {
+            widgetEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.selectWidget(widget.id);
+            });
 
-        // Раунд 124 (по решению Mr.D: "уйдём от ручного ввода порядка
-        // виджетов, это был костыль для тестов - виджеты должны
-        // перетаскиваться драг-энд-дропом") - выделенная ручка (не весь
-        // виджет целиком - тот может содержать интерактивное
-        // содержимое, поля ввода и т.п., которым drag не должен мешать).
-        // Нативный HTML5 Drag&Drop (не mousedown/mousemove, как у
-        // attachResizeDrag() выше) - для "определить, над каким именно
-        // виджетом сейчас курсор" браузерный dragover/drop подходит
-        // лучше ручного hit-testing.
-        this.attachWidgetDrag(widgetEl, widget.id);
+            // Раунд 124 (по решению Mr.D: "уйдём от ручного ввода порядка
+            // виджетов, это был костыль для тестов - виджеты должны
+            // перетаскиваться драг-энд-дропом") - выделенная ручка (не
+            // весь виджет целиком - тот может содержать интерактивное
+            // содержимое, поля ввода и т.п., которым drag не должен
+            // мешать). Нативный HTML5 Drag&Drop (не mousedown/mousemove,
+            // как у attachResizeDrag() выше) - для "определить, над
+            // каким именно виджетом сейчас курсор" браузерный dragover/
+            // drop подходит лучше ручного hit-testing.
+            this.attachWidgetDrag(widgetEl, widget.id);
+        }
 
         if (widget.title) {
             const titleEl = document.createElement('div');

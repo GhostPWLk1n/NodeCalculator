@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.36
+ * @version 1.8.42
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -180,6 +180,7 @@ boardManager.initFirstBoard('Доска 1');
 // Раунд 125 (релиз 1.8.0, механика Досок) - обработчики кнопок формата
 // страницы (#boardToolbar) вешаются один раз при старте.
 boardManager._wireFormatButtons();
+boardManager._wireEditModeButton();
 
 // ============================================
 // 3. МАСШТАБИРОВАНИЕ (ZOOM)

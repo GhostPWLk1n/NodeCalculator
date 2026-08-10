@@ -3696,7 +3696,6 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 .board-page[data-format="web"] {
     flex: 1 1 auto;
     width: auto;
-    max-width: 1600px;
     min-height: 600px;
 }
 

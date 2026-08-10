@@ -6,7 +6,7 @@
  * @file    preload.js
  * @brief   Electron preload-скрипт: безопасный мост IPC между main-процессом и рендерером (contextBridge)
  * @author  Pavel Fomin
- * @version 1.8.20
+ * @version 1.8.42
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

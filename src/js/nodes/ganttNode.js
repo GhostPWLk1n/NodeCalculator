@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.36
+ * @version 1.8.42
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -377,7 +377,6 @@ export class GanttNode extends BaseNode {
         // (маркеры #/## в названиях задач, см. tasksFromTable()) не
         // обнаружена - иначе массив {name, stages, directTasks}, см.
         // _buildHierarchyTree()/createGanttArea().
-        this.hierarchyBlocks = null;
         // Раунд 79 - какие группы свёрнуты (скрыты их строки задач) -
         // ключ: groupIndex (строкой, т.к. ключи объектов в JS всегда
         // строки). Чисто визуальное состояние - не влияет на расчёт/
@@ -754,89 +753,15 @@ export class GanttNode extends BaseNode {
             // самого раннего старта до самого позднего конца.
             rowsInner.appendChild(this.buildTotalRow(numColWidth, timelineWidth, dayWidth, anchor));
 
-            if (this.hierarchyBlocks) {
-                // Раунд 130 (иерархия Ганта, чек-лист) - Блок (уровень 1)
-                // -> Стадия (уровень 2, необязательно - "двухуровневая"
-                // иерархия из чек-листа пропускает её) -> Задача
-                // (уровень 3). HIERARCHY_INDENT_PX - отступ НА КАЖДЫЙ
-                // уровень вложенности (Стадия - один отступ от Блока,
-                // Задача под Стадией - два, Задача напрямую под Блоком -
-                // один, как у Стадии - визуально на одном уровне с ней).
-                const HIERARCHY_INDENT_PX = 16;
-                let taskNumber = 1; // сквозная нумерация ЗАДАЧ через ВСЮ иерархию
-
-                this.hierarchyBlocks.forEach(block => {
-                    // "Синтетическая" группа для buildGroupHeaderRow() -
-                    // tasks = ВСЕ задачи под этим Блоком (включая
-                    // вложенные в Стадии) - нужно для корректного
-                    // итога/индикатора-диапазона/перетаскивания ВСЕГО
-                    // блока целиком (attachGroupDrag() уже умеет двигать
-                    // произвольный список задач, ей всё равно, откуда
-                    // они).
-                    const allBlockTasks = [
-                        ...block.directTasks,
-                        ...(block.stages ? block.stages.flatMap(s => s.tasks) : [])
-                    ];
-                    const blockCollapsed = !!this.collapsedBlocks[block.name];
-                    rowsInner.appendChild(this.buildGroupHeaderRow(
-                        { name: block.name, tasks: allBlockTasks }, null,
-                        numColWidth, timelineWidth, dayWidth, blockCollapsed, anchor,
-                        {
-                            getCollapsed: () => !!this.collapsedBlocks[block.name],
-                            setCollapsed: (v) => { this.collapsedBlocks[block.name] = v; },
-                            indentPx: 0,
-                            levelLabel: '📦',
-                            background: 'var(--md-surface-3)',
-                            fontWeight: 700,
-                            allowRemove: false
-                        }
-                    ));
-
-                    if (blockCollapsed) {
-                        taskNumber += allBlockTasks.length;
-                        return;
-                    }
-
-                    if (block.stages) {
-                        block.stages.forEach(stage => {
-                            const stageKey = `${block.name}\u001f${stage.name}`;
-                            const stageCollapsed = !!this.collapsedStages[stageKey];
-                            rowsInner.appendChild(this.buildGroupHeaderRow(
-                                stage, null,
-                                numColWidth, timelineWidth, dayWidth, stageCollapsed, anchor,
-                                {
-                                    getCollapsed: () => !!this.collapsedStages[stageKey],
-                                    setCollapsed: (v) => { this.collapsedStages[stageKey] = v; },
-                                    indentPx: HIERARCHY_INDENT_PX,
-                                    levelLabel: '📁',
-                                    background: 'var(--md-surface-variant)',
-                                    fontWeight: 600,
-                                    allowRemove: false
-                                }
-                            ));
-                            if (!stageCollapsed) {
-                                stage.tasks.forEach(task => {
-                                    rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, null, anchor, HIERARCHY_INDENT_PX * 2));
-                                    taskNumber++;
-                                });
-                            } else {
-                                taskNumber += stage.tasks.length;
-                            }
-                        });
-                    }
-
-                    // Задачи ПРЯМО под Блоком (двухуровневая иерархия -
-                    // если у Блока вообще нет Стадий - block.stages ===
-                    // null - ЭТИ задачи и есть всё содержимое Блока;
-                    // "смешанный" случай - и Стадии, и задачи без
-                    // Стадии одновременно - directTasks рендерятся
-                    // ПОСЛЕ стадийных, тем же отступом, что у Стадии).
-                    block.directTasks.forEach(task => {
-                        rowsInner.appendChild(this.buildTaskRow(task, numColWidth, timelineWidth, dayWidth, taskNumber, null, anchor, HIERARCHY_INDENT_PX));
-                        taskNumber++;
-                    });
-                });
-            } else if (this.taskGroups) {
+            // Раунд 158 (по запросу Mr.D: "лишние старые обработчики
+            // удалить, чтобы не мешались") - отдельная ветка рендера
+            // this.hierarchyBlocks (Блок->Стадия, Раунд 130) убрана
+            // целиком - Блок/Стадия теперь строятся СРАЗУ в формате
+            // this.taskGroups (с subgroups, см. _groupsFromTreeData()/
+            // _groupsFromNameMarkers()) и рендерятся ТЕМ ЖЕ рекурсивным
+            // путём, что и произвольная вложенность Раздел/Подраздел
+            // (Раунд 150) - единая система вместо двух параллельных.
+            if (this.taskGroups) {
                 // Раунд 150 (по запросу Mr.D: "у нас ещё была возможность
                 // создавать подразделы... произвольная вложенность") -
                 // рекурсивный обход - каждая группа может нести
@@ -864,7 +789,13 @@ export class GanttNode extends BaseNode {
                     // тот поиск по ИМЕНИ ломался при совпадении имён двух
                     // разных разделов (Map перезаписывала запись).
                     const originKey = group.originKey;
-                    const collapseKey = originKey || myIndex;
+                    // Раунд 158 - group.collapseKey (Блок/Стадия, Раунд
+                    // 130 - стабильный ключ вида "block:Имя"/"stage:Блок\x1fСтадия",
+                    // см. _groupsFromTreeData()/_groupsFromNameMarkers())
+                    // в приоритете над originKey (тот - ТОЛЬКО у
+                    // promoted-разделов) - и над позиционным myIndex
+                    // (тот "плавает" при сворачивании соседей).
+                    const collapseKey = group.collapseKey || originKey || myIndex;
                     const collapsed = !!this.collapsedGroups[collapseKey];
                     // Раунд 151 (багфикс: "не работает кнопка
                     // сворачивания подразделов") - hierarchyOpts ОБЯЗАН
@@ -1705,6 +1636,7 @@ export class GanttNode extends BaseNode {
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 });
+                this._attachFieldNavigation(sectionCell, taskKey, 'section');
             } else {
                 sectionCell = document.createElement('div');
                 sectionCell.className = 'gantt-section-cell';
@@ -1781,6 +1713,21 @@ export class GanttNode extends BaseNode {
                 if (window.nodeManager) window.nodeManager.calculateAll();
                 if (window.renderer) window.renderer.updateAllDisplays();
             });
+            // Раунд 159 (по запросу Mr.D: "вставка многострочного текста -
+            // если текст разделён на строки, то под каждую новую строку
+            // запускаем макрос на создание новой строки, чтобы при
+            // копировании из таблиц каждая новая строка вставала на своё
+            // место сразу при Ctrl+C Ctrl+V") - перехватываем ДО того,
+            // как браузер вставит текст как есть в это ОДНО поле (иначе
+            // многострочный текст просто "склеился" бы в одну строку с
+            // символами переноса внутри).
+            label.addEventListener('paste', (e) => {
+                const text = e.clipboardData?.getData('text');
+                if (!text || !/\r\n|\r|\n/.test(text)) return; // одна строка - обычная вставка, ничего не перехватываем
+                e.preventDefault();
+                this._pasteMultilineIntoTask(taskKey, text);
+            });
+            this._attachFieldNavigation(label, taskKey, 'name');
         } else {
             label = document.createElement('div');
             label.className = 'gantt-task-label';
@@ -1851,6 +1798,7 @@ export class GanttNode extends BaseNode {
                 const newWorkDays = Math.max(0, parseInt(e.target.value, 10) || 0);
                 this._applyWorkDaysEdit(task, newWorkDays, anchor);
             });
+            this._attachFieldNavigation(workdaysInput, taskKey, 'workdays');
             leftGroup.appendChild(workdaysInput);
         }
 
@@ -1890,6 +1838,7 @@ export class GanttNode extends BaseNode {
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 });
+                this._attachFieldNavigation(responsibleCell, taskKey, 'responsible');
             } else {
                 responsibleCell = document.createElement('div');
                 responsibleCell.className = 'gantt-responsible-cell';
@@ -3070,7 +3019,19 @@ export class GanttNode extends BaseNode {
         // фактически присутствующих задач) в этом случае пропускается
         // целиком (_skipTaskGroupsRebuild) - иначе он бы "стёр" пустые
         // разделы, которых byName просто не видит.
-        this._skipTaskGroupsRebuild = false;
+        //
+        // Раунд 158 (багфикс) - сброс в false БЕЗУСЛОВНО был неверен: если
+        // this.taskGroups УЖЕ пришёл готовым из иерархического источника
+        // (treeData от GanttTableProcessorNode, или #/##-маркеры -
+        // this._taskGroupsIsHierarchical, выставляется в calculate() ДО
+        // вызова этого метода), а пользовательских Раздел/Подраздел при
+        // этом НЕТ - _applyPromotedSections() вернулась бы РАНО, оставив
+        // флаг false, и перестройка byName ниже СПЛЮЩИЛА бы только что
+        // построенную вложенность Блок->Стадия в один плоский уровень
+        // (byName группирует по t.groupName - одному значению, не по
+        // дереву). Начинаем со значения this._taskGroupsIsHierarchical,
+        // не с жёсткого false.
+        this._skipTaskGroupsRebuild = !!this._taskGroupsIsHierarchical;
         this._applyPromotedSections();
 
         // Если диаграмма в групповом режиме - перестраиваем корзины
@@ -3248,6 +3209,114 @@ export class GanttNode extends BaseNode {
     // list-режим, например, - совпадение имён там означало бы совпадение
     // ключей!) - при коллизии добавляет " (2)", " (3)" и т.д., пока имя
     // не станет уникальным. baseName без изменений, если коллизий нет.
+    // Раунд 163 (по запросу Mr.D: "добавим навигацию в диаграмму, Enter
+    // переходит на ввод следующей ячейки по смыслу, все вводимые поля
+    // строки потом следующая строка. Стрелочки вперёд назад вверх вниз") -
+    // порядок редактируемых полей строки задачи слева направо, ТОЛЬКО
+    // реально видимые (по тем же флагам, что решают, показывать ли саму
+    // колонку) - тот же порядок, что в buildTaskRow() физически строит
+    // ячейки (Раздел -> Вид работ -> Раб.дни -> Ответственный).
+    _editableFieldOrder() {
+        const order = [];
+        if (this.showSectionColumn) order.push('section');
+        order.push('name');
+        if (this.showWorkingDaysColumn) order.push('workdays');
+        if (this.showResponsibleColumn) order.push('responsible');
+        return order;
+    }
+
+    // Раунд 163 - переводит фокус НА КОНКРЕТНОЕ поле КОНКРЕТНОЙ строки:
+    // 'next'/'prev' - следующее/предыдущее поле ПО ПОРЯДКУ (Enter/стрелки
+    // вправо-влево у края текста), переходя на первое/последнее поле
+    // соседней строки, если текущее поле - крайнее в своей строке;
+    // 'up'/'down' - ТО ЖЕ САМОЕ поле в предыдущей/следующей строке
+    // (стрелки вверх-вниз). За пределами списка (первая/последняя
+    // строка) - никуда не переходим, просто ничего не происходит (не
+    // закольцовываем на противоположный конец - неожиданно для
+    // пользователя при быстром наборе).
+    _navigateGanttField(taskKey, fieldType, direction) {
+        const fields = this._editableFieldOrder();
+        const fieldIdx = fields.indexOf(fieldType);
+        const rowIdx = this.tasks.findIndex(t => (t.taskKey || t.name) === taskKey);
+        if (fieldIdx === -1 || rowIdx === -1) return;
+
+        let targetRowIdx = rowIdx;
+        let targetFieldIdx = fieldIdx;
+
+        if (direction === 'next') {
+            targetFieldIdx++;
+            if (targetFieldIdx >= fields.length) { targetFieldIdx = 0; targetRowIdx++; }
+        } else if (direction === 'prev') {
+            targetFieldIdx--;
+            if (targetFieldIdx < 0) { targetFieldIdx = fields.length - 1; targetRowIdx--; }
+        } else if (direction === 'up') {
+            targetRowIdx--;
+        } else if (direction === 'down') {
+            targetRowIdx++;
+        }
+
+        if (targetRowIdx < 0 || targetRowIdx >= this.tasks.length) return;
+        const targetTask = this.tasks[targetRowIdx];
+        const targetKey = targetTask.taskKey || targetTask.name;
+        const targetField = fields[targetFieldIdx];
+
+        this._focusedTaskKey = targetKey;
+        this._rerenderGanttSlot();
+
+        // _rerenderGanttSlot() пересобирает DOM СИНХРОННО (innerHTML +
+        // немедленная сборка, см. _replaceGanttSlot()) - искать целевое
+        // поле можно сразу, без ожидания следующего кадра.
+        const slotEl = document.querySelector(`[data-node-id="${this.id}"] .gantt-container-slot`);
+        if (!slotEl) return;
+        const targetRowEl = slotEl.querySelector(`[data-task-key="${CSS.escape(targetKey)}"]`);
+        if (!targetRowEl) return;
+        const fieldSelector = {
+            section: '.gantt-section-input',
+            name: '.gantt-task-label-input',
+            workdays: '.gantt-workdays-input',
+            responsible: '.gantt-responsible-input'
+        }[targetField];
+        const input = fieldSelector ? targetRowEl.querySelector(fieldSelector) : null;
+        if (input) {
+            input.focus();
+            if (typeof input.select === 'function') input.select();
+        }
+    }
+
+    // Раунд 163 - единый обработчик клавиш, навешивается на КАЖДОЕ из 4
+    // редактируемых полей строки задачи. Стрелки влево/вправо уважают
+    // ПОЗИЦИЮ КУРСОРА внутри текста - переход на соседнее поле только
+    // когда курсор УЖЕ у соответствующего края (иначе стрелки продолжают
+    // просто двигать курсор внутри поля, как обычно) - number-input
+    // (Раб.дни) не всегда поддерживает selectionStart одинаково во всех
+    // браузерах, поэтому там перескок срабатывает всегда (спорный, но
+    // осознанный компромисс - штатный "инкремент по стрелкам" у
+    // number-полей приносится в жертву единообразной навигации, которую
+    // явно попросил Mr.D).
+    _attachFieldNavigation(inputEl, taskKey, fieldType) {
+        inputEl.addEventListener('keydown', (e) => {
+            const isNumberInput = inputEl.type === 'number';
+            const atStart = isNumberInput || inputEl.selectionStart === 0;
+            const atEnd = isNumberInput || inputEl.selectionStart === inputEl.value.length;
+
+            let direction = null;
+            if (e.key === 'Enter') direction = 'next';
+            else if (e.key === 'ArrowRight' && atEnd) direction = 'next';
+            else if (e.key === 'ArrowLeft' && atStart) direction = 'prev';
+            else if (e.key === 'ArrowUp') direction = 'up';
+            else if (e.key === 'ArrowDown') direction = 'down';
+
+            if (!direction) return;
+            e.preventDefault();
+            // Зафиксировать текущее значение (тот же 'change', что уже
+            // срабатывает по blur) ПЕРЕД тем, как фокус уйдёт на другое
+            // поле - иначе правка потерялась бы, если пользователь
+            // просто "пролистал" клавишами, не дожидаясь blur.
+            inputEl.dispatchEvent(new Event('change'));
+            this._navigateGanttField(taskKey, fieldType, direction);
+        });
+    }
+
     _uniqueTaskName(baseName) {
         const existingNames = new Set([
             ...(this.tasks || []).map(t => t.name),
@@ -3257,6 +3326,43 @@ export class GanttNode extends BaseNode {
         let n = 2;
         while (existingNames.has(`${baseName} (${n})`)) n++;
         return `${baseName} (${n})`;
+    }
+
+    // Раунд 159 (по запросу Mr.D: "вставка многострочного текста - если
+    // текст разделён на строки, то под каждую новую строку запускаем
+    // макрос на создание новой строки, чтобы при копировании из таблиц
+    // каждая новая строка вставала на своё место сразу при Ctrl+C
+    // Ctrl+V") - первая строка ПЕРЕИМЕНОВЫВАЕТ текущую (уже
+    // сфокусированную) задачу той же логикой, что обычное
+    // переименование (проверка manualTasks/taskNameOverrides) -
+    // остальные строки создают НОВЫЕ вручную-добавленные задачи, КАЖДАЯ
+    // сразу после ПРЕДЫДУЩЕЙ (insertAfterKey - цепочка, сохраняет
+    // порядок строк как в исходном тексте) - одним пересчётом в конце,
+    // не по одному на строку (иначе N строк дали бы N лишних
+    // перерисовок).
+    _pasteMultilineIntoTask(taskKey, text) {
+        const lines = text.split(/\r\n|\r|\n/).map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) return;
+
+        const firstName = this._uniqueTaskName(lines[0]);
+        const currentTask = (this.tasks || []).find(t => t.taskKey === taskKey);
+        const manualTask = this.manualTasks.find(t => t.key === taskKey);
+        if (manualTask) {
+            manualTask.name = firstName;
+        } else if (!currentTask || firstName !== currentTask.name) {
+            this.taskNameOverrides[taskKey] = firstName;
+        }
+
+        let afterKey = taskKey;
+        for (let i = 1; i < lines.length; i++) {
+            const key = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${i}`;
+            const name = this._uniqueTaskName(lines[i]);
+            this.manualTasks.push({ key, name, durationDays: 0, insertAfterKey: afterKey });
+            afterKey = key;
+        }
+
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
     }
 
     addTaskAtStart() {
@@ -3360,14 +3466,27 @@ export class GanttNode extends BaseNode {
     // исходном файле (раздел набран заново вместо продолжения
     // существующего, вместо того чтобы просто дописать в него новые
     // задачи).
+    // Раунд 133 - "раздел повторяется", если ОДНО и то же имя раздела
+    // встречается КАК ОТДЕЛЬНАЯ ЗАПИСЬ 2+ раза в this.taskGroups - тот
+    // самый сценарий, что чаще всего означает случайную ошибку в
+    // исходном файле (раздел набран заново вместо продолжения
+    // существующего, вместо того чтобы просто дописать в него новые
+    // задачи). Раунд 158 (багфикс) - раньше проверяла this.hierarchyBlocks
+    // (тот теперь никогда не устанавливается - структура унифицирована
+    // под taskGroups/subgroups, см. _groupsFromTreeData()) - функция
+    // молча ВСЕГДА возвращала false. Теперь - рекурсивный обход
+    // taskGroups (любой уровень вложенности), не только верхний.
     _isDuplicateSectionName(name) {
-        if (!this.hierarchyBlocks) return false;
+        if (!Array.isArray(this.taskGroups)) return false;
         let count = 0;
-        for (const block of this.hierarchyBlocks) {
-            if (block.name === name) count++;
-            if (count >= 2) return true;
-        }
-        return false;
+        const walk = (groups) => {
+            groups.forEach(g => {
+                if (g.name === name) count++;
+                walk(g.subgroups || []);
+            });
+        };
+        walk(this.taskGroups);
+        return count >= 2;
     }
 
     // Раунд 157 (по запросу Mr.D: "нужны колонки 'сум. раб. дней',
@@ -3959,7 +4078,21 @@ export class GanttNode extends BaseNode {
     // "внучатые" узлы СПЛЮЩИВАЮТСЯ в задачи БЛИЖАЙШЕЙ вмещающей Стадии
     // (сама структура treeData при этом НЕ теряет вложенность - это
     // упрощение только для ОТРИСОВКИ, не для данных).
-    _hierarchyBlocksFromTreeData(treeData, anchor) {
+    // Раунд 158 (по запросу Mr.D: "данные, которые выдаёт
+    // GanttTableProcessorNode, рассчитаны на старый обработчик... лишние
+    // старые обработчики удалить, чтобы не мешались, и подогнать вывод
+    // под существующую иерархию") - заменяет прежний
+    // _hierarchyBlocksFromTreeData() - СРАЗУ строит массив в формате
+    // taskGroups (с subgroups), а не отдельную структуру {stages,
+    // directTasks}, которую раньше требовала ОТДЕЛЬНАЯ, дублирующая
+    // ветка рендера (createGanttArea(), if (this.hierarchyBlocks)).
+    // Блок (верхний уровень treeData) -> группа верхнего уровня, Стадия
+    // (child.type==='stage' ИЛИ есть свои дети) -> вложенная подгруппа,
+    // задача напрямую под Блоком (лист без вложенности) -> tasks самого
+    // Блока. collapseKey - СТАБИЛЬНЫЙ ключ состояния сворачивания (не
+    // позиционный индекс - тот "плавает" при сворачивании соседей, та
+    // же проблема уже решалась для Раздел/Подраздел, Раунд 151).
+    _groupsFromTreeData(treeData, anchor) {
         const toTask = (node, blockName, stageName) => {
             const startOffsetDays = node.start ? daysBetween(anchor, node.start) : 0;
             return {
@@ -3968,42 +4101,54 @@ export class GanttNode extends BaseNode {
                 startOffsetDays,
                 rawWorkDays: node.rawWorkDays ?? 0,
                 responsible: node.responsible || '',
-                groupName: blockName,
+                groupName: stageName || blockName,
                 blockName,
                 stageName,
-                // Раунд 135 (по жалобе Mr.D: "в Разделе должны быть не
-                // названия, а номера разделов из № п/п") - сквозь дерево
-                // от GanttTableProcessorNode (см. её calculate(),
-                // sectionNumber на узле) - null, если источник не
-                // GanttTableProcessorNode/иерархия не определилась.
+                // Раунд 135 - сквозь дерево от GanttTableProcessorNode
+                // (см. её calculate(), sectionNumber на узле).
                 sectionNumber: node.sectionNumber ?? null
             };
         };
 
-        // Собирает ВСЕ листовые задачи под узлом (рекурсивно, любая
-        // глубина) - используется и для "задач напрямую под блоком"
-        // (глубина 1, но child.type==='task' без вложенности), и для
-        // "задач под Стадией" (сплющивание более глубоких уровней).
-        const collectLeafTasks = (node, blockName, stageName) => {
-            if (node.children.length === 0) return [toTask(node, blockName, stageName)];
-            return node.children.flatMap(child => collectLeafTasks(child, blockName, stageName));
-        };
-
-        return (treeData?.roots || []).map(block => {
-            const stages = [];
-            const directTasks = [];
-            block.children.forEach(child => {
-                if (child.type === 'stage' || child.children.length > 0) {
-                    stages.push({ name: child.name, tasks: collectLeafTasks(child, block.name, child.name) });
+        // Раунд 158 (уточнение, по итогам честной оговорки в Раунде 152 -
+        // "потребитель дерева понимает только 2 уровня, вложенность
+        // глубже будет сплющена") - ПОЛНОСТЬЮ рекурсивная конвертация
+        // ЛЮБОЙ глубины дерева (не только Блок->Стадия) - convertNode()
+        // вызывает САМА СЕБЯ для КАЖДОГО непустого child, вместо
+        // collectLeafTasks() (та СПЛЮЩИВАЛА всё глубже одного уровня
+        // Стадии в плоский список). blockName - имя САМОГО ВЕРХНЕГО
+        // предка (не меняется вглубь дерева - нужен для колонки "Блок"
+        // в buildOutputTable(), там всего 2 текстовых столбца на всю
+        // иерархию, произвольную глубину туда не уместить построчно) -
+        // immediateParentName - имя НЕПОСРЕДСТВЕННОГО родителя (то же,
+        // что раньше называлось "Стадия", теперь может быть ЛЮБЫМ
+        // уровнем вложенности, не только вторым).
+        const convertNode = (node, blockName, immediateParentName) => {
+            const subgroups = [];
+            const tasks = [];
+            node.children.forEach(child => {
+                if (child.children.length > 0) {
+                    subgroups.push(convertNode(child, blockName ?? node.name, node.name));
                 } else {
-                    directTasks.push(toTask(child, block.name, null));
+                    tasks.push(toTask(child, blockName ?? node.name, blockName != null ? node.name : null));
                 }
             });
-            return { name: block.name, stages: stages.length > 0 ? stages : null, directTasks };
-        });
+            return {
+                name: node.name,
+                tasks,
+                subgroups,
+                collapseKey: `node:${blockName ?? node.name}\u001f${node.name}`
+            };
+        };
+
+        return (treeData?.roots || []).map(root => convertNode(root, null, null));
     }
 
-    _buildHierarchyTree(tasks) {
+    // Раунд 158 - заменяет прежний _buildHierarchyTree() - та же
+    // конвертация в формат taskGroups, но источник - маркеры "#"/"##" в
+    // НАЗВАНИЯХ задач ПЛОСКОЙ таблицы (Раунд 130), не дерево от
+    // GanttTableProcessorNode.
+    _groupsFromNameMarkers(tasks) {
         const blockOrder = [];
         const blockMap = new Map();
         const unblocked = [];
@@ -4011,35 +4156,45 @@ export class GanttNode extends BaseNode {
         tasks.forEach(t => {
             if (!t.blockName) { unblocked.push(t); return; }
             if (!blockMap.has(t.blockName)) {
-                blockMap.set(t.blockName, { name: t.blockName, stageOrder: [], stageMap: new Map(), directTasks: [] });
+                blockMap.set(t.blockName, { name: t.blockName, stageOrder: [], stageMap: new Map(), tasks: [] });
                 blockOrder.push(t.blockName);
             }
             const block = blockMap.get(t.blockName);
             if (t.stageName) {
                 if (!block.stageMap.has(t.stageName)) {
-                    block.stageMap.set(t.stageName, { name: t.stageName, tasks: [] });
+                    block.stageMap.set(t.stageName, { name: t.stageName, tasks: [], subgroups: [], collapseKey: `stage:${t.blockName}\u001f${t.stageName}` });
                     block.stageOrder.push(t.stageName);
                 }
                 block.stageMap.get(t.stageName).tasks.push(t);
             } else {
-                block.directTasks.push(t);
+                block.tasks.push(t);
             }
         });
 
         const blocks = blockOrder.map(bName => {
             const b = blockMap.get(bName);
-            const stages = b.stageOrder.map(sName => b.stageMap.get(sName));
-            return { name: b.name, stages: stages.length > 0 ? stages : null, directTasks: b.directTasks };
+            return { name: b.name, tasks: b.tasks, subgroups: b.stageOrder.map(sName => b.stageMap.get(sName)), collapseKey: `block:${b.name}` };
         });
 
         // Задачи без блока вообще (обычно - строки ДО самого первого
-        // маркера "#" в исходных данных) - отдельным синтетическим
-        // блоком в конце, чтобы они не потерялись молча.
+        // маркера "#" в исходных данных) - отдельной синтетической
+        // группой в конце, чтобы они не потерялись молча.
         if (unblocked.length > 0) {
-            blocks.push({ name: '🗂 Без блока', stages: null, directTasks: unblocked });
+            blocks.push({ name: '🗂 Без блока', tasks: unblocked, subgroups: [], collapseKey: 'block:__unblocked__' });
         }
-
         return blocks;
+    }
+
+    // Раунд 158 - рекурсивно переустанавливает ссылки на объекты задач
+    // ВНУТРИ taskGroups/subgroups по свежепересчитанным (durationDays/
+    // startOffsetDays) значениям из this.tasks - та же необходимость,
+    // что решал прежний код для hierarchyBlocks (единая точка правды по
+    // датам между плоским this.tasks и деревом taskGroups).
+    _resyncGroupsTasks(groups, byKey) {
+        groups.forEach(g => {
+            g.tasks = g.tasks.map(t => byKey.get(t.taskKey) || t);
+            this._resyncGroupsTasks(g.subgroups || [], byKey);
+        });
     }
 
     tasksFromTable(tableData) {
@@ -4190,32 +4345,38 @@ export class GanttNode extends BaseNode {
             name: t.name,
             type: 'task',
             responsible: this._effectiveResponsible(t) || '',
-            start: formatISODate(addDays(anchor, t.startOffsetDays)),
+            start: addDays(anchor, t.startOffsetDays),
             rawWorkDays: this._countWorkingDaysInRange(anchor, t.startOffsetDays, t.durationDays),
             sectionNumber: this._effectiveSection(t) || null,
             children: []
         });
-        const groupToNode = (g) => ({
+        // Раунд 158 (косметика, для консистентности с самой
+        // GanttTableProcessorNode.calculate() - та метит КОРЕНЬ 'block',
+        // вложенные узлы - 'stage') - isRoot параметризует метку типа;
+        // потребитель (_groupsFromTreeData() выше) уже НЕ различает эти
+        // метки функционально (смотрит только на children.length > 0),
+        // но для единообразия самих данных на выходе лучше совпадать.
+        const groupToNode = (g, isRoot) => ({
             name: g.name,
-            type: 'stage',
+            type: isRoot ? 'block' : 'stage',
             responsible: '',
             start: null,
             rawWorkDays: 0,
             sectionNumber: null,
             children: [
                 ...g.tasks.map(taskToNode),
-                ...(g.subgroups || []).map(groupToNode)
+                ...(g.subgroups || []).map(sg => groupToNode(sg, false))
             ]
         });
 
         if (Array.isArray(this.taskGroups) && this.taskGroups.length > 0) {
-            return { roots: this.taskGroups.map(groupToNode) };
+            return { roots: this.taskGroups.map(g => groupToNode(g, true)) };
         }
         // Без разделов (плоский список задач) - один синтетический
         // корень с именем ноды, дети - все задачи напрямую (тот же
         // приём, что "безымянная" группа для задач без раздела внутри
         // _applyPromotedSections()).
-        return { roots: [{ name: this.customName || this.getDisplayName(), type: 'stage', responsible: '', start: null, rawWorkDays: 0, sectionNumber: null, children: this.tasks.map(taskToNode) }] };
+        return { roots: [{ name: this.customName || this.getDisplayName(), type: 'block', responsible: '', start: null, rawWorkDays: 0, sectionNumber: null, children: this.tasks.map(taskToNode) }] };
     }
 
     buildOutputTable() {
@@ -4272,11 +4433,15 @@ export class GanttNode extends BaseNode {
         // Раунд 130 (иерархия Ганта, чек-лист - "Экспорт в Excel с
         // уровнями в отдельных столбцах") - "Блок"/"Стадия" добавляются
         // ПЕРЕД "Группа" ТОЛЬКО когда иерархия реально обнаружена
-        // (this.hierarchyBlocks) - для обычных (не иерархических)
-        // диаграмм схема остаётся РОВНО семиколоночной, как
-        // зафиксировано в Раунде 83 - никого не ломаем.
+        // (this._taskGroupsIsHierarchical) - для обычных (не
+        // иерархических) диаграмм схема остаётся РОВНО семиколоночной,
+        // как зафиксировано в Раунде 83 - никого не ломаем. Раунд 158
+        // (багфикс) - условие раньше ссылалось на this.hierarchyBlocks
+        // (тот теперь всегда null - структура унифицирована под
+        // taskGroups) - колонки молча переставали добавляться даже для
+        // РЕАЛЬНО иерархических диаграмм.
         const columns = [];
-        if (this.hierarchyBlocks) {
+        if (this._taskGroupsIsHierarchical) {
             columns.push({ header: 'Блок', values: blocks, format: 'text' });
             columns.push({ header: 'Стадия', values: stages, format: 'text' });
         }
@@ -4295,6 +4460,12 @@ export class GanttNode extends BaseNode {
 
     calculate(nodeManager) {
         this.checkAndAddEmptySlot();
+        // Раунд 158 - сбрасывается КАЖДЫЙ пересчёт (не "протекает" из
+        // предыдущего цикла) - true устанавливается ТОЛЬКО в ветках,
+        // где this.taskGroups строится ИЗ иерархического источника
+        // (treeData/#-маркеры, см. _applyManualRowEdits() выше про то,
+        // зачем это нужно).
+        this._taskGroupsIsHierarchical = false;
 
         const connections = window.connectionManager?.getConnections() || [];
 
@@ -4377,7 +4548,6 @@ export class GanttNode extends BaseNode {
         if (sources.length === 0) {
             this.sourceMode = 'list';
             this.taskGroups = null;
-            this.hierarchyBlocks = null;
             this.tasks = [];
             this._applyManualRowEdits();
             this._applyDependencyConstraints();
@@ -4396,7 +4566,6 @@ export class GanttNode extends BaseNode {
         if (sources.length === 1) {
             const { node: src, output } = sources[0];
             this.taskGroups = null;
-            this.hierarchyBlocks = null;
 
             // Раунд 132 (по решению Mr.D: "трактовать графики внутри
             // программы не как таблицы, а как классические словари") -
@@ -4423,18 +4592,23 @@ export class GanttNode extends BaseNode {
                 }
 
                 const anchor = parseISODate(this.startDate) || new Date();
-                this.hierarchyBlocks = this._hierarchyBlocksFromTreeData(output.treeData, anchor);
+                // Раунд 158 (по запросу Mr.D: "лишние старые обработчики
+                // удалить, чтобы не мешались, и подогнать вывод под
+                // существующую иерархию") - _groupsFromTreeData() строит
+                // СРАЗУ this.taskGroups (с subgroups) - единая система
+                // рендера (createGanttArea(), ветка this.taskGroups,
+                // рекурсивный обход - Раунд 150) вместо отдельной,
+                // дублирующей ветки this.hierarchyBlocks (убрана целиком).
+                this.taskGroups = this._groupsFromTreeData(output.treeData, anchor);
+                this._skipTaskGroupsRebuild = true;
+                this._taskGroupsIsHierarchical = true;
 
                 // Раунд 132 - плоский this.tasks (нужен ОСТАЛЬНОМУ коду -
-                // итоги/цвета/экспорт/drag - тот же принцип, что уже
-                // применён к hierarchyBlocks из #/## маркеров, Раунд 130) -
-                // собирается ИЗ только что построенного hierarchyBlocks,
-                // с ТЕМ ЖЕ применением overrides/spanWorkingDays(), что у
-                // табличного пути ниже (единая точка правды по датам).
-                const flatFromTree = this.hierarchyBlocks.flatMap(block => [
-                    ...block.directTasks,
-                    ...(block.stages ? block.stages.flatMap(s => s.tasks) : [])
-                ]);
+                // итоги/цвета/экспорт/drag) - собирается ИЗ только что
+                // построенного taskGroups, с ТЕМ ЖЕ применением overrides/
+                // spanWorkingDays(), что у табличного пути ниже (единая
+                // точка правды по датам).
+                const flatFromTree = this.taskGroups.flatMap(g => this._allTasksRecursive(g));
                 this.tasks = flatFromTree.map(t => {
                     // Раунд 141 (по решению Mr.D: "перепроверить
                     // математический узел и обращения к нему - есть
@@ -4454,25 +4628,14 @@ export class GanttNode extends BaseNode {
                     const durationDays = Math.max(0, computedEndOffset - startOffsetDays);
                     return { ...t, durationDays, startOffsetDays };
                 });
-                // hierarchyBlocks сам по себе хранит "сырые" (ДО override/
+                // taskGroups сам по себе хранит "сырые" (ДО override/
                 // spanWorkingDays) задачи - createGanttArea() читает
-                // durationDays/startOffsetDays именно из НЕГО при отрисовке
-                // (см. рендер Раунда 130) - синхронизируем те же
-                // пересчитанные значения обратно в объекты дерева, чтобы
-                // оба представления (плоское/иерархическое) не разошлись
-                // (та же ссылка на объект task используется И в
-                // this.tasks, И внутри hierarchyBlocks - flatMap выше
-                // берёт ссылки, не копии, поэтому мутация одного места
-                // видна из обоих).
+                // durationDays/startOffsetDays именно из НЕГО при отрисовке -
+                // синхронизируем те же пересчитанные значения обратно в
+                // объекты дерева (рекурсивно, включая subgroups), чтобы
+                // оба представления (плоское/иерархическое) не разошлись.
                 const byKey = new Map(this.tasks.map(t => [t.taskKey, t]));
-                this.hierarchyBlocks.forEach(block => {
-                    block.directTasks = block.directTasks.map(t => byKey.get(t.taskKey) || t);
-                    if (block.stages) {
-                        block.stages.forEach(stage => {
-                            stage.tasks = stage.tasks.map(t => byKey.get(t.taskKey) || t);
-                        });
-                    }
-                });
+                this._resyncGroupsTasks(this.taskGroups, byKey);
 
                 this._applyManualRowEdits();
                 this._applyDependencyConstraints();
@@ -4592,12 +4755,19 @@ export class GanttNode extends BaseNode {
 
                 // Раунд 130 (иерархия Ганта, чек-лист) - строится ТОЛЬКО
                 // если реально были найдены маркеры #/## в названиях
-                // задач - иначе null (полностью прежнее поведение для
-                // таблиц без иерархии - см. createGanttArea(), там
-                // ветка hierarchyBlocks проверяется ПЕРВОЙ, но при null
-                // просто пропускается в пользу taskGroups/плоского
-                // списка, как и раньше).
-                this.hierarchyBlocks = hierarchyDetected ? this._buildHierarchyTree(this.tasks) : null;
+                // задач - иначе оставляем this.taskGroups как есть (уже
+                // установлен чуть выше - либо одноуровневая группировка,
+                // либо null для одиночного, негруппированного источника).
+                // Раунд 158 - _groupsFromNameMarkers() строит СРАЗУ
+                // taskGroups (с subgroups), ПЕРЕЗАПИСЫВАЯ более простую
+                // одноуровневую группировку выше, когда маркеры найдены -
+                // та же единая система рендера, что и у остальных путей
+                // (this.hierarchyBlocks убран целиком).
+                if (hierarchyDetected) {
+                    this.taskGroups = this._groupsFromNameMarkers(this.tasks);
+                    this._skipTaskGroupsRebuild = true;
+                    this._taskGroupsIsHierarchical = true;
+                }
 
                 this._applyManualRowEdits();
                 this._applyDependencyConstraints();
@@ -4727,7 +4897,6 @@ export class GanttNode extends BaseNode {
         // "залипания" значения, оставшегося от предыдущего пересчёта,
         // если пользователь только что переключился с одного источника
         // на несколько).
-        this.hierarchyBlocks = null;
 
         this.tasks = flatTasks;
         this._applyManualRowEdits();
