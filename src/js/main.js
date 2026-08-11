@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.58
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -73,6 +73,95 @@ console.log('🚀 Загрузка приложения...');
 // захардкожена прямо в index.html и не обновлялась при релизах.
 const sidebarVersionEl = document.getElementById('sidebarVersion');
 if (sidebarVersionEl) sidebarVersionEl.textContent = `v${Constants.APP_VERSION}`;
+
+// Раунд 179 (по запросу Mr.D: "добавим окно приветствия. С галочкой не
+// показывать при следующем старте. В лучших традициях. Поместим в него
+// баннер, текущий билд, Лицензии. И советы") - показывается один раз при
+// запуске, если явно не отключено галочкой "Не показывать при следующем
+// запуске" - localStorage, тот же принцип персистентности, что уже
+// применён к теме (THEME_STORAGE_KEY ниже) - простая булева настройка UI,
+// не требует похода в главный процесс Electron/файл настроек.
+const WELCOME_HIDE_KEY = 'nodecalculate-hide-welcome';
+// Советы - по одному на реально существующую функцию (не общие фразы) -
+// два примера явно попросил Mr.D, остальные - по недавно реализованным
+// возможностям, которые иначе легко не заметить.
+const WELCOME_TIPS = [
+    'Shift+ЛКМ по строке Диаграммы Ганта - мультивыделение: правка одной строки (текст, даты, длительность - при перетаскивании и растягивании тоже) распространится на все выделенные.',
+    'Перейдите в Настройки (⚙️ вверху сайдбара), чтобы собрать собственное меню узлов - показать только те типы нод, которыми реально пользуетесь.',
+    'В Диаграмме Ганта Enter и стрелки переключают редактируемое поле - между полями строки и между строками целиком, без мыши.',
+    'Вставьте (Ctrl+V) многострочный текст из Excel в поле названия задачи Диаграммы Ганта - каждая строка станет отдельной задачей по порядку.',
+    'На Досках включите "Режим редактирования" (✏️ в панели инструментов), чтобы переставлять и изменять размер виджетов - без него доступно только их содержимое.',
+    'Формат листа Доски "Web" живьём подстраивается под размер окна - разверните окно на весь экран, лист растянется сам, без перезапуска.',
+];
+
+function initWelcomeScreen() {
+    const modal = document.getElementById('welcomeModal');
+    if (!modal) return;
+
+    const versionEl = document.getElementById('welcomeVersion');
+    if (versionEl) versionEl.textContent = `v${Constants.APP_VERSION}`;
+
+    const tipTextEl = document.getElementById('welcomeTipText');
+    const tipDotsEl = document.getElementById('welcomeTipDots');
+    const tipNextBtn = document.getElementById('welcomeTipNext');
+    const dontShowCheckbox = document.getElementById('welcomeDontShowAgain');
+    const startBtn = document.getElementById('welcomeStartBtn');
+    const backdropEl = document.getElementById('welcomeBackdrop');
+
+    let tipIndex = 0;
+
+    function renderTip() {
+        if (tipTextEl) tipTextEl.textContent = WELCOME_TIPS[tipIndex];
+        if (tipDotsEl) {
+            tipDotsEl.innerHTML = '';
+            WELCOME_TIPS.forEach((_, i) => {
+                const dot = document.createElement('span');
+                dot.className = 'welcome-tip-dot' + (i === tipIndex ? ' active' : '');
+                dot.title = `Совет ${i + 1} из ${WELCOME_TIPS.length}`;
+                dot.addEventListener('click', () => { tipIndex = i; renderTip(); });
+                tipDotsEl.appendChild(dot);
+            });
+        }
+    }
+    renderTip();
+
+    // Стрелочка "следующий совет" (по прямому запросу Mr.D) - по кругу,
+    // с последнего на первый.
+    tipNextBtn?.addEventListener('click', () => {
+        tipIndex = (tipIndex + 1) % WELCOME_TIPS.length;
+        renderTip();
+    });
+
+    function closeWelcome() {
+        if (dontShowCheckbox?.checked) {
+            localStorage.setItem(WELCOME_HIDE_KEY, '1');
+        }
+        modal.style.display = 'none';
+        document.removeEventListener('keydown', onKeyDown);
+    }
+    function onKeyDown(e) {
+        if (e.key === 'Escape') closeWelcome();
+    }
+    startBtn?.addEventListener('click', closeWelcome);
+    backdropEl?.addEventListener('click', closeWelcome);
+
+    // Раунд 179 - доступно кнопке "Показать окно приветствия" во
+    // вкладке "Запуск" настроек (sidebarSettings.js) - открывает
+    // модалку заново независимо от galочки/localStorage (та кнопка
+    // сама уже сбрасывает флаг ДО вызова этой функции).
+    window.showWelcomeScreen = () => {
+        tipIndex = 0;
+        renderTip();
+        modal.style.display = 'flex';
+        document.addEventListener('keydown', onKeyDown);
+    };
+
+    if (localStorage.getItem(WELCOME_HIDE_KEY) !== '1') {
+        modal.style.display = 'flex';
+        document.addEventListener('keydown', onKeyDown);
+    }
+}
+initWelcomeScreen();
 
 // Переключатель темы (день/ночь), Раунд 40 - см. #themeSwitch в
 // index.html. Тема - это НЕ набор CSS-переменных внутри одного файла, а

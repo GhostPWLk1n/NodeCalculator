@@ -6,7 +6,7 @@
  * @file    sidebarSettings.js
  * @brief   Настройки сайдбара - показ/скрытие нод, конфигурации, экспорт/импорт
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.58
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -201,6 +201,18 @@ export const SidebarSettings = {
             if (hint) {
                 hint.textContent = result?.success ? '🗑️ Стартовое рабочее пространство сброшено' : `❌ Ошибка: ${result?.error || ''}`;
             }
+        });
+
+        // Раунд 179 (по запросу Mr.D: "добавим окно приветствия с
+        // галочкой не показывать при следующем старте") - без этой
+        // кнопки, поставив галочку один раз, вернуться к окну
+        // приветствия можно было бы только вручную редактируя
+        // localStorage. Снимает флаг И показывает модалку сразу же
+        // (window.showWelcomeScreen - выставляется main.js при
+        // инициализации, см. initWelcomeScreen()).
+        document.getElementById('settingsShowWelcomeBtn')?.addEventListener('click', () => {
+            localStorage.removeItem('nodecalculate-hide-welcome');
+            window.showWelcomeScreen?.();
         });
     },
 

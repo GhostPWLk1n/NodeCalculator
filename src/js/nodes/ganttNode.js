@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.58
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -337,6 +337,17 @@ export class GanttNode extends BaseNode {
         // состояние UI - НЕ сериализуется (сбрасывается при каждой новой
         // сессии, как this._detectedResponsibles и подобные).
         this._focusedTaskKey = null;
+        // Раунд 174 (по запросу Mr.D: "мультивыделение для одновременного
+        // редактирования. С зажатым Ctrl можно выделить несколько строк,
+        // и если изменить свойство в одной, это свойство распространится
+        // на остальные") - набор ключей строк, добавленных через
+        // Shift+клик (Раунд 175 - Ctrl оказался уже занят горячей
+        // клавишей "Обрезать связи") - ОТДЕЛЬНО от _focusedTaskKey (та
+        // по-прежнему решает, какая ИМЕННО строка сейчас показывает
+        // редактируемые поля - "активная для ввода" строка мультивыбора).
+        // Не сохраняется в .ncp (сессионное UI-состояние, как и
+        // _focusedTaskKey).
+        this.multiSelectedKeys = new Set();
         // Переименование задачи ПРЯМО на диаграмме - тот же принцип, что
         // taskDurationOverrides/taskDates (переопределение поверх
         // значения из источника, по taskKey - стабильному идентификатору,
@@ -413,16 +424,12 @@ export class GanttNode extends BaseNode {
         // ручку ноды по вертикали (см. beginFreeResize/applyFreeResize) -
         // null = высота подбирается автоматически по числу задач
         this.wrapHeight = config.wrapHeight ?? null;
-        // Раунд 166 (по жалобе Mr.D: "получились связаны высота виджета
-        // и высота узла, нужно разделить, чтобы виджет диаграммы можно
-        // было подстраивать вручную под нужную высоту") - ДО этого
-        // раунда createGanttArea() (единственный метод, строящий тело
-        // диаграммы) вызывался И холстовой нодой, И виджетом Доски
-        // ОДИНАКОВО - оба читали ОДНО И ТО ЖЕ this.wrapHeight, поэтому
-        // растягивание ручкой ноды на Листе сразу меняло и высоту
-        // виджета на Доске, и наоборот. Отдельное поле - та же
-        // семантика (null = автоматически по числу задач), но НЕ
-        // разделяемая с холстовой нодой.
+        // Раунд 166 (по жалобе Mr.D: "получились связаны высота
+        // виджета и высота узла, нужно разделить, чтобы виджет
+        // диаграммы можно было подстраивать вручную под нужную высоту") -
+        // отдельное поле высоты ДЛЯ ВИДЖЕТА на Доске, независимое от
+        // this.wrapHeight холстовой ноды - та же семантика (null =
+        // автоматически по числу задач), но НЕ разделяемая с ней.
         this.widgetWrapHeight = config.widgetWrapHeight ?? null;
         // Раунд 73 - набор дат-праздников из подключённого сокета 1 (см.
         // calculate()) - Set<string> ISO-дат, пустой до первого пересчёта
@@ -1530,10 +1537,35 @@ export class GanttNode extends BaseNode {
         const focusCol = document.createElement('div');
         focusCol.className = 'gantt-row-focus-col';
         focusCol.style.cssText = `position: relative; width: ${FOCUS_COL_WIDTH}px; flex-shrink: 0; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer;`;
-        focusCol.title = 'Клик - выделить строку (правка названия, +/-)';
-        focusCol.addEventListener('mousedown', (e) => e.stopPropagation());
+        focusCol.title = 'Клик - выделить строку (правка названия, +/-). Shift+клик - мультивыделение';
+        focusCol.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            // Раунд 176 (по жалобе Mr.D: "не выделяет строки") - см.
+            // докстринг у leftGroup.addEventListener('mousedown', ...)
+            // ниже про то, почему именно mousedown, а не click.
+            if (!e.shiftKey) return;
+            e.preventDefault();
+            if (this.multiSelectedKeys.has(taskKey)) {
+                this.multiSelectedKeys.delete(taskKey);
+            } else {
+                this.multiSelectedKeys.add(taskKey);
+            }
+            this._focusedTaskKey = taskKey;
+            this._rerenderGanttSlot();
+        });
         focusCol.addEventListener('click', (e) => {
             e.stopPropagation();
+            // Раунд 175 (по жалобе Mr.D: "могла возникнуть накладка на
+            // ctrl - была зарезервирована горячая клавиша разрезать
+            // связь") - Ctrl уже занят (временное включение инструмента
+            // "✂️ Обрезать связи", canvasToolbar/main.js) - мультивыбор
+            // строк переведён на Shift+ЛКМ (свободная, нигде в
+            // диаграмме/канвасе не занятая комбинация).
+            // Раунд 176 - сама обработка Shift+клика теперь на
+            // mousedown выше - здесь просто выходим, чтобы не сработать
+            // ВТОРОЙ раз на том же физическом клике.
+            if (e.shiftKey) return;
+            if (this.multiSelectedKeys.size > 0) this.multiSelectedKeys.clear();
             this._focusedTaskKey = isFocused ? null : taskKey;
             this._rerenderGanttSlot();
         });
@@ -1589,12 +1621,35 @@ export class GanttNode extends BaseNode {
             this._rerenderGanttSlot();
         });
 
-        const originalRowBg = row.style.background;
-        const originalLeftBg = leftGroup.style.background;
+        // Раунд 174/177 (по запросу Mr.D: "мультивыделение для
+        // одновременного редактирования... работает, но нет явного
+        // выделения, нужна подсветка выделенных строк") - строки
+        // мультивыбора получают ПОЛНОЦЕННЫЙ фон (не тонкую рамку -
+        // Раунд 174 пробовал `box-shadow: inset 3px 0 0`, но та
+        // физически СКРЫТА за липкой leftGroup, у которой свой
+        // непрозрачный фон поверх - никогда не была видна), другого
+        // цвета, чем подсветка фокуса (var(--md-surface-3)) - иначе не
+        // отличить "эта строка сейчас редактируется" от "эта строка
+        // просто выделена вместе с другими". color-mix() - оттенок
+        // акцентного цвета темы с прозрачностью (тот же акцент, что уже
+        // используют другие элементы подсветки диаграммы, просто
+        // разбавленный) - работает одинаково хорошо в обеих темах
+        // (день/ночь) без отдельного вычисления под каждую.
+        const isMultiSelected = this.multiSelectedKeys.has(taskKey);
+        const multiSelectBg = 'color-mix(in srgb, var(--md-accent) 22%, transparent)';
+
+        const originalRowBg = isMultiSelected && !isFocused ? multiSelectBg : row.style.background;
+        const originalLeftBg = isMultiSelected && !isFocused ? multiSelectBg : leftGroup.style.background;
         const highlightOn = () => {
             row.style.background = 'var(--md-surface-3)';
             leftGroup.style.background = 'var(--md-surface-3)';
         };
+        // Раунд 177 - "выключение" подсветки (уход мыши) теперь
+        // возвращает к originalRowBg/originalLeftBg - для строки
+        // мультивыбора это УЖЕ multiSelectBg (см. выше), не пустой фон -
+        // наведение временно "перекрывает" его цветом фокуса, но при
+        // уходе мыши акцентная подсветка выделения корректно
+        // возвращается, а не пропадает совсем.
         const highlightOff = () => {
             row.style.background = originalRowBg;
             leftGroup.style.background = originalLeftBg;
@@ -1608,7 +1663,16 @@ export class GanttNode extends BaseNode {
         // СРАЗУ (не ждёт наведения) и НЕ гаснет при уходе мыши -
         // наведение по-прежнему даёт временную подсветку для ОСТАЛЬНЫХ
         // (не сфокусированных) строк, как и раньше.
-        if (isFocused) highlightOn();
+        if (isFocused) {
+            highlightOn();
+        } else if (isMultiSelected) {
+            // Раунд 177 - применяем СРАЗУ, не дожидаясь наведения - та
+            // же логика, что уже применена к фокусу (иначе выделенные
+            // строки были бы подсвечены ТОЛЬКО пока над ними курсор,
+            // что и означало "нет явного выделения" в жалобе Mr.D).
+            row.style.background = multiSelectBg;
+            leftGroup.style.background = multiSelectBg;
+        }
         numWrap.addEventListener('mouseenter', highlightOn);
         numWrap.addEventListener('mouseleave', () => { if (!isFocused) highlightOff(); });
         focusCol.addEventListener('mouseenter', highlightOn);
@@ -1626,8 +1690,44 @@ export class GanttNode extends BaseNode {
         // диаграмме) - ОТДЕЛЬНЫЙ элемент, вне leftGroup, сюда не
         // попадает - клики по ней не трогают фокус (не мешают
         // перетаскиванию/растягиванию).
-        leftGroup.addEventListener('click', () => {
+        // Раунд 176 (по жалобе Mr.D: "не выделяет строки, где-то
+        // ошибка") - обработка Shift+клика перенесена с 'click' на
+        // 'mousedown' - подозрение (наиболее вероятное объяснение):
+        // Shift+клик по умолчанию запускает НАТИВНОЕ выделение
+        // ДИАПАЗОНА ТЕКСТА браузером (расширение выделения от
+        // предыдущей точки клика) - это может мешать корректному
+        // срабатыванию/распространению именно события 'click' в
+        // некоторых сценариях. 'mousedown' с explicit preventDefault()
+        // перехватывает ДО того, как у браузера появляется шанс начать
+        // нативное выделение - тот же самый приём, что УЖЕ используют
+        // ВСЕ drag-взаимодействия диаграммы (растягивание полосы,
+        // ручка ширины виджета и т.п. - ни один из них не полагается
+        // на 'click').
+        leftGroup.addEventListener('mousedown', (e) => {
+            if (!e.shiftKey) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (this.multiSelectedKeys.has(taskKey)) {
+                this.multiSelectedKeys.delete(taskKey);
+            } else {
+                this.multiSelectedKeys.add(taskKey);
+            }
+            this._focusedTaskKey = taskKey;
+            this._rerenderGanttSlot();
+        });
+
+        leftGroup.addEventListener('click', (e) => {
+            // Shift-клик уже обработан на mousedown выше (см. её
+            // докстринг) - здесь просто выходим, чтобы не сработать
+            // ВТОРОЙ раз (mousedown + click - оба события физически
+            // происходят на одном и том же клике) и не "отменить"
+            // только что сделанное переключение строки в наборе.
+            if (e.shiftKey) return;
             if (!isFocused) {
+                // Обычный клик (без Shift) - сбрасывает мультивыделение,
+                // если оно было (обычное поведение "клик мимо снимает
+                // множественный выбор", как в файловых менеджерах).
+                if (this.multiSelectedKeys.size > 0) this.multiSelectedKeys.clear();
                 this._focusedTaskKey = taskKey;
                 this._rerenderGanttSlot();
             }
@@ -1689,7 +1789,11 @@ export class GanttNode extends BaseNode {
                 sectionCell.addEventListener('mousedown', (e) => e.stopPropagation());
                 sectionCell.addEventListener('click', (e) => e.stopPropagation());
                 sectionCell.addEventListener('change', (e) => {
-                    this.taskSectionOverrides[taskKey] = e.target.value.trim();
+                    const newSection = e.target.value.trim();
+                    this.taskSectionOverrides[taskKey] = newSection;
+                    this._propagateToMultiSelection(taskKey, (otherTask) => {
+                        this.taskSectionOverrides[otherTask.taskKey || otherTask.name] = newSection;
+                    });
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 });
@@ -1767,6 +1871,22 @@ export class GanttNode extends BaseNode {
                 } else {
                     this.taskNameOverrides[taskKey] = newName;
                 }
+                // Раунд 174 - каждая строка мультивыбора получает СВОЮ
+                // проверку через _uniqueTaskName() (не буквально ОДНО и
+                // то же имя всем сразу) - иначе N выделенных строк с
+                // одинаковым именем немедленно столкнулись бы друг с
+                // другом (та же логика уникальности, что уже применяется
+                // при обычном переименовании/создании строки).
+                this._propagateToMultiSelection(taskKey, (otherTask) => {
+                    const otherKey = otherTask.taskKey || otherTask.name;
+                    const uniqueForOther = this._uniqueTaskName(rawNewName);
+                    const otherManualTask = this.manualTasks.find(t => t.key === otherKey);
+                    if (otherManualTask) {
+                        otherManualTask.name = uniqueForOther;
+                    } else {
+                        this.taskNameOverrides[otherKey] = uniqueForOther;
+                    }
+                });
                 if (window.nodeManager) window.nodeManager.calculateAll();
                 if (window.renderer) window.renderer.updateAllDisplays();
             });
@@ -1854,6 +1974,7 @@ export class GanttNode extends BaseNode {
             workdaysInput.addEventListener('change', (e) => {
                 const newWorkDays = Math.max(0, parseInt(e.target.value, 10) || 0);
                 this._applyWorkDaysEdit(task, newWorkDays, anchor);
+                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor));
             });
             this._attachFieldNavigation(workdaysInput, taskKey, 'workdays');
             leftGroup.appendChild(workdaysInput);
@@ -1892,6 +2013,9 @@ export class GanttNode extends BaseNode {
                 responsibleCell.addEventListener('change', (e) => {
                     const newValue = e.target.value.trim();
                     this.taskResponsible[taskKey] = newValue;
+                    this._propagateToMultiSelection(taskKey, (otherTask) => {
+                        this.taskResponsible[otherTask.taskKey || otherTask.name] = newValue;
+                    });
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 });
@@ -2684,12 +2808,34 @@ export class GanttNode extends BaseNode {
 
     // Лёгкая перерисовка ТОЛЬКО области диаграммы (не всей ноды и не
     // пересчёт графа) - для чисто визуальных переключений вроде
-    // сворачивания группы, где данные не меняются. Тот же приём, что
-    // _rebuildGrid() у CalendarNode.
+    // сворачивания группы/фокуса строки, где данные не меняются. Тот же
+    // приём, что _rebuildGrid() у CalendarNode.
+    //
+    // Раунд 170 (по жалобе Mr.D: "навигация теперь работает на Доске, но
+    // по-прежнему не получается выделять строку мышкой. Срабатывает
+    // только 1 раз при первой инициации, потом выделение курсором не
+    // работает") - причина ТОГО ЖЕ семейства, что чинил в Раунде 169
+    // для клавиатурной навигации, но здесь ПРОЩЕ: клик по строке (как и
+    // сворачивание группы, кнопки +/- и т.п. - ВСЕГО 15 мест вызова
+    // этого метода) НЕ меняет данные и НЕ вызывает calculateAll() -
+    // только это метод и должен был обновить экран. Раньше он трогал
+    // ИСКЛЮЧИТЕЛЬНО холстовую ноду (`[data-node-id=...]`) - для виджета
+    // на Доске эффекта не было ВООБЩЕ (не единожды, а НИКОГДА - "сработал
+    // 1 раз" объясняется тем, что САМЫЙ первый клик обычно СОВПАДАЕТ с
+    // каким-то ДРУГИМ, уже отложенным рендером Доски, случайно
+    // подхватившим новое состояние). Фикс - тот же приём, что уже
+    // применён к CalendarNode._rebuildGrid() (Раунд 164) - обновляем
+    // ОБА места разом, если они есть в DOM: и холстовую ноду (как
+    // раньше), и видимый ПРЯМО СЕЙЧАС виджет на Доске (СИНХРОННО, не
+    // через setTimeout - здесь, в отличие от Раунда 169, НЕТ гонки с
+    // отложенным flush(), потому что flush() тут просто НЕ УЧАСТВУЕТ:
+    // ни один из 15 вызовов не меняет данные).
     _rerenderGanttSlot() {
         const el = document.querySelector(`[data-node-id="${this.id}"] .gantt-container-slot`);
-        if (!el) return;
-        this._replaceGanttSlot(el);
+        if (el) this._replaceGanttSlot(el, false);
+
+        const widgetBodyEl = document.querySelector(`.board-widget[data-widget-id="${this.id}"] .board-widget-body`);
+        if (widgetBodyEl) this._replaceGanttSlot(widgetBodyEl, true);
     }
 
     // Раунд 107 (по жалобе Mr.D: "после изменения элемента позиция
@@ -2705,7 +2851,7 @@ export class GanttNode extends BaseNode {
     // восстанавливает в НОВОМ после - используется и здесь
     // (_rerenderGanttSlot(), лёгкая перерисовка), и в updateDisplay()
     // (после полного пересчёта).
-    _replaceGanttSlot(slotEl) {
+    _replaceGanttSlot(slotEl, isWidget = false) {
         const oldOuter = slotEl.querySelector('.gantt-outer-scroll');
         const oldRowsWrap = slotEl.querySelector('.gantt-rows-scroll');
         const scrollLeft = oldOuter ? oldOuter.scrollLeft : 0;
@@ -2713,8 +2859,10 @@ export class GanttNode extends BaseNode {
 
         slotEl.innerHTML = '';
         // createGanttArea() возвращает САМ .gantt-outer-scroll (не
-        // обёртку вокруг него) - см. её докстринг.
-        const newOuter = this.createGanttArea();
+        // обёртку вокруг него) - см. её докстринг. isWidget передаётся
+        // дальше - виджет несёт СВОЮ ручку растягивания (Раунд 166) и
+        // читает this.widgetWrapHeight, а не this.wrapHeight.
+        const newOuter = this.createGanttArea(isWidget);
         slotEl.appendChild(newOuter);
 
         if (scrollLeft) newOuter.scrollLeft = scrollLeft;
@@ -3465,6 +3613,24 @@ export class GanttNode extends BaseNode {
     // конкретной, устаревшей календарной шириной, которая никогда не
     // пересчитывалась заново. Переключаемого scheduleMode/calendar-
     // режима больше не существует - ветка с багом ушла вместе с ним.
+    // Раунд 174 (по запросу Mr.D: "мультивыделение для одновременного
+    // редактирования... выделил 3 произвольные строки, поменял
+    // продолжительность, в остальных выделенных строках продолжительность
+    // перезаписалась") - применяет applyFn(otherTask) КО ВСЕМ ОСТАЛЬНЫМ
+    // строкам мультивыбора, ЕСЛИ редактируемая строка (taskKey) сама
+    // входит в набор из 2+ строк (одиночное выделение/фокус без Shift -
+    // multiSelectedKeys пуст, ничего не разлетается, обычное поведение
+    // без изменений). Каждый из 4 обработчиков полей вызывает это ПОСЛЕ
+    // применения правки к САМОЙ редактируемой строке.
+    _propagateToMultiSelection(taskKey, applyFn) {
+        if (this.multiSelectedKeys.size <= 1 || !this.multiSelectedKeys.has(taskKey)) return;
+        this.multiSelectedKeys.forEach(key => {
+            if (key === taskKey) return;
+            const otherTask = this.tasks.find(t => (t.taskKey || t.name) === key);
+            if (otherTask) applyFn(otherTask);
+        });
+    }
+
     _applyWorkDaysEdit(task, newWorkDays, anchor) {
         const key = task.taskKey || task.name;
         // Раунд 145 (по жалобе Mr.D: "пытаюсь добавить дни элементу,
@@ -3949,6 +4115,29 @@ export class GanttNode extends BaseNode {
                         this.taskDates[taskKey] = newOffset;
                     }
                     delete barEl.dataset.pendingOffset;
+                    // Раунд 178 (по запросу Mr.D: "распространить такое
+                    // же правило для графического редактирования, на
+                    // перемещение по датам") - сдвиг ДЕЛЬТОЙ (разницей
+                    // дней), не абсолютной новой датой - у остальных
+                    // выделенных задач своё, ОТЛИЧНОЕ исходное
+                    // положение, "поставить всех на ОДНУ дату" сломало
+                    // бы их относительное расположение друг относительно
+                    // друга - "подвинуть каждую на СТОЛЬКО ЖЕ дней,
+                    // сколько подвинули эту" сохраняет расстояния между
+                    // ними, как при перетаскивании группы объектов
+                    // вместе в любом графическом редакторе.
+                    const deltaDays = newOffset - startOffset;
+                    this._propagateToMultiSelection(taskKey, (otherTask) => {
+                        const otherKey = otherTask.taskKey || otherTask.name;
+                        const otherNewOffset = Math.max(0, otherTask.startOffsetDays + deltaDays);
+                        const otherManualTask = this.manualTasks.find(t => t.key === otherKey);
+                        if (otherManualTask) {
+                            otherManualTask.startOffsetDays = otherNewOffset;
+                        } else {
+                            this.taskDates[otherKey] = otherNewOffset;
+                        }
+                        this._rebaseDependencyGapsForTarget(otherKey, otherNewOffset);
+                    });
                     // Раунд 139 (по уточнению Mr.D: "зависимость в одну
                     // сторону, по направлению стрелки - перемещение
                     // ЗАВИСИМОЙ [задачи-цели] не должно блокироваться") -
@@ -4051,6 +4240,17 @@ export class GanttNode extends BaseNode {
                         // редактирование.
                         this.taskDurationOverrides[key] = workDays;
                     }
+                    // Раунд 178 (по запросу Mr.D: "распространить такое
+                    // же правило для графического редактирования... на
+                    // растягивание по срокам") - ТА ЖЕ итоговая
+                    // длительность (в рабочих днях) на все остальные
+                    // выделенные строки - собственный старт КАЖДОЙ
+                    // задачи при этом не трогается (растягивание меняет
+                    // ДЛИТЕЛЬНОСТЬ, не положение) - переиспользует
+                    // _applyWorkDaysEdit(), ТУ ЖЕ логику, что уже
+                    // применена к текстовому полю "Раб.дни" (единая
+                    // точка правды, не дублирование).
+                    this._propagateToMultiSelection(key, (otherTask) => this._applyWorkDaysEdit(otherTask, workDays, anchor));
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }

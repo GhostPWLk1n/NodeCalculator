@@ -6,7 +6,7 @@
  * @file    listViewerNode.js
  * @brief   Нода только для просмотра списка (LIST), без выхода
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.58
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

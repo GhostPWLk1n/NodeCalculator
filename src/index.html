@@ -505,12 +505,71 @@
                     <button id="settingsClearStartupBtn" class="sidebar-settings-btn-small">🗑️ Сбросить стартовое рабочее пространство</button>
                 </div>
                 <div class="sidebar-settings-hint" id="settingsStartupHint"></div>
+
+                <!-- Раунд 179 (по запросу Mr.D: "добавим окно приветствия
+                     с галочкой не показывать при следующем старте") - без
+                     этой кнопки, поставив галочку один раз, пользователь
+                     не смог бы вернуться к окну приветствия иначе как
+                     вручную редактируя localStorage. -->
+                <div class="sidebar-settings-row">
+                    <button id="settingsShowWelcomeBtn" class="sidebar-settings-btn-small">👋 Показать окно приветствия</button>
+                </div>
+                <p class="settings-startup-note">
+                    Показать окно приветствия сейчас и снова включить его
+                    показ при следующих запусках (если ранее отключили
+                    галочкой "Не показывать при следующем запуске").
+                </p>
                 <p class="settings-startup-note">
                     Пока хранится в папке программы - при переустановке
                     приложения потребуется сохранить заново. Перенос в
                     пользовательский профиль (переживёт переустановку) -
                     в планах.
                 </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Раунд 179 (по запросу Mr.D: "добавим окно приветствия. С
+         галочкой не показывать при следующем старте. В лучших
+         традициях. Поместим в него баннер, текущий билд, Лицензии. И
+         советы") - показывается один раз при запуске (если не отключено
+         галочкой, см. main.js/showWelcomeScreenIfNeeded()) - тот же
+         принцип модалки, что у sidebarSettingsModal (fixed+backdrop),
+         но со своими классами (welcome-*), не переиспользует
+         sidebar-settings-* - у неё другая структура (баннер, советы). -->
+    <div class="welcome-modal" id="welcomeModal" style="display:none;">
+        <div class="welcome-backdrop" id="welcomeBackdrop"></div>
+        <div class="welcome-panel">
+            <div class="welcome-banner">
+                <img src="assets/welcome-banner.jpg" alt="NodeCalculate" class="welcome-banner-img">
+                <div class="welcome-banner-overlay">
+                    <h1 class="welcome-title">NodeCalculate</h1>
+                    <span class="welcome-version" id="welcomeVersion"></span>
+                </div>
+            </div>
+            <div class="welcome-body">
+                <div class="welcome-tip-card">
+                    <span class="welcome-tip-icon">💡</span>
+                    <p class="welcome-tip-text" id="welcomeTipText"></p>
+                    <button class="welcome-tip-next" id="welcomeTipNext" type="button" title="Следующий совет">➜</button>
+                </div>
+                <div class="welcome-tip-dots" id="welcomeTipDots"></div>
+
+                <details class="welcome-licenses">
+                    <summary>📜 Лицензии</summary>
+                    <div class="welcome-licenses-body">
+                        <p><strong>NodeCalculate</strong> © 2024 NodeCalculate Team, Pavel Fomin - лицензия MIT.</p>
+                        <p>Построено на <strong>Electron</strong> (© OpenJS Foundation) - лицензия MIT.</p>
+                        <p>Импорт/экспорт Excel, чтение/запись .xlsx - собственная реализация проекта, без сторонних библиотек.</p>
+                    </div>
+                </details>
+            </div>
+            <div class="welcome-footer">
+                <label class="welcome-checkbox-label">
+                    <input type="checkbox" id="welcomeDontShowAgain">
+                    Не показывать при следующем запуске
+                </label>
+                <button class="welcome-start-btn" id="welcomeStartBtn" type="button">Начать работу</button>
             </div>
         </div>
     </div>

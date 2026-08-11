@@ -3823,3 +3823,191 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     stroke-width: 3;
     opacity: 0.8;
 }
+
+/* ============================================
+   ОКНО ПРИВЕТСТВИЯ (Раунд 179, по запросу Mr.D: "добавим окно
+   приветствия. С галочкой не показывать при следующем старте. В
+   лучших традициях. Поместим в него баннер, текущий билд, Лицензии.
+   И советы") - показывается один раз при запуске, см.
+   showWelcomeScreenIfNeeded() в main.js.
+   ============================================ */
+.welcome-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.welcome-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+}
+.welcome-panel {
+    position: relative;
+    width: 560px;
+    max-width: 92vw;
+    max-height: 88vh;
+    background: var(--md-surface-variant);
+    border-radius: var(--md-radius-lg);
+    box-shadow: var(--md-elevation);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: welcome-panel-in 0.25s ease;
+}
+@keyframes welcome-panel-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.welcome-banner {
+    position: relative;
+    width: 100%;
+    height: 168px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.welcome-banner-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 30%;
+    display: block;
+}
+.welcome-banner-overlay {
+    position: absolute;
+    left: 20px;
+    bottom: 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+.welcome-title {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+    letter-spacing: 0.01em;
+}
+.welcome-version {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.75);
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+    font-variant-numeric: tabular-nums;
+}
+.welcome-body {
+    padding: 18px 20px 8px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.welcome-tip-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--md-surface-2);
+    border-radius: var(--md-radius);
+    padding: 12px 14px;
+    min-height: 44px;
+}
+.welcome-tip-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+.welcome-tip-text {
+    flex: 1;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--md-text);
+}
+.welcome-tip-next {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: var(--md-primary);
+    color: var(--md-surface);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.welcome-tip-next:hover {
+    background: var(--md-accent);
+    transform: translateX(2px);
+}
+.welcome-tip-dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+}
+.welcome-tip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--md-divider);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.welcome-tip-dot.active {
+    background: var(--md-primary);
+    transform: scale(1.3);
+}
+.welcome-licenses {
+    font-size: 11px;
+    color: var(--md-text-secondary);
+}
+.welcome-licenses summary {
+    cursor: pointer;
+    user-select: none;
+    color: var(--md-text);
+    font-size: 12px;
+    padding: 2px 0;
+}
+.welcome-licenses-body {
+    padding: 8px 4px 2px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.welcome-licenses-body p {
+    margin: 0;
+}
+.welcome-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--md-divider);
+    flex-shrink: 0;
+}
+.welcome-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--md-text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.welcome-start-btn {
+    background: var(--md-primary);
+    color: var(--md-surface);
+    border: none;
+    border-radius: var(--md-radius);
+    padding: 9px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+.welcome-start-btn:hover {
+    background: var(--md-accent);
+}

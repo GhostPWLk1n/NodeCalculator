@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.58
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -168,28 +168,19 @@ export class BoardManager {
     // через контекстное меню строка появляется, и потом становится в
     // фокус... думаю важный нюанс - добавление строки в виджете через
     // контекстное меню проталкивает рендер. Но потом опять всё
-    // зависает") - НАЙДЕНА более глубокая причина, чем защита от
-    // Раунда 166 (та закрывала только АКТИВНОЕ ПЕРЕТАСКИВАНИЕ мышью -
-    // здесь же речь о ПРОСТОМ вводе в текстовое поле/клике по пункту
-    // меню, drag тут вообще ни при чём). flush() вызывается СИНХРОННО
-    // из calculateAll() (nodeManager.js), которая, в свою очередь,
-    // вызывается ИЗНУТРИ обработчика 'change'/'click' САМОГО ПОЛЯ/
-    // пункта меню виджета - то есть renderActiveBoard() (полностью
-    // УДАЛЯЕТ и ЗАМЕНЯЕТ DOM виджета) срабатывает, пока браузер ЕЩЁ НЕ
-    // ЗАВЕРШИЛ СВОЮ СОБСТВЕННУЮ внутреннюю обработку ЭТОГО ЖЕ события
-    // (у <input> событие 'change' - часть последовательности потери
-    // фокуса; удаление элемента ПРЯМО ПОСРЕДИ этой последовательности -
-    // известный источник поломки фокус-менеджера браузера: клавиатура/
-    // клики перестают долетать до элементов до следующего "полного"
-    // сброса состояния фокуса - переключение вкладки как раз и
-    // ПРИНУДИТЕЛЬНО его даёт, отсюда "лечит"). Фикс - откладываем
-    // ФАКТИЧЕСКУЮ пересборку DOM на следующий тик (setTimeout 0) - и
-    // текущий обработчик события, и вся СОБСТВЕННАЯ бухгалтерия браузера
-    // по этому событию успевают полностью завершиться ДО того, как мы
-    // снова трогаем DOM. _flushScheduled - защита от дублирования, если
+    // зависает") - flush() вызывается СИНХРОННО из calculateAll()
+    // (nodeManager.js), которая, в свою очередь, вызывается ИЗНУТРИ
+    // обработчика 'change'/'click' САМОГО ПОЛЯ/пункта меню виджета -
+    // то есть renderActiveBoard() (полностью УДАЛЯЕТ и ЗАМЕНЯЕТ DOM
+    // виджета) срабатывает, пока браузер ЕЩЁ НЕ ЗАВЕРШИЛ СВОЮ
+    // СОБСТВЕННУЮ внутреннюю обработку ЭТОГО ЖЕ события (у <input>
+    // событие 'change' - часть последовательности потери фокуса;
+    // удаление элемента ПРЯМО ПОСРЕДИ этой последовательности -
+    // известный источник поломки фокус-менеджера браузера). Фикс -
+    // откладываем ФАКТИЧЕСКУЮ пересборку DOM на следующий тик
+    // (setTimeout 0). _flushScheduled - защита от дублирования, если
     // flush() вызовется несколько раз до того, как отложенный рендер
-    // успеет сработать (иначе N быстрых правок подряд дали бы N
-    // отдельных перерисовок вместо одной, последней).
+    // успеет сработать.
     flush() {
         if (this._dirtyBoardIds.size === 0) return;
         if (this._flushScheduled) return;
@@ -663,12 +654,62 @@ export class BoardManager {
             return;
         }
 
+        // Раунд 168 (по жалобе Mr.D: "рендер не обновляется... Диаграмма
+        // Ганта") - у Диаграммы Ганта ЕСТЬ СВОЙ, УЗЛОВОЙ (не DOM)
+        // механизм фокуса (_focusedTaskKey, ganttNode.js) - защита
+        // "сохранить DOM при фокусе ввода" ей не просто не нужна, она
+        // ВРЕДНА (клавиатурная навигация постоянно держит фокус ВНУТРИ
+        // виджета, из-за чего виджет никогда бы не обновлялся свежими
+        // данными).
+        const isGanttWidget = (w) => w.type === 'gantt';
+
+        // Раунд 171 (по жалобе Mr.D: "виджет забывает положение
+        // пользователя (прокрутки внутри) при обновлении рендера") -
+        // Диаграмма Ганта ВСЕГДА пересобирается заново (см. isGanttWidget
+        // выше) - buildWidgetEl() строит СОВЕРШЕННО НОВЫЙ DOM со
+        // scrollLeft/scrollTop = 0 по умолчанию на КАЖДОЕ изменение
+        // данных.
+        //
+        // Раунд 173 (по жалобе Mr.D: "баг остался, положение
+        // сбрасывается") - Раунд 171 восстанавливал прокрутку СРАЗУ
+        // после buildWidgetEl(), ДО того, как новый узел РЕАЛЬНО
+        // вставлен в документ (это происходит позже, в цикле
+        // page.insertBefore() внизу метода) - в РЕАЛЬНОМ браузере
+        // scrollLeft/scrollTop, выставленные на ЕЩЁ НЕ прикреплённом к
+        // документу элементе, часто молча игнорируются или сбрасываются:
+        // область прокрутки (высота/ширина содержимого) физически не
+        // вычислена, пока элемент не стал частью видимого дерева со
+        // своей раскладкой - собственный тестовый DOM-стаб этого не
+        // ловил (там scrollLeft/scrollTop - просто поле объекта, без
+        // имитации реальной раскладки браузера). Копим ЖЕЛАЕМУЮ
+        // прокрутку в ganttScrollToRestore (widgetId -> {scrollLeft,
+        // scrollTop}) и применяем её ПОСЛЕ цикла вставки внизу метода,
+        // через requestAnimationFrame - гарантированно после того, как
+        // браузер хотя бы раз посчитал раскладку нового узла.
+        const ganttScrollToRestore = new Map();
+        const captureGanttScroll = (widgetId) => {
+            const oldEl = page.querySelector(`.board-widget[data-widget-id="${widgetId}"]`);
+            const oldOuter = oldEl?.querySelector('.gantt-outer-scroll');
+            const oldRowsWrap = oldEl?.querySelector('.gantt-rows-scroll');
+            if (!oldOuter && !oldRowsWrap) return null;
+            const scrollLeft = oldOuter?.scrollLeft || 0;
+            const scrollTop = oldRowsWrap?.scrollTop || 0;
+            if (!scrollLeft && !scrollTop) return null;
+            return { scrollLeft, scrollTop };
+        };
+
         // Для виджета в фокусе ИЛИ с активным перетаскиванием мышью -
         // тот же DOM-узел, что уже стоит в странице; для всех остальных -
         // свежий, как и раньше.
         const desiredEls = widgets.map(w => {
-            if (focusedWidgetId !== null && String(w.id) === focusedWidgetId) return focusedWidgetEl;
+            if (!isGanttWidget(w) && focusedWidgetId !== null && String(w.id) === focusedWidgetId) return focusedWidgetEl;
             if (this._activeDragWidgetId !== null && String(w.id) === this._activeDragWidgetId && activeDragWidgetEl) return activeDragWidgetEl;
+            if (isGanttWidget(w)) {
+                const savedScroll = captureGanttScroll(w.id);
+                const freshEl = this.buildWidgetEl(w);
+                if (savedScroll) ganttScrollToRestore.set(freshEl, savedScroll);
+                return freshEl;
+            }
             return this.buildWidgetEl(w);
         });
 
@@ -700,6 +741,24 @@ export class BoardManager {
             const current = page.children[i];
             if (current !== el) page.insertBefore(el, current || null);
         });
+
+        // Раунд 173 - применяем накопленную прокрутку ТЕПЕРЬ, когда все
+        // элементы гарантированно уже в документе (см. докстринг
+        // ganttScrollToRestore выше). requestAnimationFrame - на случай,
+        // если браузеру нужен ХОТЯ БЫ один кадр между вставкой в DOM и
+        // тем, когда scrollLeft/scrollTop на новом узле начинают
+        // реально "держаться" (зависит от движка - для надёжности не
+        // полагаемся на синхронное применение сразу после insertBefore).
+        if (ganttScrollToRestore.size > 0) {
+            requestAnimationFrame(() => {
+                ganttScrollToRestore.forEach((saved, el) => {
+                    const newOuter = el.querySelector('.gantt-outer-scroll');
+                    const newRowsWrap = el.querySelector('.gantt-rows-scroll');
+                    if (newOuter && saved.scrollLeft) newOuter.scrollLeft = saved.scrollLeft;
+                    if (newRowsWrap && saved.scrollTop) newRowsWrap.scrollTop = saved.scrollTop;
+                });
+            });
+        }
     }
 
     // Раунд 47 - "выравнивание" виджета (style.align, Раунд 31) раньше
