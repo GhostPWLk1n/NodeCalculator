@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -90,6 +90,14 @@ const PERIOD_PRESETS = {
     halfyear: { label: 'Полгода', days: 182 },
     year: { label: 'Год', days: 365 }
 };
+// Раунд 183 (по запросу Mr.D: "Период отображения давай сделаем по
+// умолчанию Авто (берёт начальную и конечную дату, и к конечной
+// прибавляет ещё месяц для отображения)") - НЕ входит в PERIOD_PRESETS
+// (у него нет ФИКСИРОВАННОГО числа дней - вычисляется динамически по
+// фактическим датам задач, см. _computeAutoPeriodDays()) - список
+// "разрешённых" значений periodPreset (конструктор, ниже) собирается
+// отдельно, включая и 'auto', и 'custom' (та тоже вне PERIOD_PRESETS).
+const AUTO_PERIOD_EXTRA_DAYS = 30; // "ещё месяц для отображения" - тот же гранularity, что у пресета "Месяц"
 
 // Date.getDay(): 0=вс, 1=пн, ... 6=сб
 const WEEKDAY_LABELS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
@@ -167,7 +175,14 @@ export class GanttNode extends BaseNode {
         // если нужно зафиксировать якорь вручную. По умолчанию включено
         // (см. обсуждение с Mr.D - "должна строить сразу").
         this.autoAnchorFromData = config.autoAnchorFromData ?? true;
-        this.periodPreset = PERIOD_PRESETS[config.periodPreset] ? config.periodPreset : 'custom';
+        // Раунд 183 (по запросу Mr.D: "Период отображения давай сделаем
+        // по умолчанию Авто") - 'custom' и 'auto' оба ВНЕ PERIOD_PRESETS
+        // (у 'custom' число дней приходит от отдельного поля
+        // customPeriodDays, у 'auto' - вычисляется динамически, см.
+        // _computeAutoPeriodDays()) - оба явно перечислены в списке
+        // допустимых значений отдельно от Object.keys(PERIOD_PRESETS).
+        const validPeriodPresets = ['auto', 'custom', ...Object.keys(PERIOD_PRESETS)];
+        this.periodPreset = validPeriodPresets.includes(config.periodPreset) ? config.periodPreset : 'auto';
         // Раунд 77 - "Своя" протяжённость в календарных днях (по прямому
         // запросу Mr.D, по умолчанию 60 - ни один из готовых пресетов
         // (30/90/182/365) этому не соответствует). Используется, когда
@@ -348,6 +363,18 @@ export class GanttNode extends BaseNode {
         // Не сохраняется в .ncp (сессионное UI-состояние, как и
         // _focusedTaskKey).
         this.multiSelectedKeys = new Set();
+        // Раунд 180 (по запросу Mr.D: "у строки была заготовлена ручка,
+        // надо её задействовать, чтобы строку можно было перетащить
+        // схватившись за ручку") - {[taskKey]: afterKey | '__start__'} -
+        // ЕДИНЫЙ override порядка, работающий одинаково И для вручную
+        // добавленных задач (у тех УЖЕ есть свой insertAfterKey, см.
+        // manualTasks), И для задач ИЗ ИСТОЧНИКА (у тех порядок иначе
+        // взять неоткуда - только естественный порядок строк таблицы) -
+        // применяется В КОНЦЕ _applyManualRowEdits(), ПОСЛЕ того как
+        // все задачи (источник + вручную добавленные) уже собраны в
+        // this.tasks, но ДО группировки по разделам (см.
+        // _applyTaskOrderOverrides() дальше по файлу).
+        this.taskOrderOverrides = config.taskOrderOverrides ? { ...config.taskOrderOverrides } : {};
         // Переименование задачи ПРЯМО на диаграмме - тот же принцип, что
         // taskDurationOverrides/taskDates (переопределение поверх
         // значения из источника, по taskKey - стабильному идентификатору,
@@ -607,7 +634,9 @@ export class GanttNode extends BaseNode {
     createGanttArea(isWidget = false) {
         const totalDays = this.periodPreset === 'custom'
             ? this.customPeriodDays
-            : (PERIOD_PRESETS[this.periodPreset]?.days || 30);
+            : this.periodPreset === 'auto'
+                ? this._computeAutoPeriodDays()
+                : (PERIOD_PRESETS[this.periodPreset]?.days || 30);
         const dayWidth = RULER_SCALES[this.rulerScale]?.dayWidth || RULER_SCALES.days.dayWidth;
         const timelineWidth = totalDays * dayWidth;
         const anchor = parseISODate(this.startDate) || new Date();
@@ -1583,9 +1612,84 @@ export class GanttNode extends BaseNode {
             const handle = document.createElement('div');
             handle.className = 'gantt-row-handle';
             handle.textContent = '⠿';
-            handle.title = 'ПКМ - меню строки (добавить/раздел/удалить)';
-            handle.addEventListener('mousedown', (e) => e.stopPropagation());
+            handle.title = 'ПКМ - меню строки (добавить/раздел/удалить). Перетащите - изменить порядок';
             handle.addEventListener('click', (e) => e.stopPropagation());
+            // Раунд 180 (по запросу Mr.D: "у строки была заготовлена
+            // ручка, надо её задействовать, чтобы строку можно было
+            // перетащить схватившись за ручку") - mousedown на ручке
+            // запускает drag, а не просто "проглатывает" клик, как
+            // раньше (e.stopPropagation() без дальнейших действий).
+            // rowsWrap (родитель ВСЕХ строк, включая заголовки групп) -
+            // ищем среди СОСЕДЕЙ по data-task-key (проставлен на КАЖДОЙ
+            // строке - и задачи, и раздела, см. buildGroupHeaderRow()) -
+            // перетаскивание "поверх" строки-раздела вставляет ПОСЛЕ
+            // НЕЁ (в тот же плоский список - раздел сам физически не
+            // двигается, это отдельная структура, taskGroups).
+            handle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                // Раунд 180 (багфикс сразу же по факту реализации) -
+                // ТОЛЬКО левая кнопка мыши (button===0) запускает сам
+                // drag - ПКМ (button===2) тоже порождает mousedown
+                // ПЕРЕД событием 'contextmenu' (leftGroup.addEventListener
+                // ('contextmenu', ...) ниже) - без этой проверки правый
+                // клик по ручке начинал бы визуальное перетаскивание
+                // (класс gantt-row-dragging, слушатели на document) и
+                // мешал открытию контекстного меню. stopPropagation()
+                // выше остаётся БЕЗУСЛОВНОЙ (как было раньше) - и для
+                // ПКМ тоже, просто без запуска drag-последовательности.
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const rowsWrap = row.parentElement;
+                if (!rowsWrap) return;
+                row.classList.add('gantt-row-dragging');
+                let dropTargetKey = null; // afterKey для _applyTaskOrderOverrides() - null = без изменений
+                let lastMarkedEl = null;
+
+                const clearMark = () => {
+                    if (lastMarkedEl) {
+                        lastMarkedEl.classList.remove('gantt-row-drop-before', 'gantt-row-drop-after');
+                        lastMarkedEl = null;
+                    }
+                };
+
+                const onMove = (moveEvt) => {
+                    const siblingRows = Array.from(rowsWrap.children).filter(el => el.dataset && el.dataset.taskKey);
+                    let insertBeforeEl = null;
+                    for (const sib of siblingRows) {
+                        if (sib === row) continue;
+                        const rect = sib.getBoundingClientRect();
+                        if (moveEvt.clientY < rect.top + rect.height / 2) { insertBeforeEl = sib; break; }
+                    }
+                    clearMark();
+                    if (insertBeforeEl) {
+                        const idx = siblingRows.indexOf(insertBeforeEl);
+                        const prevEl = siblingRows[idx - 1];
+                        dropTargetKey = (prevEl && prevEl !== row) ? prevEl.dataset.taskKey : '__start__';
+                        insertBeforeEl.classList.add('gantt-row-drop-before');
+                        lastMarkedEl = insertBeforeEl;
+                    } else {
+                        const lastEl = siblingRows[siblingRows.length - 1];
+                        dropTargetKey = (lastEl && lastEl !== row) ? lastEl.dataset.taskKey : null;
+                        if (lastEl && lastEl !== row) {
+                            lastEl.classList.add('gantt-row-drop-after');
+                            lastMarkedEl = lastEl;
+                        }
+                    }
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    row.classList.remove('gantt-row-dragging');
+                    clearMark();
+                    if (dropTargetKey !== null && dropTargetKey !== taskKey) {
+                        this.taskOrderOverrides[taskKey] = dropTargetKey;
+                        if (window.nodeManager) window.nodeManager.calculateAll();
+                        if (window.renderer) window.renderer.updateAllDisplays();
+                    }
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
             focusCol.appendChild(handle);
         }
         leftGroup.appendChild(focusCol);
@@ -3215,6 +3319,15 @@ export class GanttNode extends BaseNode {
             }
         });
 
+        // Раунд 180 (по запросу Mr.D: "задействовать ручку, чтобы строку
+        // можно было перетащить") - применяем ПОСЛЕ того, как все
+        // задачи (источник + вручную добавленные, только что вставлены
+        // выше) собраны в this.tasks, но ДО группировки по разделам
+        // (_applyPromotedSections() ниже читает this.tasks В ТОМ
+        // ПОРЯДКЕ, В КОТОРОМ задачи распределяются по разделам - важно,
+        // чтобы перетаскивание уже подействовало к этому моменту).
+        this.tasks = this._applyTaskOrderOverrides(this.tasks);
+
         // Раунд 146 - строки, превращённые в раздел, убираются из
         // this.tasks и становятся именем группы для следующих задач.
         // Раунд 148 (по жалобе Mr.D: "раздел не может существовать без
@@ -3699,6 +3812,36 @@ export class GanttNode extends BaseNode {
     // под taskGroups/subgroups, см. _groupsFromTreeData()) - функция
     // молча ВСЕГДА возвращала false. Теперь - рекурсивный обход
     // taskGroups (любой уровень вложенности), не только верхний.
+    // Раунд 180 (по запросу Mr.D: "задействовать ручку, чтобы строку
+    // можно было перетащить схватившись за ручку") - переупорядочивает
+    // ПЛОСКИЙ список задач по накопленным перетаскиваниям
+    // (this.taskOrderOverrides) - для КАЖДОЙ задачи с override сначала
+    // убирает её с исходного места, затем вставляет СРАЗУ ПОСЛЕ
+    // задачи-ключа afterKey (или в самое начало, если afterKey ===
+    // '__start__'). Несколько независимых перетаскиваний за один
+    // пересчёт применяются последовательно, в порядке, в котором
+    // добавлялись в объект (обычный порядок ключей JS-объекта).
+    _applyTaskOrderOverrides(tasks) {
+        if (!this.taskOrderOverrides || Object.keys(this.taskOrderOverrides).length === 0) return tasks;
+        let result = [...tasks];
+        Object.entries(this.taskOrderOverrides).forEach(([key, afterKey]) => {
+            const idx = result.findIndex(t => (t.taskKey || t.name) === key);
+            if (idx === -1) return; // задача с этим ключом больше не существует (удалена/переименована)
+            const [task] = result.splice(idx, 1);
+            if (afterKey === '__start__') {
+                result.unshift(task);
+            } else {
+                const afterIdx = result.findIndex(t => (t.taskKey || t.name) === afterKey);
+                if (afterIdx === -1) {
+                    result.push(task); // задача-ориентир пропала - в конец, не теряем совсем
+                } else {
+                    result.splice(afterIdx + 1, 0, task);
+                }
+            }
+        });
+        return result;
+    }
+
     _isDuplicateSectionName(name) {
         if (!Array.isArray(this.taskGroups)) return false;
         let count = 0;
@@ -3729,6 +3872,21 @@ export class GanttNode extends BaseNode {
 
     _sumHoursForTasks(tasks) {
         return this._sumWorkdaysForTasks(tasks) * HOURS_PER_WORKDAY;
+    }
+
+    // Раунд 183 (по запросу Mr.D: "Период отображения давай сделаем по
+    // умолчанию Авто (берёт начальную и конечную дату, и к конечной
+    // прибавляет ещё месяц для отображения)") - максимальный
+    // startOffsetDays+durationDays среди ВСЕХ задач (самая поздняя дата
+    // окончания относительно anchor) + AUTO_PERIOD_EXTRA_DAYS "про
+    // запас" - минимальная дата НЕ учитывается отдельно (шкала и так
+    // всегда начинается от anchor/дня 0 - см. createGanttArea()) - если
+    // задач ещё нет, показываем месяц по умолчанию (тот же результат,
+    // что раньше давал fallback "30" в totalDays).
+    _computeAutoPeriodDays() {
+        if (!this.tasks || this.tasks.length === 0) return PERIOD_PRESETS.month.days;
+        const maxEnd = Math.max(...this.tasks.map(t => t.startOffsetDays + t.durationDays));
+        return Math.max(1, maxEnd) + AUTO_PERIOD_EXTRA_DAYS;
     }
 
     _calDaysW() { return this.calDaysColWidthOverride || CALDAYS_COL_WIDTH; }
@@ -5343,6 +5501,10 @@ export class GanttNode extends BaseNode {
             label: 'Период отображения',
             type: 'select',
             options: [
+                // Раунд 183 (по запросу Mr.D: "Период отображения давай
+                // сделаем по умолчанию Авто") - первым в списке, как
+                // рекомендуемый/дефолтный режим.
+                { value: 'auto', label: 'Авто (по датам задач + месяц)' },
                 { value: 'custom', label: 'Своя протяжённость (см. поле ниже)' },
                 ...Object.entries(PERIOD_PRESETS).map(([value, cfg]) => ({ value, label: cfg.label }))
             ],
@@ -5350,14 +5512,25 @@ export class GanttNode extends BaseNode {
             set: (v) => { this.periodPreset = v; }
         });
 
-        fields.push({
-            key: 'customPeriodDays',
-            label: 'Протяжённость, дней (при "Своя")',
-            type: 'number',
-            min: 1, step: 1,
-            get: () => this.customPeriodDays,
-            set: (v) => { this.customPeriodDays = Math.max(1, parseInt(v, 10) || 60); }
-        });
+        // Раунд 183 (по запросу Mr.D: "Панель для ввода должна
+        // появляться только если выбран соответствующий пункт") -
+        // раньше поле было ВСЕГДА видимо, даже когда periodPreset был
+        // ЛЮБЫМ ДРУГИМ пресетом (Авто/Месяц/Квартал/...) - значение
+        // этого поля в такие моменты попросту НЕ ИСПОЛЬЗУЕТСЯ (см.
+        // totalDays в createGanttArea()), поэтому и показывать его
+        // незачем. getInspectorSchema() вызывается ЗАНОВО при каждом
+        // render() инспектора - простое условие push() достаточно, без
+        // отдельного механизма "скрытых" полей.
+        if (this.periodPreset === 'custom') {
+            fields.push({
+                key: 'customPeriodDays',
+                label: 'Протяжённость, дней',
+                type: 'number',
+                min: 1, step: 1,
+                get: () => this.customPeriodDays,
+                set: (v) => { this.customPeriodDays = Math.max(1, parseInt(v, 10) || 60); }
+            });
+        }
 
         fields.push({
             key: 'rulerScale',
@@ -5384,66 +5557,6 @@ export class GanttNode extends BaseNode {
             set: (v) => { this.showBarDateLabels = !!v; }
         });
 
-        // Раунд 81 (п.4, по прямому запросу Mr.D) - независимые флаги
-        // видимости двух колонок слева от шкалы (см. buildTaskRow()/
-        // buildTotalRow()/buildGroupHeaderRow()).
-        fields.push({
-            key: 'showDurationColumn',
-            label: 'Колонка "ч.ч." / Итого дней',
-            type: 'checkbox',
-            get: () => this.showDurationColumn,
-            set: (v) => { this.showDurationColumn = !!v; }
-        });
-
-        fields.push({
-            key: 'showWorkingDaysColumn',
-            label: 'Колонка "Раб.дн." / Итого рабочих дней',
-            type: 'checkbox',
-            get: () => this.showWorkingDaysColumn,
-            set: (v) => { this.showWorkingDaysColumn = !!v; }
-        });
-
-        fields.push({
-            key: 'showResponsibleColumn',
-            label: 'Колонка "Ответственный"',
-            type: 'checkbox',
-            get: () => this.showResponsibleColumn,
-            set: (v) => { this.showResponsibleColumn = !!v; }
-        });
-
-        fields.push({
-            key: 'showCalDaysColumn',
-            label: 'Колонка "Кал. дни"',
-            type: 'checkbox',
-            get: () => this.showCalDaysColumn,
-            set: (v) => { this.showCalDaysColumn = !!v; }
-        });
-
-        // Раунд 157 (по запросу Mr.D: "нужны ещё колонки 'сум. раб.
-        // дней', 'сум. ч.ч.'")
-        fields.push({
-            key: 'showSumWorkingDaysColumn',
-            label: 'Колонка "Сум.раб.дн."',
-            type: 'checkbox',
-            get: () => this.showSumWorkingDaysColumn,
-            set: (v) => { this.showSumWorkingDaysColumn = !!v; }
-        });
-        fields.push({
-            key: 'showSumHoursColumn',
-            label: 'Колонка "Сум.ч.ч."',
-            type: 'checkbox',
-            get: () => this.showSumHoursColumn,
-            set: (v) => { this.showSumHoursColumn = !!v; }
-        });
-
-        fields.push({
-            key: 'showSectionColumn',
-            label: 'Колонка "Раздел"',
-            type: 'checkbox',
-            get: () => this.showSectionColumn,
-            set: (v) => { this.showSectionColumn = !!v; }
-        });
-
         fields.push({
             key: 'subtitleText',
             label: 'Подзаголовок (выход 2)',
@@ -5460,30 +5573,110 @@ export class GanttNode extends BaseNode {
             set: (v) => { this.deadlineDate = v || null; }
         });
 
+        // Раунд 81 (п.4, по прямому запросу Mr.D) - независимые флаги
+        // видимости двух колонок слева от шкалы (см. buildTaskRow()/
+        // buildTotalRow()/buildGroupHeaderRow()).
+        //
+        // Раунд 181 (по запросу Mr.D: "у нас есть блоки 'колонка' и
+        // 'шапка', но они не выделены в отдельный блок - создадим для
+        // них блоки и перенесём туда соответствующие пункты. А название
+        // строк упростим убрав в начале слово 'колонка' и 'шапка'") -
+        // все поля видимости колонок собраны в один визуальный под-блок
+        // (subsection, см. inspectorManager.js) - подписи больше НЕ
+        // повторяют слово "Колонка" (и так ясно из заголовка блока).
+        // ПЕРЕНЕСЕНО перед этим блоком (было МЕЖДУ "Колонки" и "Шапка") -
+        // subsection не сбрасывается автоматически на "постороннем"
+        // поле, оба под-блока теперь идут ПОДРЯД, ничего между ними не
+        // "проваливается" внутрь первого по ошибке.
+        fields.push({ type: 'subsection', label: 'Колонки' });
+        fields.push({
+            key: 'showDurationColumn',
+            label: '"ч.ч." / Итого дней',
+            type: 'checkbox',
+            get: () => this.showDurationColumn,
+            set: (v) => { this.showDurationColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showWorkingDaysColumn',
+            label: '"Раб.дн." / Итого рабочих дней',
+            type: 'checkbox',
+            get: () => this.showWorkingDaysColumn,
+            set: (v) => { this.showWorkingDaysColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showResponsibleColumn',
+            label: '"Ответственный"',
+            type: 'checkbox',
+            get: () => this.showResponsibleColumn,
+            set: (v) => { this.showResponsibleColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showCalDaysColumn',
+            label: '"Кал. дни"',
+            type: 'checkbox',
+            get: () => this.showCalDaysColumn,
+            set: (v) => { this.showCalDaysColumn = !!v; }
+        });
+
+        // Раунд 157 (по запросу Mr.D: "нужны ещё колонки 'сум. раб.
+        // дней', 'сум. ч.ч.'")
+        fields.push({
+            key: 'showSumWorkingDaysColumn',
+            label: '"Сум.раб.дн."',
+            type: 'checkbox',
+            get: () => this.showSumWorkingDaysColumn,
+            set: (v) => { this.showSumWorkingDaysColumn = !!v; }
+        });
+        fields.push({
+            key: 'showSumHoursColumn',
+            label: '"Сум.ч.ч."',
+            type: 'checkbox',
+            get: () => this.showSumHoursColumn,
+            set: (v) => { this.showSumHoursColumn = !!v; }
+        });
+
+        fields.push({
+            key: 'showSectionColumn',
+            label: '"Раздел"',
+            type: 'checkbox',
+            get: () => this.showSectionColumn,
+            set: (v) => { this.showSectionColumn = !!v; }
+        });
+
         // Строки многоуровневой шапки видны и настраиваются только в
         // масштабе "Дни" - в других масштабах у шапки одна строка-линейка,
-        // переключателям просто нечего было бы показывать. Раунд 108 -
-        // остаются ВНУТРИ блока "Отображение" (без собственного
-        // под-заголовка - обычная 'section' сбросила бы группировку,
-        // см. inspectorManager.js) - логически те же визуальные настройки.
+        // переключателям просто нечего было бы показывать.
+        //
+        // Раунд 181 (по запросу Mr.D: "создадим блоки для колонка/шапка
+        // и перенесём туда соответствующие пункты, название строк
+        // упростим убрав в начале слово 'шапка'") - собственный
+        // визуальный под-блок (subsection), подписи без повторяющегося
+        // "Шапка:" (и так ясно из заголовка блока). В отличие от
+        // Раунда 108 обычная 'section' здесь больше НЕ страшна для
+        // группировки - subsection не сбрасывает внешнюю сворачиваемую
+        // секцию "Отображение" (см. inspectorManager.js).
         if (this.rulerScale === 'days') {
+            fields.push({ type: 'subsection', label: 'Шапка' });
             fields.push({
-                key: 'showYearRow', label: 'Шапка: показывать год', type: 'checkbox',
+                key: 'showYearRow', label: 'Показывать год', type: 'checkbox',
                 get: () => this.showYearRow,
                 set: (v) => { this.showYearRow = !!v; }
             });
             fields.push({
-                key: 'showMonthRow', label: 'Шапка: показывать месяц', type: 'checkbox',
+                key: 'showMonthRow', label: 'Показывать месяц', type: 'checkbox',
                 get: () => this.showMonthRow,
                 set: (v) => { this.showMonthRow = !!v; }
             });
             fields.push({
-                key: 'showDayRow', label: 'Шапка: показывать число', type: 'checkbox',
+                key: 'showDayRow', label: 'Показывать число', type: 'checkbox',
                 get: () => this.showDayRow,
                 set: (v) => { this.showDayRow = !!v; }
             });
             fields.push({
-                key: 'showWeekdayRow', label: 'Шапка: показывать день недели', type: 'checkbox',
+                key: 'showWeekdayRow', label: 'Показывать день недели', type: 'checkbox',
                 get: () => this.showWeekdayRow,
                 set: (v) => { this.showWeekdayRow = !!v; }
             });
@@ -5500,25 +5693,30 @@ export class GanttNode extends BaseNode {
         if (this._detectedResponsibles.length > 0) {
             fields.push({ type: 'section', label: `🎨 Цвета ответственных (${this._detectedResponsibles.length})`, collapsible: true, collapsed: true });
             this._detectedResponsibles.forEach(name => {
+                // Раунд 180 (по запросу Mr.D: "цветов тоже касается,
+                // пусть порядок будет таким [селектор цвета][пресет
+                // цвета][пользователь][сброс] в одну строку") - раньше
+                // ДВА отдельных поля инспектора (пресет на одной строке,
+                // произвольный цвет+сброс на следующей) - теперь один
+                // объединённый ряд (см. inspectorManager.js,
+                // type==='colorRole'). Пресет и произвольный цвет пишут
+                // в ОДНО И ТО ЖЕ значение напрямую - какой виджет
+                // пользователь тронул последним, тот и победил, без
+                // промежуточного "выберите Свой цвет... в списке".
                 fields.push({
                     key: `respColor_${name}`,
                     label: name,
                     swatchColor: this.responsibleColors[name] || 'transparent',
-                    type: 'select',
-                    options: [...COLOR_PALETTE, { value: '__custom__', label: 'Свой цвет...' }],
-                    get: () => {
+                    type: 'colorRole',
+                    presetOptions: COLOR_PALETTE,
+                    getPreset: () => {
                         const cur = this.responsibleColors[name];
                         if (!cur) return '';
                         return COLOR_PALETTE.some(p => p.value === cur) ? cur : '__custom__';
                     },
-                    set: (v) => { if (v !== '__custom__') this.responsibleColors[name] = v || ''; }
-                });
-                fields.push({
-                    key: `respColorCustom_${name}`,
-                    label: `Свой цвет для «${name}» (если выбрано выше)`,
-                    type: 'color',
-                    get: () => this.responsibleColors[name] || '#90caf9',
-                    set: (v) => { this.responsibleColors[name] = v || ''; }
+                    setPreset: (v) => { this.responsibleColors[name] = v || ''; },
+                    getCustom: () => this.responsibleColors[name] || '#90caf9',
+                    setCustom: (v) => { this.responsibleColors[name] = v || ''; }
                 });
             });
         }
@@ -5530,21 +5728,16 @@ export class GanttNode extends BaseNode {
                     key: `groupColor_${name}`,
                     label: name,
                     swatchColor: this.groupColors[name] || 'transparent',
-                    type: 'select',
-                    options: [...COLOR_PALETTE, { value: '__custom__', label: 'Свой цвет...' }],
-                    get: () => {
+                    type: 'colorRole',
+                    presetOptions: COLOR_PALETTE,
+                    getPreset: () => {
                         const cur = this.groupColors[name];
                         if (!cur) return '';
                         return COLOR_PALETTE.some(p => p.value === cur) ? cur : '__custom__';
                     },
-                    set: (v) => { if (v !== '__custom__') this.groupColors[name] = v || ''; }
-                });
-                fields.push({
-                    key: `groupColorCustom_${name}`,
-                    label: `Свой цвет для «${name}» (если выбрано выше)`,
-                    type: 'color',
-                    get: () => this.groupColors[name] || '#90caf9',
-                    set: (v) => { this.groupColors[name] = v || ''; }
+                    setPreset: (v) => { this.groupColors[name] = v || ''; },
+                    getCustom: () => this.groupColors[name] || '#90caf9',
+                    setCustom: (v) => { this.groupColors[name] = v || ''; }
                 });
             });
         }

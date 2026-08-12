@@ -2642,6 +2642,25 @@ body {
     gap: 6px;
 }
 
+/* Раунд 180 (по жалобе Mr.D: "на первой строке флажок, на второй
+   текст, давай сделаем и текст и флажок на одной строке") - подпись и
+   сам чекбокс в ОДНУ строку (label слева, флажок справа) - .inspector-
+   field-control ниже уже flex со своим gap, здесь просто меняем
+   направление САМОГО .inspector-field и убираем перенос подписи. */
+.inspector-field.inspector-field-inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.inspector-field.inspector-field-inline .inspector-field-label {
+    flex: 1;
+    min-width: 0;
+}
+.inspector-field.inspector-field-inline .inspector-field-control {
+    flex: 0 0 auto;
+}
+
 .inspector-field-label {
     color: var(--md-text-secondary);
     font-size: 11px;
@@ -3609,6 +3628,63 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 .inspector-section-content {
     display: flex;
     flex-direction: column;
+    /* Раунд 181 (по жалобе Mr.D: "добавим пространства между строчками") -
+       раньше здесь НЕ БЫЛО gap вообще - соседние поля внутри
+       сворачиваемой секции стояли вплотную друг к другу. */
+    gap: 12px;
+}
+
+/* Раунд 181 (по жалобе Mr.D, с конкретным примером двух полей подряд
+   без видимой границы между ними: "давай добавим лёгкие сепараторы
+   внутри блоков, для разграничения") - тонкая линия СВЕРХУ у КАЖДОГО
+   поля, кроме первого в своём контейнере (`+` - соседний элемент,
+   естественно не совпадает для первого) - работает одинаково что на
+   верхнем уровне, что внутри сворачиваемой секции/под-блока (Раунд
+   181, inspector-subsection ниже), без привязки к конкретному
+   контейнеру. */
+.inspector-field + .inspector-field {
+    border-top: 1px solid var(--md-divider);
+    padding-top: 12px;
+}
+
+/* Раунд 181 (по запросу Mr.D: "у нас есть блоки 'колонка' и 'шапка',
+   но они не выделены в отдельный блок - создадим для них блоки") -
+   визуально обособленный под-блок ВНУТРИ уже сворачиваемой секции (не
+   ломает её collapse-состояние, в отличие от обычного 'section', см.
+   inspectorManager.js _renderSubsection()) - лёгкий фон + отступы,
+   собственный подзаголовок помельче основного. */
+.inspector-subsection {
+    background: var(--md-surface-2);
+    border-radius: var(--md-radius);
+    padding: 10px 12px;
+}
+.inspector-subsection-heading {
+    color: var(--md-text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+.inspector-subsection-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* Разделители полей ВНУТРИ под-блока - чуть тоньше отступ, чем снаружи,
+   раз сам под-блок уже даёт визуальную группировку фоном. */
+.inspector-subsection-content .inspector-field + .inspector-field {
+    padding-top: 10px;
+}
+
+/* Раунд 181 (по запросу Mr.D: "прессеты цветов давай сделаем не
+   текстом а цветом") - каждый <option> списка пресетов красится в СВОЙ
+   цвет через инлайн-style (JS, inspectorManager.js) - здесь только
+   убираем текст под цветом, чтобы сам квадратик читался чище (title
+   остаётся для подсказки по наведению/доступности). */
+.inspector-color-preset-select option {
+    color: transparent;
+    text-shadow: none;
 }
 
 /* Ручка растягивания ширины столбца (Раунд 93, чек-лист 1.7.21 п.4.1) -
@@ -3818,9 +3894,32 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     font-size: 12px;
     line-height: 1;
     color: var(--md-text-secondary);
-    cursor: default;
+    /* Раунд 180 (по запросу Mr.D: "задействовать ручку, чтобы строку
+       можно было перетащить схватившись за ручку") - grab/grabbing
+       вместо default - визуальная подсказка "это можно тащить",
+       которой не было, пока ручка только "глотала" клики. */
+    cursor: grab;
     user-select: none;
     z-index: 10;
+}
+.gantt-row-handle:active {
+    cursor: grabbing;
+}
+
+/* Раунд 180 - строка, которую сейчас тащат за ручку - приглушаем, чтобы
+   визуально отличалась от остальных (курсор уже над ручкой показывает
+   grabbing, этого дополнительно подчёркивает МЕСТО, откуда тащат). */
+.gantt-row-dragging {
+    opacity: 0.4;
+}
+/* Индикатор точки вставки - тонкая линия акцентным цветом сверху/снизу
+   строки, над/под которой сейчас находится курсор во время
+   перетаскивания - показывает, КУДА встанет строка при отпускании. */
+.gantt-row-drop-before {
+    box-shadow: inset 0 2px 0 0 var(--md-accent);
+}
+.gantt-row-drop-after {
+    box-shadow: inset 0 -2px 0 0 var(--md-accent);
 }
 
 /* Контекстное меню строки Диаграммы Ганта - самодостаточное, НЕ

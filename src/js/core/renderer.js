@@ -6,7 +6,7 @@
  * @file    renderer.js
  * @brief   Отрисовка SVG-линий соединений и подсветка сокетов
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

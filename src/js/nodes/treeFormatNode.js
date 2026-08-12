@@ -6,7 +6,7 @@
  * @file    treeFormatNode.js
  * @brief   Обработчик: оформление свода "Дерева" (формат/ширина/цвет полей), с сохранением иерархии
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

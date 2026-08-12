@@ -2503,6 +2503,20 @@ body {
     gap: 6px;
 }
 
+.inspector-field.inspector-field-inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.inspector-field.inspector-field-inline .inspector-field-label {
+    flex: 1;
+    min-width: 0;
+}
+.inspector-field.inspector-field-inline .inspector-field-control {
+    flex: 0 0 auto;
+}
+
 .inspector-field-label {
     color: var(--md-text-secondary);
     font-size: 11px;
@@ -3391,6 +3405,39 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 .inspector-section-content {
     display: flex;
     flex-direction: column;
+    gap: 12px;
+}
+
+.inspector-field + .inspector-field {
+    border-top: 1px solid var(--md-divider);
+    padding-top: 12px;
+}
+
+.inspector-subsection {
+    background: var(--md-surface-2);
+    border-radius: var(--md-radius);
+    padding: 10px 12px;
+}
+.inspector-subsection-heading {
+    color: var(--md-text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+.inspector-subsection-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.inspector-subsection-content .inspector-field + .inspector-field {
+    padding-top: 10px;
+}
+
+.inspector-color-preset-select option {
+    color: transparent;
+    text-shadow: none;
 }
 
 /* Ручка растягивания ширины столбца (Раунд 93) - парность со styles.css */
@@ -3583,9 +3630,21 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     font-size: 12px;
     line-height: 1;
     color: var(--md-text-secondary);
-    cursor: default;
+    cursor: grab;
     user-select: none;
     z-index: 10;
+}
+.gantt-row-handle:active {
+    cursor: grabbing;
+}
+.gantt-row-dragging {
+    opacity: 0.4;
+}
+.gantt-row-drop-before {
+    box-shadow: inset 0 2px 0 0 var(--md-accent);
+}
+.gantt-row-drop-after {
+    box-shadow: inset 0 -2px 0 0 var(--md-accent);
 }
 
 .gantt-row-context-menu {

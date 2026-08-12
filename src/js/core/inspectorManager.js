@@ -6,7 +6,7 @@
  * @file    inspectorManager.js
  * @brief   Боковая панель настроек выбранной ноды (цвет, формат значения и т.п.)
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -93,23 +93,58 @@ export class InspectorManager {
         // чисто сессионное UI-удобство, не часть данных проекта.
         if (!node._inspectorCollapsed) node._inspectorCollapsed = {};
 
+        // Раунд 181 (по запросу Mr.D: "у нас есть блоки 'колонка' и
+        // 'шапка', но они не выделены в отдельный блок - создадим для
+        // них блоки") - currentSubsection - ВЛОЖЕННАЯ группировка
+        // ВНУТРИ currentGroup (если есть) - в отличие от обычного
+        // 'section' (см. ниже), НЕ сбрасывает currentGroup - можно
+        // иметь несколько под-блоков подряд ВНУТРИ одной сворачиваемой
+        // секции, не разрывая её.
         let currentGroup = null; // {contentEl} - активная сворачиваемая секция, если есть
+        let currentSubsection = null; // {contentEl} - активный под-блок ВНУТРИ currentGroup, если есть
         schema.forEach(field => {
             if (field.type === 'section' && field.collapsible) {
                 currentGroup = this._renderCollapsibleSection(node, field);
                 this.bodyEl.appendChild(currentGroup.wrapper);
+                currentSubsection = null;
                 return;
             }
             if (field.type === 'section') {
                 currentGroup = null; // обычная (не сворачиваемая) секция сбрасывает группировку
+                currentSubsection = null;
+            }
+            if (field.type === 'subsection') {
+                currentSubsection = this._renderSubsection(field);
+                const target = currentGroup ? currentGroup.contentEl : this.bodyEl;
+                target.appendChild(currentSubsection.wrapper);
+                return;
             }
             const el = this.renderField(node, field);
-            if (currentGroup) {
-                currentGroup.contentEl.appendChild(el);
-            } else {
-                this.bodyEl.appendChild(el);
-            }
+            const target = currentSubsection ? currentSubsection.contentEl : (currentGroup ? currentGroup.contentEl : this.bodyEl);
+            target.appendChild(el);
         });
+    }
+
+    // Раунд 181 - визуально обособленный под-блок ВНУТРИ уже
+    // сворачиваемой секции (лёгкий фон, свой подзаголовок помельче) -
+    // НЕ сворачиваемый сам по себе (для этого уже есть 'section' с
+    // collapsible:true на ВЕРХНЕМ уровне) - просто визуальная
+    // группировка родственных полей (например, всех колонок диаграммы
+    // Ганта отдельно от всех строк шапки).
+    _renderSubsection(field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'inspector-subsection';
+
+        const heading = document.createElement('div');
+        heading.className = 'inspector-subsection-heading';
+        heading.textContent = field.label;
+        wrapper.appendChild(heading);
+
+        const contentEl = document.createElement('div');
+        contentEl.className = 'inspector-subsection-content';
+        wrapper.appendChild(contentEl);
+
+        return { wrapper, contentEl };
     }
 
     // Сворачиваемая секция (Раунд 90) - field.collapsed задаёт значение
@@ -192,6 +227,17 @@ export class InspectorManager {
 
         const row = document.createElement('div');
         row.className = 'inspector-field';
+        // Раунд 180 (по жалобе Mr.D: "не нравится как сейчас сделаны
+        // флажки в инспекторе, получается что на первой строке флажок,
+        // на второй текст, давай сделаем и текст и флажок на одной
+        // строке") - .inspector-field по умолчанию flex-column (подпись
+        // сверху, контрол снизу - разумно для текстовых/числовых полей с
+        // длинными подписями), но для ЧЕКБОКСА это лишняя высота без
+        // пользы - подпись короткая, сам чекбокс крошечный. Отдельный
+        // модификатор переводит ИМЕННО эту строку в горизонтальную
+        // раскладку (подпись слева, флажок справа - тот же приём, что
+        // уже привычен по чекбоксам в большинстве интерфейсов).
+        if (field.type === 'checkbox') row.classList.add('inspector-field-inline');
 
         const label = document.createElement('label');
         label.className = 'inspector-field-label';
@@ -223,7 +269,18 @@ export class InspectorManager {
             });
             input.value = field.get() ?? '';
             input.addEventListener('mousedown', (e) => e.stopPropagation());
-            input.addEventListener('change', (e) => this.applyChange(node, field, e.target.value));
+            // Раунд 183 (по запросу Mr.D: "панель для ввода должна
+            // появляться только если выбран соответствующий пункт") -
+            // раньше select НЕ перерисовывал панель после смены
+            // значения (в отличие от checkbox/colorRole и др.) - любое
+            // ДРУГОЕ поле, зависящее от ТЕКУЩЕГО значения этого select
+            // (см. periodPreset/customPeriodDays в ganttNode.js),
+            // появлялось/исчезало бы только при СЛЕДУЮЩЕМ, случайном
+            // перерендере панели, не сразу.
+            input.addEventListener('change', (e) => {
+                this.applyChange(node, field, e.target.value);
+                this.render();
+            });
             controlRow.appendChild(input);
         } else if (field.type === 'color') {
             const current = field.get();
@@ -243,6 +300,118 @@ export class InspectorManager {
             resetBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.applyChange(node, field, null);
+                this.render();
+            });
+            controlRow.appendChild(resetBtn);
+        } else if (field.type === 'colorRole') {
+            // Раунд 180/181 - [селектор цвета] (квадратик-образец в
+            // подписи, field.swatchColor) - [пресет цвета] - [сброс].
+            //
+            // Раунд 182 (по жалобе Mr.D: "селектор цвета сейчас не
+            // очень удобен... оставим выпадающий список и стрелку
+            // сброс. В выпадающий список добавим пункт 'Свой цвет',
+            // который будет вызывать селектор") - постоянно видимое
+            // поле произвольного цвета (Раунд 180) убрано - занимало
+            // место в строке ВСЕГДА, даже когда пользователь пользуется
+            // только готовой палитрой. Вместо этого - ОТДЕЛЬНЫЙ пункт
+            // "Свой цвет..." В САМОМ списке пресетов - выбор ИМЕННО
+            // этого пункта программно открывает нативный выбор цвета
+            // ОС/браузера (скрытый input[type=color], .click()) - поле
+            // "появляется" ТОЛЬКО когда реально нужно.
+            const presetSelect = document.createElement('select');
+            presetSelect.className = 'inspector-field-input inspector-color-preset-select';
+            const CUSTOM_OPTION_VALUE = '__custom__';
+            const allOptions = [...(field.presetOptions || []), { value: CUSTOM_OPTION_VALUE, label: 'Свой цвет...' }];
+            allOptions.forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt.value;
+                o.textContent = opt.label;
+                o.title = opt.label;
+                // "Без цвета" и "Свой цвет..." - оба без осмысленной
+                // заливки (у "Свой цвет..." нет ОДНОГО конкретного
+                // цвета показать заранее) - текст явно видимый для
+                // обоих, остальные - чистая заливка без текста.
+                if (opt.value && opt.value !== CUSTOM_OPTION_VALUE) {
+                    o.style.backgroundColor = opt.value;
+                } else {
+                    // Раунд 183 (по жалобе Mr.D: "в тёмной схеме 'Без
+                    // цвета' и 'свой цвет' серый на сером - надо
+                    // изменить цвет фона под текстом") - раньше менялся
+                    // ТОЛЬКО цвет текста (var(--md-text-secondary)),
+                    // фон оставался дефолтным системным - в тёмной теме
+                    // это давало недостаточный контраст. var(--md-surface-3)
+                    // (не -variant/-2 - заметно светлее фона самого
+                    // select) + var(--md-text) (не -secondary - полный
+                    // контраст, не приглушённый) - работает одинаково
+                    // хорошо в обеих темах через CSS-переменные, без
+                    // отдельного вычисления под каждую.
+                    o.style.backgroundColor = 'var(--md-surface-3)';
+                    o.style.color = 'var(--md-text)';
+                }
+                presetSelect.appendChild(o);
+            });
+            // field.getPreset() (см. ganttNode.js) теперь возвращает
+            // '__custom__', если ТЕКУЩИЙ цвет не входит в готовую
+            // палитру - список корректно показывает "Свой цвет..."
+            // выбранным, когда активен именно произвольный цвет.
+            const currentPresetValue = field.getPreset ? (field.getPreset() ?? '') : '';
+            presetSelect.value = currentPresetValue;
+            presetSelect.style.backgroundColor = (currentPresetValue && currentPresetValue !== CUSTOM_OPTION_VALUE)
+                ? currentPresetValue
+                : (currentPresetValue === CUSTOM_OPTION_VALUE ? ((field.getCustom ? field.getCustom() : null) || '') : '');
+            presetSelect.addEventListener('mousedown', (e) => e.stopPropagation());
+            presetSelect.addEventListener('change', (e) => {
+                if (e.target.value === CUSTOM_OPTION_VALUE) {
+                    // Скрытый input[type=color] - НЕ часть видимой
+                    // строки, существует ровно на время выбора цвета.
+                    // Должен побывать в DOM (append), чтобы .click()
+                    // надёжно открывал нативный диалог во всех браузерах/
+                    // Electron - убирается сразу после использования.
+                    const hiddenColorInput = document.createElement('input');
+                    hiddenColorInput.type = 'color';
+                    hiddenColorInput.value = (field.getCustom ? field.getCustom() : null) || '#90caf9';
+                    // Раунд 183 (по жалобе Mr.D: "селектор появляется в
+                    // 0,0 экрана, должен ловить положение курсора") -
+                    // без явных left/top position:fixed якорится в
+                    // (0,0) - нативный диалог выбора цвета браузер/ОС
+                    // открывает РЯДОМ С САМИМ ЭЛЕМЕНТОМ, поэтому именно
+                    // ЕГО позиция и должна быть верной, не просто
+                    // "где-то на экране". getBoundingClientRect() САМОГО
+                    // select - надёжнее, чем ловить координаты клика
+                    // (работает одинаково и для мыши, и для выбора
+                    // клавиатурой, где отдельного клика вообще нет).
+                    const selectRect = presetSelect.getBoundingClientRect();
+                    hiddenColorInput.style.position = 'fixed';
+                    hiddenColorInput.style.left = `${selectRect.left}px`;
+                    hiddenColorInput.style.top = `${selectRect.top}px`;
+                    hiddenColorInput.style.opacity = '0';
+                    hiddenColorInput.style.pointerEvents = 'none';
+                    hiddenColorInput.style.width = '0';
+                    hiddenColorInput.style.height = '0';
+                    document.body.appendChild(hiddenColorInput);
+                    hiddenColorInput.addEventListener('input', (ev) => {
+                        field.setCustom(ev.target.value);
+                    });
+                    hiddenColorInput.addEventListener('change', () => {
+                        hiddenColorInput.remove();
+                        this.render();
+                    });
+                    hiddenColorInput.click();
+                } else {
+                    field.setPreset(e.target.value);
+                    this.render();
+                }
+            });
+            controlRow.appendChild(presetSelect);
+
+            const resetBtn = document.createElement('button');
+            resetBtn.className = 'inspector-reset-btn';
+            resetBtn.textContent = '↺';
+            resetBtn.title = 'Сбросить (без цвета)';
+            resetBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            resetBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                field.setPreset('');
                 this.render();
             });
             controlRow.appendChild(resetBtn);

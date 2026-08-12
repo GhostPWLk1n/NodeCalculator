@@ -6,7 +6,7 @@
  * @file    booleanOperationNode.js
  * @brief   Логическая операция (И/ИЛИ/НЕ/искл.ИЛИ) над несколькими Bool-входами
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -10,7 +10,7 @@
  *          "модуль узла gantt_node_js получился очень громоздким, надо
  *          его разбить, разнести логику, вынести математику отдельно").
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  *
  * ЕДИНЫЙ ПРИНЦИП ХРАНЕНИЯ ДАТ (по прямому указанию Mr.D, Раунд 141):

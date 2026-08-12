@@ -6,7 +6,7 @@
  * @file    exportJsonNode.js
  * @brief   Экспорт подключённой таблицы (Data) в .json по кнопке
  * @author  Pavel Fomin
- * @version 1.8.58
+ * @version 1.8.62
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
