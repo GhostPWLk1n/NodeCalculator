@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

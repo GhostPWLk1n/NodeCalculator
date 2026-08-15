@@ -6,7 +6,7 @@
  * @file    ganttCalendarExport.js
  * @brief   Сборка сетки {value,color,border} для экспорта GanttNode в Excel-календарь - обратный механизм к GanttTableProcessorNode
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

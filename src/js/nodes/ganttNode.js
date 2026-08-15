@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

@@ -6,7 +6,7 @@
  * @file    sidebarSettings.js
  * @brief   Настройки сайдбара - показ/скрытие нод, конфигурации, экспорт/импорт
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -154,10 +154,17 @@ export const SidebarSettings = {
         });
 
         // Раунд 123 (релиз 1.8.0, "стартап-конфиги") - переключение
-        // вкладок "Сайдбар"/"Запуск" - просто показывает/скрывает два
-        // уже готовых блока разметки, ничего не пересоздаёт.
-        const tabBtns = [document.getElementById('settingsTabBtnSidebar'), document.getElementById('settingsTabBtnStartup')];
+        // вкладок "Сайдбар"/"Запуск" - просто показывает/скрывает уже
+        // готовые блоки разметки, ничего не пересоздаёт. Раунд 184 -
+        // добавлена третья вкладка "Проекты" - тот же приём, список
+        // просто расширен.
+        const tabBtns = [
+            document.getElementById('settingsTabBtnProjects'),
+            document.getElementById('settingsTabBtnSidebar'),
+            document.getElementById('settingsTabBtnStartup')
+        ];
         const tabPanels = {
+            projects: document.getElementById('settingsTabProjects'),
             sidebar: document.getElementById('settingsTabSidebar'),
             startup: document.getElementById('settingsTabStartup')
         };
@@ -168,7 +175,63 @@ export const SidebarSettings = {
                 Object.entries(tabPanels).forEach(([key, panel]) => {
                     panel.style.display = key === tabBtn.dataset.tab ? '' : 'none';
                 });
+                // Раунд 184 - список недавних проектов может устареть,
+                // пока модалка открыта на ДРУГОЙ вкладке (сохранили в
+                // это время) - перечитываем при КАЖДОМ переключении НА
+                // вкладку "Проекты", не только при открытии всей модалки.
+                if (tabBtn.dataset.tab === 'projects') renderRecentProjects();
             });
+        });
+
+        // Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов -
+        // панель/список недавно сохранённых проектов с быстрым
+        // открытием") - список читается из main-процесса (userData,
+        // см. main.js) при каждом открытии - там же отсеиваются пути,
+        // которых уже физически нет на диске (см.
+        // pruneMissingRecentProjects()).
+        async function renderRecentProjects() {
+            const listEl = document.getElementById('settingsRecentProjectsList');
+            const hintEl = document.getElementById('settingsProjectsHint');
+            if (!listEl || !window.electron?.getRecentProjects) return;
+            const recent = await window.electron.getRecentProjects();
+            listEl.innerHTML = '';
+            if (!recent || recent.length === 0) {
+                if (hintEl) hintEl.textContent = 'Пока нет недавних проектов - сохраните текущий, чтобы он появился здесь.';
+                return;
+            }
+            if (hintEl) hintEl.textContent = '';
+            recent.forEach(entry => {
+                const row = document.createElement('div');
+                row.className = 'sidebar-settings-item-row';
+                row.title = entry.path;
+
+                const nameEl = document.createElement('span');
+                nameEl.textContent = entry.name;
+                nameEl.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                row.appendChild(nameEl);
+
+                const dateEl = document.createElement('span');
+                dateEl.textContent = new Date(entry.lastOpened).toLocaleDateString('ru-RU');
+                dateEl.style.cssText = 'color: var(--md-text-disabled); font-size: 10px; flex-shrink: 0;';
+                row.appendChild(dateEl);
+
+                row.addEventListener('click', () => {
+                    window.electron.openRecentProject(entry.path);
+                    document.getElementById('sidebarSettingsModal').style.display = 'none';
+                });
+                listEl.appendChild(row);
+            });
+        }
+        renderRecentProjects();
+
+        document.getElementById('settingsNewProjectBtn')?.addEventListener('click', () => {
+            if (window.clearWorkspace) window.clearWorkspace();
+            window.electron?.resetCurrentProject?.();
+            document.getElementById('sidebarSettingsModal').style.display = 'none';
+        });
+        document.getElementById('settingsOpenProjectBtn')?.addEventListener('click', () => {
+            window.loadProject?.();
+            document.getElementById('sidebarSettingsModal').style.display = 'none';
         });
 
         // Раунд 123 - "Сохранить текущее как стартовое" - собирает ТЕ ЖЕ

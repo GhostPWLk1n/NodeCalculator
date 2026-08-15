@@ -6,7 +6,7 @@
  * @file    xlsxImportNode.js
  * @brief   Обработчик: импорт выбранных листа/столбцов из .xlsx - на выходе DATA
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

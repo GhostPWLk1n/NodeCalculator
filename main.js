@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Electron main-процесс: создание окна, меню, IPC-обработчики сохранения/загрузки .ncp и экспорта изображения
  * @author  Pavel Fomin
- * @version 1.8.46
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -32,6 +32,20 @@ app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 
 let mainWindow;
+// Раунд 184 (по запросу Mr.D: "Сохранить - работает только если у
+// проекта есть имя. Сохраняет поверх текущего файла. Сохранить как -
+// всегда открывает диалог") - путь ТЕКУЩЕГО проекта - null, пока
+// проект НИ РАЗУ не был сохранён/загружен из конкретного файла (только
+// что открытое пустое рабочее пространство, или дефолтное стартовое -
+// то физически ДРУГОЙ путь, см. getAppDataWorkspacePath(), не считается
+// "именованным проектом" для целей этой логики).
+let currentProjectPath = null;
+// Раунд 184 - dirty-флаг синхронизируется ИЗ рендерера (там происходят
+// реальные правки проекта - main.js/nodeManager.js шлют 'mark-dirty' на
+// каждое содержательное изменение, см. src/js/main.js) - здесь только
+// ХРАНИТСЯ, чтобы диалог закрытия (следующий раунд) и заголовок окна
+// могли его читать без лишнего IPC-обмена туда-обратно.
+let isProjectDirty = false;
 
 // Раунд 129 (по подтверждению Mr.D: ошибки disk_cache из Раунда 128
 // были вызваны именно повторным запуском - второй процесс пытался
@@ -94,6 +108,183 @@ function findDefaultWorkspacePath() {
     return null;
 }
 
+// Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов - панель/
+// список недавно сохранённых проектов с быстрым открытием") - JSON-файл
+// в userData (переживает переустановку, тот же принцип, что уже
+// применён к getAppDataWorkspacePath() выше) - массив {path, name,
+// lastOpened} - по одной записи на файл (не на каждое открытие -
+// повторное открытие того же файла ОБНОВЛЯЕТ его lastOpened и
+// поднимает наверх списка, не дублирует запись), максимум 10 штук.
+const RECENT_PROJECTS_LIMIT = 10;
+function getRecentProjectsPath() {
+    return path.join(app.getPath('userData'), 'recent-projects.json');
+}
+function readRecentProjects() {
+    try {
+        const raw = fs.readFileSync(getRecentProjectsPath(), 'utf8');
+        const list = JSON.parse(raw);
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return []; // файла ещё нет (первый запуск) или он повреждён - пустой список, не падаем
+    }
+}
+function writeRecentProjects(list) {
+    try {
+        fs.writeFileSync(getRecentProjectsPath(), JSON.stringify(list, null, 2));
+    } catch (error) {
+        console.error('Не удалось сохранить список недавних проектов:', error.message);
+    }
+}
+// Добавляет/поднимает filePath в начало списка - вызывается ПОСЛЕ
+// КАЖДОГО успешного сохранения/загрузки конкретного файла (не
+// дефолтного рабочего пространства - у того своя, отдельная механика).
+function touchRecentProject(filePath) {
+    const list = readRecentProjects().filter(entry => entry.path !== filePath);
+    list.unshift({ path: filePath, name: path.basename(filePath, '.ncp'), lastOpened: Date.now() });
+    writeRecentProjects(list.slice(0, RECENT_PROJECTS_LIMIT));
+}
+// Убирает запись, если сам файл на диске больше не существует (был
+// удалён/перемещён ВНЕ программы) - вызывается перед КАЖДОЙ отдачей
+// списка в рендерер, чтобы панель никогда не показывала "мёртвые" пути.
+function pruneMissingRecentProjects() {
+    const list = readRecentProjects().filter(entry => fs.existsSync(entry.path));
+    writeRecentProjects(list);
+    return list;
+}
+
+// Раунд 184 (по запросу Mr.D: dirty-флаг в заголовке - стандартная
+// практика "звёздочка/точка у названия файла, пока не сохранено") -
+// заголовок окна ВСЕГДА отражает currentProjectPath/isProjectDirty,
+// обновляется при любом изменении любого из них (см. вызовы ниже).
+function updateWindowTitle() {
+    if (!mainWindow) return;
+    const name = currentProjectPath ? path.basename(currentProjectPath, '.ncp') : 'Без названия';
+    const dirtyMark = isProjectDirty ? ' •' : '';
+    mainWindow.setTitle(`${name}${dirtyMark} — NodeCalculate`);
+}
+
+// Раунд 185 (по запросу Mr.D: "Автосохранение по времени - полная
+// сериализация проекта в папку AutoSave/ с временной меткой") -
+// применяется ТОЛЬКО к БЕЗЫМЯННЫМ проектам (у именованных - своя схема,
+// .ncptemp РЯДОМ с реальным файлом, см. performAutosave() ниже) -
+// снимки со штампом времени в имени, старые излишки подчищаются
+// (AUTOSAVE_SNAPSHOTS_LIMIT), чтобы папка не росла бесконечно за много
+// сессий работы с безымянными проектами.
+const AUTOSAVE_INTERVAL_MS = 2 * 60 * 1000; // 2 минуты
+const AUTOSAVE_SNAPSHOTS_LIMIT = 5;
+function getAutoSaveDir() {
+    return path.join(app.getPath('userData'), 'AutoSave');
+}
+function ensureAutoSaveDir() {
+    const dir = getAutoSaveDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+function pruneOldAutosaveSnapshots(dir) {
+    try {
+        const files = fs.readdirSync(dir)
+            .filter(f => f.endsWith('.ncp'))
+            .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime); // новые первыми
+        files.slice(AUTOSAVE_SNAPSHOTS_LIMIT).forEach(f => fs.unlinkSync(path.join(dir, f.name)));
+    } catch (error) {
+        console.error('Не удалось подчистить старые автосохранения:', error.message);
+    }
+}
+
+// Раунд 185 (по запросу Mr.D: "Восстановление после сбоя - при запуске
+// проверять наличие AutoSave и предлагать восстановить последнюю
+// версию") - currentProjectPath живёт ТОЛЬКО в памяти текущего
+// процесса - при аварийном завершении (не через штатный close/forceQuit)
+// эта информация терялась бы безвозвратно, и при следующем запуске
+// программа не знала бы, у КАКОГО именно именованного проекта
+// проверять .ncptemp рядом с ним. Небольшой файл в userData - "какой
+// путь был открыт последним" - переживает даже аварийное завершение
+// (пишется СРАЗУ при открытии/сохранении, не при выходе).
+function getLastSessionPath() {
+    return path.join(app.getPath('userData'), 'last-session.json');
+}
+function readLastSessionProjectPath() {
+    try {
+        const data = JSON.parse(fs.readFileSync(getLastSessionPath(), 'utf8'));
+        return data?.path || null;
+    } catch {
+        return null;
+    }
+}
+function writeLastSessionProjectPath(filePath) {
+    try {
+        fs.writeFileSync(getLastSessionPath(), JSON.stringify({ path: filePath }));
+    } catch (error) {
+        console.error('Не удалось запомнить путь текущей сессии:', error.message);
+    }
+}
+
+// Раунд 185 (по запросу Mr.D: "Восстановление после сбоя - при
+// запуске проверять наличие AutoSave и предлагать восстановить
+// последнюю версию") - ДВА независимых источника кандидатов:
+// 1) .ncptemp РЯДОМ с последним известным ИМЕНОВАННЫМ проектом
+//    (readLastSessionProjectPath() - переживает даже аварийное
+//    завершение, пишется СРАЗУ при открытии/сохранении) - в приоритете,
+//    раз он привязан к КОНКРЕТНОМУ, узнаваемому пользователем файлу;
+// 2) самый свежий снимок в общей AutoSave/ - для БЕЗЫМЯННЫХ проектов
+//    (у тех попросту нет своего .ncptemp - не рядом с чем его класть).
+// Возвращает true, если пользователь согласился и восстановление
+// прошло успешно (тогда дефолтное рабочее пространство подгружать не
+// нужно - см. вызов в createWindow()).
+async function checkForRecovery() {
+    const lastPath = readLastSessionProjectPath();
+    let candidatePath = null;
+    let candidateLabel = null;
+    let candidateForNamed = null; // если кандидат - .ncptemp именованного проекта, запоминаем ЕГО путь отдельно
+
+    if (lastPath && fs.existsSync(`${lastPath}.ncptemp`)) {
+        candidatePath = `${lastPath}.ncptemp`;
+        candidateLabel = path.basename(lastPath, '.ncp');
+        candidateForNamed = lastPath;
+    } else {
+        const dir = getAutoSaveDir();
+        if (fs.existsSync(dir)) {
+            const files = fs.readdirSync(dir)
+                .filter(f => f.endsWith('.ncp'))
+                .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime);
+            if (files.length > 0) {
+                candidatePath = path.join(dir, files[0].name);
+                candidateLabel = 'безымянный проект';
+            }
+        }
+    }
+
+    if (!candidatePath) return false;
+
+    const result = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Восстановить', 'Не восстанавливать'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Обнаружено автосохранение',
+        message: `Похоже, программа завершилась некорректно в прошлый раз. Найдена несохранённая версия "${candidateLabel}" - восстановить её?`
+    });
+    if (result.response !== 0) return false;
+
+    try {
+        const data = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+        mainWindow.webContents.send('load-project', data);
+        // Восстановленные данные ИЗ БЭКАПА, не из самого .ncp на диске
+        // (если это был .ncptemp именованного проекта) - помечаем
+        // изменённым, чтобы пользователь не забыл сохранить поверх РЕАЛЬНОГО
+        // файла явно, а не просто продолжил работу как ни в чём не бывало.
+        if (candidateForNamed) currentProjectPath = candidateForNamed;
+        isProjectDirty = true;
+        updateWindowTitle();
+        return true;
+    } catch (error) {
+        dialog.showErrorBox('Ошибка восстановления', error.message);
+        return false;
+    }
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1400,
@@ -112,13 +303,20 @@ function createWindow() {
 
     mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
 
-    // Раунд 123 - если сохранено дефолтное рабочее пространство,
-    // загружаем его АВТОМАТИЧЕСКИ при старте - тем же событием
-    // 'load-project', что и обычная ручная загрузка (рендерер не
-    // должен знать разницу, см. preload.js). did-finish-load (не
-    // ready-to-show) - нужно, чтобы к этому моменту скрипты рендерера
-    // (main.js, регистрирующий onLoadProject) уже успели выполниться.
-    mainWindow.webContents.once('did-finish-load', () => {
+    // Раунд 185 (по запросу Mr.D: "Восстановление после сбоя - при
+    // запуске проверять наличие AutoSave и предлагать восстановить
+    // последнюю версию") - проверяется ПЕРВЫМ, ДО дефолтного рабочего
+    // пространства (Раунд 123, ниже) - если пользователь согласился
+    // восстановиться, дефолтное пространство загружать уже не нужно.
+    // did-finish-load (не ready-to-show) - нужно, чтобы к этому
+    // моменту скрипты рендерера (main.js, регистрирующий onLoadProject)
+    // уже успели выполниться - тем же событием 'load-project', что и
+    // обычная ручная загрузка (рендерер не должен знать разницу, см.
+    // preload.js).
+    mainWindow.webContents.once('did-finish-load', async () => {
+        const recovered = await checkForRecovery();
+        if (recovered) return;
+
         const foundPath = findDefaultWorkspacePath();
         if (foundPath) {
             try {
@@ -133,11 +331,32 @@ function createWindow() {
     // Показываем окно после загрузки
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
+        // Раунд 184 - изначальный заголовок ("Без названия") -
+        // дефолтное рабочее пространство (см. did-finish-load выше)
+        // сознательно НЕ считается "именованным проектом" - у него свой
+        // отдельный путь (default-workspace.ncp), не currentProjectPath.
+        updateWindowTitle();
     });
 
     // Создаем меню
     const menu = Menu.buildFromTemplate(getMenuTemplate());
     Menu.setApplicationMenu(menu);
+
+    // Раунд 185 (по запросу Mr.D: "Диалог закрытия программы - при
+    // нажатии на крестик появляется окно с выбором действия") - 'close'
+    // (не 'closed' - тот срабатывает УЖЕ ПОСЛЕ того, как окно закрыто,
+    // отменить нечего) - event.preventDefault() останавливает закрытие,
+    // пока пользователь не ответит на диалог. isQuitting - обходной
+    // флаг: forceQuit() (см. ниже) сам вызывает mainWindow.close(),
+    // что СНОВА порождает это же событие - без флага получилась бы
+    // бесконечная петля "закрыть -> диалог -> Сохранить и выйти ->
+    // close() -> закрыть -> диалог -> ...".
+    mainWindow.on('close', (event) => {
+        if (isQuitting) return; // уже решили действительно закрыться - пропускаем без вопросов
+        if (!isProjectDirty) return; // нечего сохранять - закрываем как обычно, без диалога
+        event.preventDefault();
+        handleCloseRequest();
+    });
 
     mainWindow.on('closed', () => {
         mainWindow = null;
@@ -153,6 +372,14 @@ function getMenuTemplate() {
                     label: 'Сохранить проект',
                     accelerator: 'CmdOrCtrl+S',
                     click: () => saveProject()
+                },
+                {
+                    // Раунд 184 (по запросу Mr.D: "Сохранить как - всегда
+                    // открывает диалог") - без своего accelerator -
+                    // Ctrl+Shift+S уже занят "Экспорт как изображение"
+                    // (ниже), менять устоявшуюся комбинацию рискованно.
+                    label: 'Сохранить проект как...',
+                    click: () => saveProjectAs()
                 },
                 {
                     label: 'Загрузить проект',
@@ -175,6 +402,13 @@ function getMenuTemplate() {
                 },
                 { type: 'separator' },
                 {
+                    // Раунд 185 - app.quit() САМ пытается закрыть окно
+                    // (документированное поведение Electron - "Try to
+                    // close all windows"), что штатно порождает событие
+                    // 'close' у mainWindow - уже перехватывается в
+                    // createWindow() выше (handleCloseRequest()) - этому
+                    // пункту меню НЕ нужна собственная copy-paste логика
+                    // проверки несохранённых изменений.
                     label: 'Выйти',
                     accelerator: 'CmdOrCtrl+Q',
                     click: () => app.quit()
@@ -220,10 +454,61 @@ function getMenuTemplate() {
 }
 
 // --- Сохранение проекта ---
+
+// Раунд 184 - общая точка ЗАПИСИ (без диалога) - переиспользуется и
+// "Сохранить" (путь уже известен), и "Сохранить как" (путь только что
+// выбран в диалоге) - единая логика записи+статус+recent-list+заголовок,
+// не дублируется в двух местах.
+function writeProjectToPath(filePath, data) {
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        currentProjectPath = filePath;
+        isProjectDirty = false;
+        touchRecentProject(filePath);
+        writeLastSessionProjectPath(filePath);
+        // Раунд 185 (по запросу Mr.D: "Схема бэкапов - если файл
+        // сохранён, при автосохранении создаётся бэкап с расширением
+        // .ncptemp") - явное сохранение только что записало САМЫЙ
+        // свежий вариант в РЕАЛЬНЫЙ файл - любой оставшийся .ncptemp
+        // рядом с ним теперь устарел и только сбивал бы с толку при
+        // следующей проверке восстановления после сбоя.
+        const backupPath = `${filePath}.ncptemp`;
+        if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+        updateWindowTitle();
+        mainWindow.webContents.send('project-saved', { filePath, name: path.basename(filePath, '.ncp') });
+        mainWindow.webContents.send('status-update', '💾 Проект сохранён');
+        return true;
+    } catch (error) {
+        dialog.showErrorBox('Ошибка', `Не удалось сохранить файл: ${error.message}`);
+        return false;
+    }
+}
+
+// Раунд 184 (по запросу Mr.D: "Сохранить - работает только если у
+// проекта есть имя. Сохраняет поверх текущего файла") - если
+// currentProjectPath уже известен - тихая перезапись, БЕЗ диалога.
+// Если проект ещё безымянный (новый/только в AutoSave) - равносильно
+// "Сохранить как" (диалог всё равно нужен - записывать физически
+// некуда, пути ещё нет).
 async function saveProject() {
+    if (currentProjectPath) {
+        ipcMain.removeAllListeners('project-data');
+        ipcMain.once('project-data', (event, data) => {
+            writeProjectToPath(currentProjectPath, data);
+        });
+        mainWindow.webContents.send('get-project-data');
+        return;
+    }
+    await saveProjectAs();
+}
+
+// Раунд 184 (по запросу Mr.D: "Сохранить как - всегда открывает диалог
+// выбора имени и папки") - вне зависимости от того, именован ли уже
+// проект.
+async function saveProjectAs() {
     const result = await dialog.showSaveDialog(mainWindow, {
-        title: 'Сохранить проект',
-        defaultPath: 'project.ncp',
+        title: 'Сохранить проект как',
+        defaultPath: currentProjectPath || 'project.ncp',
         filters: [
             { name: 'NodeCalculate Project', extensions: ['ncp'] }
         ]
@@ -234,15 +519,121 @@ async function saveProject() {
         // иначе при повторном сохранении данные запишутся несколько раз
         ipcMain.removeAllListeners('project-data');
         ipcMain.once('project-data', (event, data) => {
-            try {
-                fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2));
-                mainWindow.webContents.send('status-update', '💾 Проект сохранен');
-            } catch (error) {
-                dialog.showErrorBox('Ошибка', `Не удалось сохранить файл: ${error.message}`);
-            }
+            writeProjectToPath(result.filePath, data);
         });
         mainWindow.webContents.send('get-project-data');
     }
+}
+
+// Раунд 185 (по запросу Mr.D: "Диалог закрытия программы... Всегда
+// есть варианты: Сохранить и выйти, Сохранить как, Выйти без
+// сохранения, Отмена") - isQuitting - см. докстринг у
+// mainWindow.on('close', ...) в createWindow() - предотвращает
+// бесконечную петлю, когда forceQuit() сам инициирует повторное
+// закрытие окна.
+let isQuitting = false;
+function forceQuit() {
+    isQuitting = true;
+    mainWindow.close();
+}
+
+// Раунд 185 - общая точка запроса данных проекта + записи, С
+// колбэком "что делать после" - используется ОБОИМИ путями диалога
+// закрытия (у каждого своя целевая ситуация: путь уже известен -
+// просто перезаписать; путь ещё не выбран - сперва спросить его).
+function requestProjectDataAndWrite(filePath, onDone) {
+    ipcMain.removeAllListeners('project-data');
+    ipcMain.once('project-data', (event, data) => {
+        const ok = writeProjectToPath(filePath, data);
+        if (onDone) onDone(ok);
+    });
+    mainWindow.webContents.send('get-project-data');
+}
+
+// "Сохранить и выйти" - если проект уже именован, тихая перезапись (та
+// же логика, что у обычного saveProject()) + выход СРАЗУ после
+// успешной записи. Если НЕ именован - физически некуда писать без
+// диалога, поэтому равносильно "Сохранить как".
+function saveThenQuit() {
+    if (!currentProjectPath) { saveAsThenQuit(); return; }
+    requestProjectDataAndWrite(currentProjectPath, (ok) => {
+        // ok===false - writeProjectToPath() уже показал dialog.showErrorBox
+        // сам - НЕ выходим молча при неудачной записи, иначе пользователь
+        // потерял бы несохранённые изменения, даже не поняв этого.
+        if (ok) forceQuit();
+    });
+}
+
+// "Сохранить как" (из диалога закрытия) - ВСЕГДА диалог выбора пути,
+// затем выход после успешной записи. Отмена диалога "Сохранить как" -
+// НЕ закрывает окно (пользователь мог передумать посреди выбора имени,
+// не обязательно "не хочу сохранять вообще").
+async function saveAsThenQuit() {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Сохранить проект как',
+        defaultPath: currentProjectPath || 'project.ncp',
+        filters: [{ name: 'NodeCalculate Project', extensions: ['ncp'] }]
+    });
+    if (result.canceled || !result.filePath) return;
+    requestProjectDataAndWrite(result.filePath, (ok) => {
+        if (ok) forceQuit();
+    });
+}
+
+async function handleCloseRequest() {
+    const result = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Сохранить и выйти', 'Сохранить как', 'Выйти без сохранения', 'Отмена'],
+        defaultId: 0,
+        cancelId: 3,
+        title: 'Несохранённые изменения',
+        message: 'В проекте есть несохранённые изменения. Что сделать перед выходом?'
+    });
+    switch (result.response) {
+        case 0: saveThenQuit(); break;
+        case 1: saveAsThenQuit(); break;
+        case 2: forceQuit(); break;
+        // case 3 (Отмена) и любой другой способ закрыть сам диалог
+        // (Esc, крестик) - ничего не делаем, окно остаётся открытым.
+    }
+}
+
+// Раунд 185 (по запросу Mr.D: "Автосохранение по времени - полная
+// сериализация проекта в папку AutoSave/ с временной меткой", "Схема
+// бэкапов - если файл сохранён, при автосохранении создаётся бэкап с
+// расширением .ncptemp по стандартной схеме") - отдельный IPC-канал
+// (НЕ 'project-data'/'get-project-data' - те заняты явным
+// сохранением, см. saveProject()/saveProjectAs() выше - случайное
+// пересечение removeAllListeners() между автосохранением и явным
+// "Сохранить", происходящими примерно одновременно, испортило бы
+// ОБА). НЕ трогает isProjectDirty/currentProjectPath/recent-projects/
+// заголовок окна - это НЕ "настоящее" сохранение с точки зрения
+// пользователя, а фоновая страховка на случай сбоя.
+function performAutosave() {
+    if (!mainWindow || !isProjectDirty) return; // нечего страховать - изменений с прошлого сохранения нет
+    ipcMain.removeAllListeners('project-data-autosave');
+    ipcMain.once('project-data-autosave', (event, data) => {
+        try {
+            const json = JSON.stringify(data, null, 2);
+            if (currentProjectPath) {
+                // Именованный проект - бэкап РЯДОМ с реальным файлом
+                // (не в общей AutoSave/) - .ncptemp того же имени,
+                // прямая привязка к конкретному проекту, не нужно
+                // искать "какой из снимков чей".
+                fs.writeFileSync(`${currentProjectPath}.ncptemp`, json);
+            } else {
+                // Безымянный проект - общая папка AutoSave/, снимок со
+                // штампом времени в имени (см. checkForRecovery() -
+                // самый свежий и предлагается для восстановления).
+                const dir = ensureAutoSaveDir();
+                fs.writeFileSync(path.join(dir, `autosave-${Date.now()}.ncp`), json);
+                pruneOldAutosaveSnapshots(dir);
+            }
+        } catch (error) {
+            console.error('Автосохранение не удалось:', error.message);
+        }
+    });
+    mainWindow.webContents.send('get-project-data-autosave');
 }
 
 // --- Загрузка проекта ---
@@ -256,13 +647,27 @@ async function loadProject() {
     });
 
     if (!result.canceled && result.filePaths.length > 0) {
-        try {
-            const data = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
-            mainWindow.webContents.send('load-project', data);
-            mainWindow.webContents.send('status-update', '📂 Проект загружен');
-        } catch (error) {
-            dialog.showErrorBox('Ошибка', `Не удалось загрузить файл: ${error.message}`);
-        }
+        openProjectFromPath(result.filePaths[0]);
+    }
+}
+
+// Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов - панель
+// недавно сохранённых проектов с быстрым открытием") - общая точка
+// ОТКРЫТИЯ конкретного пути - переиспользуется и обычной загрузкой
+// (диалог выбора файла, выше), и открытием из панели недавних проектов
+// (там путь уже известен, диалог не нужен).
+function openProjectFromPath(filePath) {
+    try {
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        currentProjectPath = filePath;
+        isProjectDirty = false;
+        touchRecentProject(filePath);
+        writeLastSessionProjectPath(filePath);
+        updateWindowTitle();
+        mainWindow.webContents.send('load-project', data);
+        mainWindow.webContents.send('status-update', '📂 Проект загружен');
+    } catch (error) {
+        dialog.showErrorBox('Ошибка', `Не удалось загрузить файл: ${error.message}`);
     }
 }
 
@@ -306,8 +711,47 @@ function showAbout() {
 // кнопки "Сохранить"/"Загрузить" не работали - диалоги открывались
 // только из меню приложения
 ipcMain.on('request-save-project', () => saveProject());
+ipcMain.on('request-save-project-as', () => saveProjectAs());
 ipcMain.on('request-load-project', () => loadProject());
 ipcMain.on('request-export-image', () => exportImage());
+
+// Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов - панель/
+// список недавно сохранённых проектов с быстрым открытием") - список
+// отдаётся ПОСЛЕ pruneMissingRecentProjects() (см. выше) - панель в
+// рендерере никогда не увидит путь к файлу, которого уже физически нет
+// на диске. Открытие - тот же openProjectFromPath(), что и у обычного
+// диалога "Загрузить проект", просто путь уже известен заранее.
+ipcMain.handle('get-recent-projects', () => pruneMissingRecentProjects());
+ipcMain.on('open-recent-project', (event, filePath) => openProjectFromPath(filePath));
+
+// Раунд 184 - рендерер сам решает, КОГДА считать проект "изменённым"
+// (см. src/js/main.js, markProjectDirty()) - main только хранит флаг
+// (для заголовка окна/будущего диалога закрытия) и держит его в
+// синхронизации с currentProjectPath (свежезагруженный/только что
+// сохранённый проект - всегда "чистый", это уже сбрасывается в
+// openProjectFromPath()/writeProjectToPath() выше - здесь только
+// ВХОДЯЩИЕ сигналы "стало грязно" от рендерера).
+ipcMain.on('mark-dirty', () => {
+    if (isProjectDirty) return; // уже грязный - незачем трогать заголовок повторно
+    isProjectDirty = true;
+    updateWindowTitle();
+});
+
+// Раунд 184 (по запросу Mr.D: "Новый проект") - БЕЗ этого сброса
+// последующее "Сохранить" перезаписало бы файл ПРЕДЫДУЩЕГО проекта
+// новым (пустым/другим) содержимым - currentProjectPath иначе остался
+// бы указывать на СТАРЫЙ файл, хотя пользователь уже начал работать
+// "с чистого листа".
+ipcMain.on('reset-current-project', () => {
+    currentProjectPath = null;
+    isProjectDirty = false;
+    // Раунд 185 - иначе восстановление после сбоя (см. checkForRecovery())
+    // при СЛЕДУЮЩЕМ запуске ошибочно предложило бы .ncptemp СТАРОГО
+    // именованного проекта, хотя пользователь уже сознательно ушёл от
+    // него в текущей сессии.
+    writeLastSessionProjectPath(null);
+    updateWindowTitle();
+});
 
 ipcMain.handle('save-image', (event, data, filePath) => {
     try {
@@ -429,7 +873,14 @@ ipcMain.handle('clear-default-workspace', () => {
 });
 
 // --- Запуск приложения ---
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+    createWindow();
+    // Раунд 185 - таймер автосохранения запускается ОДИН раз на весь
+    // процесс (не пересоздаётся при повторных createWindow() -
+    // macOS-паттерн "activate" ниже - performAutosave() сама проверяет
+    // mainWindow на существование, безопасно, если окна вдруг нет).
+    setInterval(performAutosave, AUTOSAVE_INTERVAL_MS);
+});
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {

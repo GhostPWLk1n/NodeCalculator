@@ -6,7 +6,7 @@
  * @file    layoutInputNode.js
  * @brief   Нода-мост между листами проекта (вход)
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

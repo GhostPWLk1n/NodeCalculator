@@ -6,7 +6,7 @@
  * @file    preload.js
  * @brief   Electron preload-скрипт: безопасный мост IPC между main-процессом и рендерером (contextBridge)
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -15,6 +15,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electron', {
     // === Кнопки тулбара → main-процесс (открыть диалог) ===
     saveProject: () => ipcRenderer.send('request-save-project'),
+    // Раунд 184 (по запросу Mr.D: "Сохранить как - всегда открывает
+    // диалог выбора имени и папки")
+    saveProjectAs: () => ipcRenderer.send('request-save-project-as'),
     loadProject: () => ipcRenderer.send('request-load-project'),
     exportImage: () => ipcRenderer.send('request-export-image'),
 
@@ -23,8 +26,28 @@ contextBridge.exposeInMainWorld('electron', {
     onGetProjectData: (cb) => ipcRenderer.on('get-project-data', cb),
     // рендерер отвечает сериализованным проектом
     sendProjectData: (data) => ipcRenderer.send('project-data', data),
+    // Раунд 185 (по запросу Mr.D: "Автосохранение по времени") -
+    // ОТДЕЛЬНАЯ пара каналов от явного сохранения (get-project-data/
+    // project-data выше) - фоновое автосохранение и явное "Сохранить"
+    // не должны мешать друг другу, если случатся примерно одновременно.
+    onGetProjectDataAutosave: (cb) => ipcRenderer.on('get-project-data-autosave', cb),
+    sendProjectDataAutosave: (data) => ipcRenderer.send('project-data-autosave', data),
     // main прислал загруженный из файла проект
     onLoadProject: (cb) => ipcRenderer.on('load-project', cb),
+    // Раунд 184 - main подтверждает УСПЕШНОЕ сохранение (путь+имя) -
+    // рендерер сбрасывает СВОЙ dirty-индикатор (см. src/js/main.js)
+    onProjectSaved: (cb) => ipcRenderer.on('project-saved', cb),
+
+    // === Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов -
+    // панель/список недавно сохранённых проектов с быстрым открытием",
+    // "Контроль изменений - отслеживание dirty-флага") ===
+    getRecentProjects: () => ipcRenderer.invoke('get-recent-projects'),
+    openRecentProject: (filePath) => ipcRenderer.send('open-recent-project', filePath),
+    markDirty: () => ipcRenderer.send('mark-dirty'),
+    // Раунд 184 (по запросу Mr.D: "Новый проект") - без этого сброса
+    // "Сохранить" после "Нового проекта" перезаписал бы файл ПРЕЖНЕГО
+    // проекта.
+    resetCurrentProject: () => ipcRenderer.send('reset-current-project'),
 
     // === Прочее ===
     statusUpdate: (cb) => ipcRenderer.on('status-update', cb),

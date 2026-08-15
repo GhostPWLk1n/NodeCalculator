@@ -474,10 +474,26 @@
                 <span class="inspector-close" id="sidebarSettingsClose" title="Закрыть">✕</span>
             </div>
             <div class="settings-tabs-row">
-                <button class="settings-tab-btn active" id="settingsTabBtnSidebar" data-tab="sidebar">🧩 Сайдбар</button>
+                <button class="settings-tab-btn active" id="settingsTabBtnProjects" data-tab="projects">📁 Проекты</button>
+                <button class="settings-tab-btn" id="settingsTabBtnSidebar" data-tab="sidebar">🧩 Сайдбар</button>
                 <button class="settings-tab-btn" id="settingsTabBtnStartup" data-tab="startup">🚀 Запуск</button>
             </div>
-            <div class="sidebar-settings-panel-body" id="settingsTabSidebar">
+            <!-- Раунд 184 (по запросу Mr.D: "Менеджер текущих проектов -
+                 панель/список недавно сохранённых проектов с быстрым
+                 открытием") - список наполняется JS (sidebarSettings.js,
+                 window.electron.getRecentProjects()) при каждом открытии
+                 модалки - сам список хранится в userData (main.js), не
+                 сериализуется в .ncp (это метаданные ПРИЛОЖЕНИЯ, не
+                 конкретного проекта). -->
+            <div class="sidebar-settings-panel-body" id="settingsTabProjects">
+                <div class="sidebar-settings-row">
+                    <button id="settingsNewProjectBtn" class="sidebar-settings-btn-small">📄 Новый проект</button>
+                    <button id="settingsOpenProjectBtn" class="sidebar-settings-btn-small">📂 Открыть...</button>
+                </div>
+                <div class="sidebar-settings-hint" id="settingsProjectsHint"></div>
+                <div class="sidebar-settings-node-list" id="settingsRecentProjectsList"></div>
+            </div>
+            <div class="sidebar-settings-panel-body" id="settingsTabSidebar" style="display:none;">
                 <div class="sidebar-settings-row">
                     <select id="sidebarSettingsConfigSelect" class="sidebar-settings-select"></select>
                     <button id="sidebarSettingsNewConfigBtn" class="sidebar-settings-btn-small" title="Создать новую конфигурацию на основе текущей">+ Своя</button>

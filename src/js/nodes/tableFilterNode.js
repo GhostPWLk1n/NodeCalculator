@@ -6,7 +6,7 @@
  * @file    tableFilterNode.js
  * @brief   Обработчик: отсеивает строки таблицы по условиям на столбцы (список значений или сравнение)
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

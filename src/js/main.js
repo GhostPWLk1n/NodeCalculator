@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.62
+ * @version 1.8.64
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -1064,9 +1064,33 @@ window.addLayout = () => window.layoutManager?.addLayout();
 window.switchLayout = (id) => window.layoutManager?.loadLayout(id);
 
 // --- Функции для Electron ---
+// Раунд 184 (по запросу Mr.D: "Контроль изменений - отслеживание
+// dirty-флага") - флаг живёт в РЕНДЕРЕРЕ (здесь и происходят реальные
+// правки проекта), но main-процесс тоже должен его знать (для
+// заголовка окна/будущего диалога закрытия) - синхронизируется ЧЕРЕЗ
+// IPC (markDirty), с защитой от повторной отправки, пока уже грязный
+// (сброс - при УСПЕШНОМ сохранении/загрузке, см. onProjectSaved/
+// onLoadProject ниже).
+let projectDirty = false;
+window.markProjectDirty = () => {
+    if (projectDirty) return;
+    projectDirty = true;
+    window.electron?.markDirty();
+};
+
 window.saveProject = () => {
     if (window.electron) {
         window.electron.saveProject();
+    } else {
+        console.warn('Electron API не доступен');
+    }
+};
+
+// Раунд 184 (по запросу Mr.D: "Сохранить как - всегда открывает диалог
+// выбора имени и папки")
+window.saveProjectAs = () => {
+    if (window.electron?.saveProjectAs) {
+        window.electron.saveProjectAs();
     } else {
         console.warn('Electron API не доступен');
     }
@@ -1120,6 +1144,18 @@ if (window.electron) {
         const boardData = window.boardManager?.serialize() || { boards: [] };
         window.electron.sendProjectData({ ...layoutData, ...boardData });
     });
+
+    // Раунд 185 (по запросу Mr.D: "Автосохранение по времени") - та же
+    // сборка данных, что у явного сохранения выше, но по ОТДЕЛЬНОМУ
+    // каналу - main сам решает, что делать ДАЛЬШЕ с этими данными
+    // (записать .ncptemp рядом с реальным файлом или снимок в
+    // AutoSave/, см. performAutosave() в main.js) - рендерер тут ничего
+    // не решает, просто как обычно отдаёт актуальное состояние проекта.
+    window.electron.onGetProjectDataAutosave(() => {
+        const layoutData = window.layoutManager?.serialize() || { layouts: [] };
+        const boardData = window.boardManager?.serialize() || { boards: [] };
+        window.electron.sendProjectDataAutosave({ ...layoutData, ...boardData });
+    });
     
     // Обработка загрузки проекта:
     // main-процесс прислал распарсенный JSON из файла
@@ -1128,10 +1164,24 @@ if (window.electron) {
             window.layoutManager?.loadFromData(data);
             window.boardManager?.loadFromData(data);
             if (window.updateCounters) window.updateCounters();
+            // Раунд 184 - свежезагруженный проект - всегда "чистый",
+            // даже если loadFromData()/последующий calculateAll() где-то
+            // внутри пометили бы его грязным - явный сброс ПОСЛЕ всей
+            // цепочки загрузки побеждает.
+            projectDirty = false;
         } catch (err) {
             console.error('❌ Ошибка загрузки проекта:', err);
             alert('Не удалось загрузить проект: ' + err.message);
         }
+    });
+
+    // Раунд 184 (по запросу Mr.D: "Контроль изменений - отслеживание
+    // dirty-флага") - main подтвердил УСПЕШНОЕ сохранение (путь+имя
+    // уже записаны на диск) - сбрасываем СВОЙ dirty-индикатор в
+    // рендерере, синхронно с main (тот уже сбросил СВОЙ флаг сам, см.
+    // writeProjectToPath() в main.js).
+    window.electron.onProjectSaved(() => {
+        projectDirty = false;
     });
     
     window.electron.statusUpdate((event, message) => {
