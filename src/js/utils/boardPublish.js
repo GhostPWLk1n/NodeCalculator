@@ -6,7 +6,7 @@
  * @file    boardPublish.js
  * @brief   Переиспользуемый "переключатель Доска" в инспекторе любой ноды - замена механики DashboardNode
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

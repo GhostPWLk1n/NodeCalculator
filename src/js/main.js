@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -94,6 +94,68 @@ const WELCOME_TIPS = [
     'Формат листа Доски "Web" живьём подстраивается под размер окна - разверните окно на весь экран, лист растянется сам, без перезапуска.',
 ];
 
+// Раунд 190 (по запросу Mr.D: "разворачивание нод на весь экран -
+// начинаем с Диаграммы Ганта, потом обобщаем на все типы") - живой
+// DOM-узел ноды ПЕРЕМЕЩАЕТСЯ в оверлей целиком (не пересобирается
+// заново) - все обработчики событий/скролл/фокус продолжают работать
+// БЕЗ ИЗМЕНЕНИЙ (querySelector('[data-node-id=...]'), которым
+// пользуются _rerenderGanttSlot() и подобные, находит узел ПО АТРИБУТУ,
+// вне зависимости от того, ГДЕ именно в документе он физически лежит) -
+// возвращается на исходное место при закрытии. Какие типы нод МОГУТ
+// вызвать эту функцию, решает BaseNode.supportsFullscreen()/
+// createTitle() (см. baseNode.js) - здесь логика уже общая для ЛЮБОГО
+// типа, специфики Диаграммы Ганта в этом файле нет вовсе.
+let fullscreenState = null; // {nodeEl, originalParent, originalNextSibling} - null, если сейчас никто не развёрнут
+
+function expandNodeFullscreen(nodeId) {
+    const nodeEl = document.querySelector(`[data-node-id="${nodeId}"]`);
+    const modal = document.getElementById('nodeFullscreenModal');
+    const content = document.getElementById('nodeFullscreenContent');
+    if (!nodeEl || !modal || !content) return;
+    // Уже что-то развёрнуто (маловероятно - кнопка недоступна, пока
+    // оверлей открыт, но на случай программного вызова) - сворачиваем
+    // предыдущее ПЕРЕД тем, как разворачивать новое.
+    if (fullscreenState) exitNodeFullscreen();
+
+    fullscreenState = {
+        nodeEl,
+        originalParent: nodeEl.parentElement,
+        originalNextSibling: nodeEl.nextSibling
+    };
+    content.appendChild(nodeEl);
+    modal.style.display = 'flex';
+    document.addEventListener('keydown', onNodeFullscreenKeyDown);
+}
+
+function exitNodeFullscreen() {
+    if (!fullscreenState) return;
+    const { nodeEl, originalParent, originalNextSibling } = fullscreenState;
+    // Страховка (редкий случай - нода была удалена, пока её
+    // представление жило в оверлее) - возвращать физически некуда,
+    // просто закрываем оверлей, не пытаясь вставить узел в null.
+    if (originalParent) {
+        if (originalNextSibling && originalNextSibling.parentElement === originalParent) {
+            originalParent.insertBefore(nodeEl, originalNextSibling);
+        } else {
+            originalParent.appendChild(nodeEl);
+        }
+    }
+    const modal = document.getElementById('nodeFullscreenModal');
+    if (modal) modal.style.display = 'none';
+    fullscreenState = null;
+    document.removeEventListener('keydown', onNodeFullscreenKeyDown);
+}
+
+function onNodeFullscreenKeyDown(e) {
+    if (e.key === 'Escape') exitNodeFullscreen();
+}
+
+window.expandNodeFullscreen = expandNodeFullscreen;
+window.exitNodeFullscreen = exitNodeFullscreen;
+
+document.getElementById('nodeFullscreenCloseBtn')?.addEventListener('click', exitNodeFullscreen);
+document.getElementById('nodeFullscreenBackdrop')?.addEventListener('click', exitNodeFullscreen);
+
 function initWelcomeScreen() {
     const modal = document.getElementById('welcomeModal');
     if (!modal) return;
@@ -132,6 +194,54 @@ function initWelcomeScreen() {
         renderTip();
     });
 
+    // Раунд 186 (по запросу Mr.D: "поместить в приветственный баннер
+    // последние проекты, скажем 10 последних в два столбика по 5,
+    // сразу после советов") - тот же источник данных, что уже
+    // использует вкладка "Проекты" в настройках (Раунд 184,
+    // window.electron.getRecentProjects() - тот же список, тот же
+    // формат {path, name, lastOpened}, отсеянный от физически
+    // удалённых файлов на стороне main-процесса). До 10 штук - при
+    // текущем лимите RECENT_PROJECTS_LIMIT=10 (main.js) список и так
+    // никогда не длиннее, но slice(0,10) - явная страховка, если лимит
+    // там когда-нибудь изменят.
+    const recentProjectsWrap = document.getElementById('welcomeRecentProjects');
+    const recentProjectsGrid = document.getElementById('welcomeRecentProjectsGrid');
+    async function renderWelcomeRecentProjects() {
+        if (!recentProjectsWrap || !recentProjectsGrid || !window.electron?.getRecentProjects) return;
+        const recent = await window.electron.getRecentProjects();
+        recentProjectsGrid.innerHTML = '';
+        if (!recent || recent.length === 0) {
+            // Раунд 186 - пустой список недавних проектов (первый
+            // запуск программы вообще) - блок скрывается ЦЕЛИКОМ, а не
+            // показывается пустым заголовком без содержимого.
+            recentProjectsWrap.style.display = 'none';
+            return;
+        }
+        recentProjectsWrap.style.display = '';
+        recent.slice(0, 10).forEach(entry => {
+            const item = document.createElement('div');
+            item.className = 'welcome-recent-project-item';
+            item.title = entry.path;
+
+            const nameEl = document.createElement('span');
+            nameEl.className = 'welcome-recent-project-name';
+            nameEl.textContent = entry.name;
+            item.appendChild(nameEl);
+
+            const dateEl = document.createElement('span');
+            dateEl.className = 'welcome-recent-project-date';
+            dateEl.textContent = new Date(entry.lastOpened).toLocaleDateString('ru-RU');
+            item.appendChild(dateEl);
+
+            item.addEventListener('click', () => {
+                window.electron.openRecentProject(entry.path);
+                closeWelcome();
+            });
+            recentProjectsGrid.appendChild(item);
+        });
+    }
+    renderWelcomeRecentProjects();
+
     function closeWelcome() {
         if (dontShowCheckbox?.checked) {
             localStorage.setItem(WELCOME_HIDE_KEY, '1');
@@ -152,6 +262,7 @@ function initWelcomeScreen() {
     window.showWelcomeScreen = () => {
         tipIndex = 0;
         renderTip();
+        renderWelcomeRecentProjects();
         modal.style.display = 'flex';
         document.addEventListener('keydown', onKeyDown);
     };
@@ -1322,7 +1433,22 @@ document.addEventListener('mouseup', (e) => {
     }
 });
 
-// Закрытие контекстного меню по клику вне его пределов
+// Раунд 188 (по жалобе Mr.D: "контекстное меню не закрывается при
+// клике вне его пределов - причём и то, что отвечает за ноды, и то,
+// что за диаграмму Ганта") - НАЙДЕНА причина: этот слушатель висел на
+// ОБЫЧНОЙ (всплывающей) фазе mousedown у document - множество
+// интерактивных элементов по всему приложению (перетаскиваемые ноды,
+// сокеты, ручки диаграммы Ганта и т.п.) сами вызывают
+// e.stopPropagation() на СВОЁМ mousedown, чтобы не запускать ЛИШНИЕ
+// побочные эффекты (перетаскивание ноды, смену фокуса строки) - но
+// этим ЖЕ действием событие никогда не доходило до document, и
+// проверка "клик вне меню" просто не срабатывала, если пользователь
+// кликал ИМЕННО по такому элементу (а не по пустому месту). Фикс - тот
+// же обработчик, но НА ФАЗЕ ПЕРЕХВАТА ({capture: true}) - та
+// срабатывает СВЕРХУ ВНИЗ, ДО того, как событие вообще доберётся до
+// элемента-цели и у него будет шанс остановить всплытие - stopPropagation()
+// на ПОЗДНЕЙ (всплывающей) фазе целевого элемента уже не может отменить
+// то, что произошло РАНЬШЕ, на фазе перехвата у предка.
 document.addEventListener('mousedown', (e) => {
     const menu = document.getElementById('contextMenu');
     if (!menu) return;
@@ -1331,7 +1457,7 @@ document.addEventListener('mousedown', (e) => {
         if (window.nodeManager) window.nodeManager.contextMenuTarget = null;
         if (window.connectionManager) window.connectionManager.contextMenuTarget = null;
     }
-});
+}, { capture: true });
 
 // Страховка от "зависших" временных линий соединения: если окно теряет
 // фокус (Alt+Tab, переключение вкладки) или курсор покидает документ

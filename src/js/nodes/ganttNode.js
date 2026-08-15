@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -24,6 +24,7 @@ const MAX_VISIBLE_ROWS = 6; // после скольки задач включа
 const LABEL_WIDTH = 84;     // px, колонка с названиями задач
 const HOURS_COL_WIDTH = 34; // px, колонка "ч.ч." (Раунд 78)
 const WORKDAYS_COL_WIDTH = 34; // px, колонка "Раб.дн." (Раунд 81)
+const DATE_COL_WIDTH = 84; // px, колонки "Дата начала"/"Дата окончания" (Раунд 187) - под формат ДД.ММ.ГГГГ
 const RESPONSIBLE_COL_WIDTH = 70; // px, колонка "Ответственный" (Раунд 88, чек-лист 1.7.21)
 const CALDAYS_COL_WIDTH = 40; // px, колонка "Кал. дни" (Раунд 101, чек-лист)
 const SUM_WORKDAYS_COL_WIDTH = 44; // px, колонка "Сум.раб.дн." (Раунд 157)
@@ -257,6 +258,17 @@ export class GanttNode extends BaseNode {
         // же принцип, что showResponsibleColumn - не захламляет
         // существующие диаграммы новым столбцом без явного запроса.
         this.showCalDaysColumn = config.showCalDaysColumn ?? false;
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта - поля для начала и конца задачи с синхронизацией с
+        // графическим редактором") - тот же принцип, что у остальных
+        // необязательных столбцов - по умолчанию выключены. Правка
+        // "Дата начала" - СДВИГ (та же семантика, что у перетаскивания
+        // тела полосы мышью - длительность НЕ меняется, конец сдвигается
+        // на ту же дельту). Правка "Дата окончания" - РАСТЯГИВАНИЕ (та
+        // же семантика, что у перетаскивания правой ручки - начало НЕ
+        // меняется, меняется только длительность).
+        this.showStartDateColumn = config.showStartDateColumn ?? false;
+        this.showEndDateColumn = config.showEndDateColumn ?? false;
         // Раунд 157 (по запросу Mr.D: "нужны ещё колонки 'сум. раб.
         // дней', 'сум. ч.ч.' - показывают суммарно отработанные дни по
         // всем работам, а не по дате начала и конца в разделе") - ИСТИННАЯ
@@ -293,6 +305,9 @@ export class GanttNode extends BaseNode {
         this.labelColWidthOverride = config.labelColWidthOverride || null;
         this.hoursColWidthOverride = config.hoursColWidthOverride || null;
         this.workdaysColWidthOverride = config.workdaysColWidthOverride || null;
+        // Раунд 187 - ширина новых колонок дат, тот же принцип
+        this.startDateColWidthOverride = config.startDateColWidthOverride || null;
+        this.endDateColWidthOverride = config.endDateColWidthOverride || null;
         this.responsibleColWidthOverride = config.responsibleColWidthOverride || null;
         this.calDaysColWidthOverride = config.calDaysColWidthOverride || null;
         this.sectionColWidthOverride = config.sectionColWidthOverride || null;
@@ -462,6 +477,15 @@ export class GanttNode extends BaseNode {
         // calculate()) - Set<string> ISO-дат, пустой до первого пересчёта
         this.holidaySet = new Set();
         this._holidaySourceName = null;
+    }
+
+    // Раунд 190 (по запросу Mr.D: "разворачивание нод на весь экран -
+    // начинаем с Диаграммы Ганта") - первый тип ноды, получивший эту
+    // возможность - остальная механика (BaseNode.createTitle()/
+    // window.expandNodeFullscreen()) уже была общей, здесь только
+    // "включаем" кнопку для этого конкретного типа.
+    supportsFullscreen() {
+        return true;
     }
 
     createContent() {
@@ -1664,12 +1688,12 @@ export class GanttNode extends BaseNode {
                     if (insertBeforeEl) {
                         const idx = siblingRows.indexOf(insertBeforeEl);
                         const prevEl = siblingRows[idx - 1];
-                        dropTargetKey = (prevEl && prevEl !== row) ? prevEl.dataset.taskKey : '__start__';
+                        dropTargetKey = (prevEl && prevEl !== row) ? this._resolveDropTargetKey(prevEl.dataset.taskKey) : '__start__';
                         insertBeforeEl.classList.add('gantt-row-drop-before');
                         lastMarkedEl = insertBeforeEl;
                     } else {
                         const lastEl = siblingRows[siblingRows.length - 1];
-                        dropTargetKey = (lastEl && lastEl !== row) ? lastEl.dataset.taskKey : null;
+                        dropTargetKey = (lastEl && lastEl !== row) ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
                         if (lastEl && lastEl !== row) {
                             lastEl.classList.add('gantt-row-drop-after');
                             lastMarkedEl = lastEl;
@@ -1682,7 +1706,43 @@ export class GanttNode extends BaseNode {
                     row.classList.remove('gantt-row-dragging');
                     clearMark();
                     if (dropTargetKey !== null && dropTargetKey !== taskKey) {
-                        this.taskOrderOverrides[taskKey] = dropTargetKey;
+                        // Раунд 187 (по запросу Mr.D: "Перетаскивание
+                        // группы строк в Диаграмме Ганта - возможность
+                        // перетаскивать несколько выделенных строк
+                        // одновременно") - если перетаскиваемая строка
+                        // входит в мультивыбор из 2+ строк (Shift+ЛКМ,
+                        // Раунд 174/175) - двигаем ВСЕ выделенные
+                        // строки разом, а не только ту, за ручку
+                        // которой тащили. ЦЕПОЧКА overrides
+                        // (afterKey каждой СЛЕДУЮЩЕЙ выделенной строки -
+                        // ключ ПРЕДЫДУЩЕЙ) - сохраняет их взаимный
+                        // порядок (по текущей позиции в this.tasks, не
+                        // по порядку Shift-кликов) и ставит их
+                        // ПОСЛЕДОВАТЕЛЬНО сразу после точки вставки -
+                        // тот же алгоритм _applyTaskOrderOverrides()
+                        // (Раунд 180) корректно разворачивает цепочку
+                        // без каких-либо изменений в нём самом.
+                        if (this.multiSelectedKeys.size > 1 && this.multiSelectedKeys.has(taskKey) && !this.multiSelectedKeys.has(dropTargetKey)) {
+                            // dropTargetKey исключён из мультивыбора (см.
+                            // условие выше) - иначе точка вставки сама
+                            // оказалась бы ВНУТРИ перемещаемой группы,
+                            // порождая циклическую цепочку overrides
+                            // (K1->K2->K1) - в таком случае просто
+                            // откатываемся на перетаскивание одной строки
+                            // (ветка else ниже), не пытаясь угадать
+                            // "правильное" поведение для этого редкого
+                            // случая.
+                            const orderedSelected = this.tasks
+                                .map(t => t.taskKey || t.name)
+                                .filter(k => this.multiSelectedKeys.has(k));
+                            let afterKey = dropTargetKey;
+                            orderedSelected.forEach(k => {
+                                this.taskOrderOverrides[k] = afterKey;
+                                afterKey = k;
+                            });
+                        } else {
+                            this.taskOrderOverrides[taskKey] = dropTargetKey;
+                        }
                         if (window.nodeManager) window.nodeManager.calculateAll();
                         if (window.renderer) window.renderer.updateAllDisplays();
                     }
@@ -2012,14 +2072,31 @@ export class GanttNode extends BaseNode {
         } else {
             label = document.createElement('div');
             label.className = 'gantt-task-label';
+            // Раунд 187 (по запросу Mr.D: "Автоперенос текста в
+            // Диаграмме Ганта - если текст длинный, переносится, но
+            // если строк слишком много - не переносим") - раньше
+            // ЛЮБОЙ длинный текст сразу обрезался многоточием на ОДНОЙ
+            // строке (white-space:nowrap). -webkit-line-clamp: 2 -
+            // переносит текст до ДВУХ строк (line-height 13px × 2 =
+            // 26px, ровно ROW_HEIGHT - высота строки НЕ меняется,
+            // подпись просто использует уже имеющееся место вертикально
+            // вместо того, чтобы обрезать сразу) - если текст НЕ
+            // уместился бы даже в 2 строки, дальше - снова многоточие
+            // ("если строк слишком много - не переносим" ЕЩЁ БОЛЬШЕ, а
+            // обрезаем).
             label.style.cssText = `
                 width: ${this._labelW() - indentPx}px;
                 flex-shrink: 0;
                 font-size: 11px;
+                line-height: 13px;
+                max-height: ${ROW_HEIGHT}px;
                 color: var(--md-text);
                 overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                white-space: normal;
+                word-break: break-word;
                 padding-right: 6px;
             `;
             label.textContent = task.name;
@@ -2082,6 +2159,84 @@ export class GanttNode extends BaseNode {
             });
             this._attachFieldNavigation(workdaysInput, taskKey, 'workdays');
             leftGroup.appendChild(workdaysInput);
+        }
+
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта - поля для начала и конца задачи с синхронизацией с
+        // графическим редактором") - "Дата начала": та же семантика,
+        // что у перетаскивания ТЕЛА полосы мышью - СДВИГ (длительность
+        // не меняется, конец смещается на ту же дельту) - см.
+        // _applyStartDateEdit() дальше по файлу.
+        if (this.showStartDateColumn) {
+            const startDateInput = document.createElement('input');
+            startDateInput.type = 'date';
+            startDateInput.className = 'gantt-startdate-cell gantt-startdate-input';
+            startDateInput.style.cssText = `
+                width: ${this._startDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                background: transparent;
+                border: none;
+                font-family: inherit;
+                padding: 0 4px;
+            `;
+            startDateInput.value = formatISODate(addDays(anchor, task.startOffsetDays));
+            startDateInput.dataset.taskKey = taskKey;
+            startDateInput.addEventListener('mousedown', (e) => e.stopPropagation());
+            startDateInput.addEventListener('click', (e) => e.stopPropagation());
+            startDateInput.addEventListener('change', (e) => {
+                const picked = parseISODate(e.target.value);
+                if (!picked) return;
+                const newOffset = Math.round((picked - anchor) / 86400000);
+                if (newOffset === task.startOffsetDays) return;
+                const deltaDays = newOffset - task.startOffsetDays;
+                this._applyStartDateEdit(task, newOffset);
+                // Та же дельта-логика мультивыбора, что уже применена
+                // к графическому перетаскиванию (Раунд 178) - сохраняет
+                // относительные расстояния между выделенными задачами.
+                this._propagateToMultiSelection(taskKey, (otherTask) => {
+                    this._applyStartDateEdit(otherTask, Math.max(0, otherTask.startOffsetDays + deltaDays));
+                });
+            });
+            this._attachFieldNavigation(startDateInput, taskKey, 'startDate');
+            leftGroup.appendChild(startDateInput);
+        }
+
+        // "Дата окончания" - та же семантика, что у перетаскивания
+        // ПРАВОЙ ручки изменения размера - РАСТЯГИВАНИЕ (начало не
+        // меняется, меняется только длительность) - переиспользует
+        // _applyWorkDaysEdit() (Раунд 178), не дублирует логику.
+        if (this.showEndDateColumn) {
+            const endDateInput = document.createElement('input');
+            endDateInput.type = 'date';
+            endDateInput.className = 'gantt-enddate-cell gantt-enddate-input';
+            endDateInput.style.cssText = `
+                width: ${this._endDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                background: transparent;
+                border: none;
+                font-family: inherit;
+                padding: 0 4px;
+            `;
+            endDateInput.value = formatISODate(addDays(anchor, task.startOffsetDays + task.durationDays));
+            endDateInput.dataset.taskKey = taskKey;
+            endDateInput.addEventListener('mousedown', (e) => e.stopPropagation());
+            endDateInput.addEventListener('click', (e) => e.stopPropagation());
+            endDateInput.addEventListener('change', (e) => {
+                const picked = parseISODate(e.target.value);
+                if (!picked) return;
+                const taskStart = addDays(anchor, task.startOffsetDays);
+                const newCalendarSpan = Math.round((picked - taskStart) / 86400000);
+                if (newCalendarSpan <= 0) return; // конец раньше начала - бессмысленно, игнорируем
+                const newWorkDays = this._countWorkingDaysInRange(anchor, task.startOffsetDays, newCalendarSpan);
+                this._applyWorkDaysEdit(task, newWorkDays, anchor);
+                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor));
+            });
+            this._attachFieldNavigation(endDateInput, taskKey, 'endDate');
+            leftGroup.appendChild(endDateInput);
         }
 
         // Столбец "Ответственный" (Раунд 88, чек-лист 1.7.21, п.4).
@@ -2390,9 +2545,102 @@ export class GanttNode extends BaseNode {
             const handle = document.createElement('div');
             handle.className = 'gantt-row-handle';
             handle.textContent = '⠿';
-            handle.title = 'ПКМ - меню раздела (добавить/раздел в строку/удалить)';
-            handle.addEventListener('mousedown', (e) => e.stopPropagation());
+            handle.title = 'ПКМ - меню раздела (добавить/раздел в строку/удалить). Перетащите - переместить раздел целиком';
             handle.addEventListener('click', (e) => e.stopPropagation());
+            // Раунд 188 (по жалобе Mr.D: "перетаскиванию группы не
+            // сработало") - НАЙДЕНА причина: у ручки строки задачи
+            // (buildTaskRow) drag реализован в Раунде 180, но у ручки
+            // ЗАГОЛОВКА РАЗДЕЛА (эта, buildGroupHeaderRow) - НЕТ, она
+            // ВСЕГДА была только "глотающей клик" заглушкой
+            // (mousedown -> stopPropagation(), без единой строчки
+            // логики перетаскивания). Реализовано ТЕМ ЖЕ алгоритмом
+            // (поиск точки вставки среди строк-соседей по вертикали,
+            // визуальный индикатор), но группа двигается ЦЕЛИКОМ -
+            // originKey группы + ключи ВСЕХ вложенных задач рекурсивно
+            // (_allTasksRecursive(group), уже в правильном порядке -
+            // this.tasks строится обходом дерева в глубину, см.
+            // _applyPromotedSections()) - цепочкой overrides, тем же
+            // приёмом, что уже применён к перетаскиванию мультивыбора
+            // (Раунд 187) - _applyTaskOrderOverrides() (Раунд 180)
+            // корректно разворачивает такую цепочку без изменений в
+            // самом алгоритме.
+            handle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const rowsWrap = row.parentElement;
+                if (!rowsWrap) return;
+                row.classList.add('gantt-row-dragging');
+                let dropTargetKey = null;
+                let lastMarkedEl = null;
+
+                const clearMark = () => {
+                    if (lastMarkedEl) {
+                        lastMarkedEl.classList.remove('gantt-row-drop-before', 'gantt-row-drop-after');
+                        lastMarkedEl = null;
+                    }
+                };
+                const onMove = (moveEvt) => {
+                    const siblingRows = Array.from(rowsWrap.children).filter(el => el.dataset && el.dataset.taskKey);
+                    let insertBeforeEl = null;
+                    for (const sib of siblingRows) {
+                        if (sib === row) continue;
+                        const rect = sib.getBoundingClientRect();
+                        if (moveEvt.clientY < rect.top + rect.height / 2) { insertBeforeEl = sib; break; }
+                    }
+                    clearMark();
+                    if (insertBeforeEl) {
+                        const idx = siblingRows.indexOf(insertBeforeEl);
+                        const prevEl = siblingRows[idx - 1];
+                        dropTargetKey = (prevEl && prevEl !== row) ? this._resolveDropTargetKey(prevEl.dataset.taskKey) : '__start__';
+                        insertBeforeEl.classList.add('gantt-row-drop-before');
+                        lastMarkedEl = insertBeforeEl;
+                    } else {
+                        const lastEl = siblingRows[siblingRows.length - 1];
+                        dropTargetKey = (lastEl && lastEl !== row) ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
+                        if (lastEl && lastEl !== row) {
+                            lastEl.classList.add('gantt-row-drop-after');
+                            lastMarkedEl = lastEl;
+                        }
+                    }
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    row.classList.remove('gantt-row-dragging');
+                    clearMark();
+                    const originKey = group.originKey;
+                    if (dropTargetKey !== null && dropTargetKey !== originKey) {
+                        // Ключи ВСЕЙ группы (заголовок + вложенные
+                        // задачи рекурсивно) - точка вставки ВНУТРИ
+                        // ЭТОЙ ЖЕ группы (сброс "внутрь себя") -
+                        // защита той же формы, что уже применена к
+                        // мультивыбору (Раунд 187) - откат без действия,
+                        // не пытаемся угадать поведение для этого
+                        // случая.
+                        const nestedKeys = this._allTasksRecursive(group).map(t => t.taskKey || t.name);
+                        const groupKeys = [originKey, ...nestedKeys];
+                        // Раунд 189 (по жалобе Mr.D: "перетаскивание
+                        // группы не хватает вложенные в группу строки") -
+                        // вторая защита - точка вставки НЕ должна
+                        // "поглотить" соседнюю обычную задачу или
+                        // расщепить ЧУЖУЮ группу (см. докстринг
+                        // _wouldGroupDropAbsorb()) - тот же откат без
+                        // действия, что и при вставке внутрь себя.
+                        if (!groupKeys.includes(dropTargetKey) && !this._wouldGroupDropAbsorb(dropTargetKey, groupKeys)) {
+                            let afterKey = dropTargetKey;
+                            groupKeys.forEach(k => {
+                                this.taskOrderOverrides[k] = afterKey;
+                                afterKey = k;
+                            });
+                            if (window.nodeManager) window.nodeManager.calculateAll();
+                            if (window.renderer) window.renderer.updateAllDisplays();
+                        }
+                    }
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
             focusSpacerG.appendChild(handle);
         }
         leftGroup.appendChild(focusSpacerG);
@@ -2610,6 +2858,47 @@ export class GanttNode extends BaseNode {
             workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
             workdaysCell.title = 'Рабочих дней в диапазоне группы';
             leftGroup.appendChild(workdaysCell);
+        }
+
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта") - для группы это НЕ редактируемое поле (у группы нет
+        // единой "своей" даты - только диапазон вложенных задач) -
+        // самая РАННЯЯ дата начала/самая ПОЗДНЯЯ дата окончания среди
+        // ВСЕХ задач группы, рекурсивно (та же _allTasksRecursive(),
+        // что уже использует "Раб.дн." выше).
+        if (this.showStartDateColumn) {
+            const startDateCell = document.createElement('div');
+            startDateCell.style.cssText = `
+                width: ${this._startDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                padding: 0 4px;
+                font-variant-numeric: tabular-nums;
+            `;
+            const gTasksSD = this._allTasksRecursive(group);
+            if (gTasksSD.length > 0) {
+                const gMinStart = Math.min(...gTasksSD.map(t => t.startOffsetDays));
+                startDateCell.textContent = formatISODate(addDays(anchor, gMinStart));
+            }
+            leftGroup.appendChild(startDateCell);
+        }
+        if (this.showEndDateColumn) {
+            const endDateCell = document.createElement('div');
+            endDateCell.style.cssText = `
+                width: ${this._endDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text-secondary);
+                padding: 0 4px;
+                font-variant-numeric: tabular-nums;
+            `;
+            const gTasksED = this._allTasksRecursive(group);
+            if (gTasksED.length > 0) {
+                const gMaxEnd = Math.max(...gTasksED.map(t => t.startOffsetDays + t.durationDays));
+                endDateCell.textContent = formatISODate(addDays(anchor, gMaxEnd));
+            }
+            leftGroup.appendChild(endDateCell);
         }
 
         if (this.showResponsibleColumn) {
@@ -2890,17 +3179,43 @@ export class GanttNode extends BaseNode {
             if (isPromotedSection) this.demoteFromSection(taskKey);
             this.removeTask(taskKey);
         });
+        // Раунд 188 (по запросу Mr.D: "удалить группу со всеми
+        // вложениями") - только для раздела (isPromotedSection) - для
+        // обычной строки задачи "вложений" не существует, пункт был бы
+        // бессмысленным дублем обычного "Удалить" выше.
+        if (isPromotedSection) {
+            addItem('🗑️📦 Удалить раздел со всеми вложениями', () => this._deleteGroupWithContents(taskKey));
+        }
+        // Раунд 188 (по запросу Mr.D: "свернуть все группы и
+        // развернуть все группы добавим в контекстное меню") -
+        // глобальные действия (не привязаны к КОНКРЕТНОЙ строке/группе,
+        // на которой открыто меню) - доступны из ОБОИХ контекстов
+        // (обычная строка и раздел) одинаково, раз действие всё равно
+        // применяется ко всей диаграмме целиком.
+        addItem('📖 Развернуть все группы', () => {
+            this._expandAllGroups();
+            this._rerenderGanttSlot();
+        });
+        addItem('📕 Свернуть все группы', () => {
+            this._collapseAllGroups();
+            this._rerenderGanttSlot();
+        });
 
         document.body.appendChild(menu);
         this._rowContextMenuEl = menu;
 
         // Закрытие по клику мимо - тот же приём, что у глобального
-        // #contextMenu (см. main.js) - слушатель на document,
-        // однократный (снимается сам после первого срабатывания).
+        // #contextMenu (см. main.js). Раунд 188 (по жалобе Mr.D:
+        // "контекстное меню не закрывается при клике вне") - CAPTURE-
+        // фаза ({capture: true}), не всплытие - множество элементов
+        // диаграммы (ручки, поля ввода других строк) сами вызывают
+        // stopPropagation() на СВОЁМ mousedown, что раньше не давало
+        // событию дойти до document на фазе всплытия вовсе - на фазе
+        // перехвата это уже не имеет значения (та срабатывает РАНЬШЕ).
         const closeOnOutsideClick = (e) => {
             if (!menu.contains(e.target)) this._closeRowContextMenu();
         };
-        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick, { once: true }), 0);
+        setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick, { once: true, capture: true }), 0);
     }
 
     _closeRowContextMenu() {
@@ -3224,6 +3539,159 @@ export class GanttNode extends BaseNode {
         return [...group.tasks, ...(group.subgroups || []).flatMap(sg => this._allTasksRecursive(sg))];
     }
 
+    // Раунд 188 (багфикс, найден при реализации перетаскивания группы
+    // за ручку) - data-task-key у строки-заголовка ГРУППЫ хранит
+    // `group:Имя` (Раунд 137/149, формат ОТДЕЛЬНОГО, более старого
+    // механизма - связи-зависимости между задачами/разделами, см.
+    // _resolveEndpointTask() - ищет ПО ИМЕНИ, не по originKey - трогать
+    // этот формат нельзя, он используется широко). Но
+    // _applyTaskOrderOverrides() (Раунд 180) оперирует РЕАЛЬНЫМИ
+    // ключами задач (originKey группы, не "group:Имя") - без этой
+    // трансляции точка вставки, вычисленная РЯДОМ С ДРУГИМ заголовком
+    // группы, указывала бы на несуществующий в this.tasks ключ, и
+    // override молча проваливался бы (см. fallback "в конец" в
+    // _applyTaskOrderOverrides()). Используется В ОБОИХ обработчиках
+    // перетаскивания (строка задачи, Раунд 180 - и заголовок группы,
+    // Раунд 188), раз оба могут оказаться рядом с ЛЮБЫМ типом строки.
+    _resolveDropTargetKey(rawKey) {
+        if (rawKey && rawKey.startsWith('group:')) {
+            const sectionName = rawKey.slice('group:'.length);
+            return this.promotedNameToKey.get(sectionName) || rawKey;
+        }
+        return rawKey;
+    }
+
+    // Раунд 189 (по жалобе Mr.D: "перетаскивание группы не хватает
+    // вложенные в группу строки") - НАЙДЕНА причина при тестировании:
+    // раздел в этой системе "открыт" (поглощает ВСЕ последующие задачи),
+    // пока не встретит СЛЕДУЮЩИЙ маркер раздела - явной "границы конца"
+    // не существует (см. докстринг _applyPromotedSections()). Если
+    // после переноса группы прямо ЗА её последней вложенной задачей
+    // оказывается ОБЫЧНАЯ задача (не заголовок ДРУГОГО раздела) - та
+    // задача молча становится частью перенесённой группы, хотя
+    // должна была остаться отдельной строкой. ТА ЖЕ проблема грозит и
+    // при попытке бросить группу ПОСРЕДИ списка задач ДРУГОЙ группы -
+    // это "расщепило" бы чужую группу, а хвост её задач так же молча
+    // поглотился бы перенесённой. Обе ситуации сводятся к ОДНОЙ
+    // проверке: что идёт СРАЗУ ПОСЛЕ точки вставки, если пропустить
+    // ключи САМОЙ перемещаемой группы (та физически ещё стоит на
+    // старом месте, могла случайно оказаться "соседом" точки вставки) -
+    // если это ОБЫЧНАЯ задача (не сама точка входа в другой раздел) -
+    // вставка небезопасна.
+    _wouldGroupDropAbsorb(dropTargetKey, groupKeys) {
+        let startIdx;
+        if (dropTargetKey === '__start__') {
+            startIdx = 0;
+        } else {
+            const idx = this.tasks.findIndex(t => (t.taskKey || t.name) === dropTargetKey);
+            if (idx === -1) return false; // цель не найдена - решать нечего, пусть остальная логика сама разберётся
+            startIdx = idx + 1;
+        }
+        for (let i = startIdx; i < this.tasks.length; i++) {
+            const key = this.tasks[i].taskKey || this.tasks[i].name;
+            if (groupKeys.includes(key)) continue; // сама перемещаемая группа - не считается "соседом"
+            return !this.promotedSectionKeys.has(key);
+        }
+        return false; // дальше по списку ничего нет - конец, безопасно
+    }
+
+    // Раунд 187 (по запросу Mr.D: "Кнопка 'Раскрыть всё' в Диаграмме
+    // Ганта - раскрывает все дочерние элементы строк") - обходит
+    // дерево групп/подгрупп РЕКУРСИВНО (та же структура, что уже
+    // проходит _allTasksRecursive() выше) - выставляет
+    // collapsedGroups[collapseKey]=false КАЖДОЙ группе на любой
+    // глубине вложенности, не только верхнего уровня.
+    // Раунд 188 (по запросу Mr.D: "свернуть все группы и развернуть все
+    // группы добавим в контекстное меню") - обходит дерево групп/
+    // подгрупп РЕКУРСИВНО (та же структура, что уже проходит
+    // _allTasksRecursive() выше) - выставляет
+    // collapsedGroups[collapseKey]=false КАЖДОЙ группе на любой
+    // глубине вложенности, не только верхнего уровня.
+    //
+    // Багфикс (сразу по факту первого теста) - реальный ключ,
+    // используемый ОТРИСОВКОЙ (см. renderGroupRecursive() выше по
+    // файлу), - ЦЕПОЧКА `group.collapseKey || group.originKey ||
+    // позиционный индекс`, а НЕ ТОЛЬКО collapseKey - то поле есть
+    // ИСКЛЮЧИТЕЛЬНО у групп, построенных через _groupsFromTreeData()/
+    // _groupsFromNameMarkers() (иерархия Блок/Стадия) - у групп из
+    // системы "Раздел"/"Подраздел" (promoteToSection(), САМЫЙ частый
+    // способ создать группу вручную) этого поля просто НЕТ - раньше
+    // проверка `if (g.collapseKey)` тихо ПРОПУСКАЛА такие группы
+    // целиком, кнопка/пункты меню не действовали на них вообще.
+    // Позиционный индекс - ОБЩИЙ счётчик на ВЕСЬ обход дерева (не
+    // сбрасывается на каждом уровне) - та же семантика, что у
+    // groupIndex++ в самой отрисовке.
+    _expandAllGroups() {
+        let index = 0;
+        const walk = (groups) => {
+            (groups || []).forEach(g => {
+                const collapseKey = g.collapseKey || g.originKey || (index++);
+                this.collapsedGroups[collapseKey] = false;
+                walk(g.subgroups);
+            });
+        };
+        walk(this.taskGroups);
+    }
+
+    // Раунд 188 (по запросу Mr.D: "свернуть все группы и развернуть все
+    // группы добавим в контекстное меню") - зеркало _expandAllGroups()
+    // выше, тот же обход и та же цепочка ключа, только
+    // collapsedGroups=true.
+    _collapseAllGroups() {
+        let index = 0;
+        const walk = (groups) => {
+            (groups || []).forEach(g => {
+                const collapseKey = g.collapseKey || g.originKey || (index++);
+                this.collapsedGroups[collapseKey] = true;
+                walk(g.subgroups);
+            });
+        };
+        walk(this.taskGroups);
+    }
+
+    // Раунд 188 (по запросу Mr.D: "удалить группу со всеми
+    // вложениями") - находит группу ПО ЕЁ originKey (та же
+    // идентификация, что использует остальной код группировки, см.
+    // докстринг _applyPromotedSections()), собирает ключи ВСЕХ
+    // вложенных задач РЕКУРСИВНО (та же _allTasksRecursive(), что уже
+    // применяют "Раб.дн."/агрегаты колонок дат) - удаляет каждую ТОЙ ЖЕ
+    // логикой, что и removeTask() (manualTasks.splice или
+    // deletedTaskKeys.push), но БЕЗ отдельного calculateAll() на
+    // КАЖДУЮ (removeTask() сам его вызывает - здесь один общий
+    // пересчёт в конце, не N). Сам заголовок раздела - тоже задача
+    // (просто визуально изъятая из this.tasks через promotedSectionKeys,
+    // физически всё ещё существует как строка) - удаляется той же
+    // логикой + выходит из promotedSectionKeys/sectionLevels.
+    _deleteGroupWithContents(groupKey) {
+        const findGroup = (groups) => {
+            for (const g of groups || []) {
+                if (g.originKey === groupKey) return g;
+                const found = findGroup(g.subgroups);
+                if (found) return found;
+            }
+            return null;
+        };
+        const group = findGroup(this.taskGroups);
+        if (!group) return;
+
+        const removeByKey = (key) => {
+            const manualIdx = this.manualTasks.findIndex(t => t.key === key);
+            if (manualIdx >= 0) {
+                this.manualTasks.splice(manualIdx, 1);
+            } else if (!this.deletedTaskKeys.includes(key)) {
+                this.deletedTaskKeys.push(key);
+            }
+        };
+
+        this._allTasksRecursive(group).forEach(t => removeByKey(t.taskKey || t.name));
+        removeByKey(groupKey);
+        this.promotedSectionKeys.delete(groupKey);
+        this.sectionLevels.delete(groupKey);
+
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
     _formatTotalCell(tasks) {
         const hours = tasks.reduce((sum, t) => sum + t.durationDays * HOURS_PER_WORKDAY, 0);
         return `${Helpers.formatNumber(hours)}ч`;
@@ -3539,6 +4007,11 @@ export class GanttNode extends BaseNode {
         if (this.showSectionColumn) order.push('section');
         order.push('name');
         if (this.showWorkingDaysColumn) order.push('workdays');
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта") - тот же порядок, что у самих колонок в строке
+        // (Раб.дн. -> Начало -> Окончание -> Ответственный).
+        if (this.showStartDateColumn) order.push('startDate');
+        if (this.showEndDateColumn) order.push('endDate');
         if (this.showResponsibleColumn) order.push('responsible');
         return order;
     }
@@ -3592,6 +4065,8 @@ export class GanttNode extends BaseNode {
             section: '.gantt-section-input',
             name: '.gantt-task-label-input',
             workdays: '.gantt-workdays-input',
+            startDate: '.gantt-startdate-input',
+            endDate: '.gantt-enddate-input',
             responsible: '.gantt-responsible-input'
         }[targetField];
         const input = fieldSelector ? targetRowEl.querySelector(fieldSelector) : null;
@@ -3768,6 +4243,26 @@ export class GanttNode extends BaseNode {
         if (window.renderer) window.renderer.updateAllDisplays();
     }
 
+    // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме Ганта -
+    // поля для начала и конца задачи с синхронизацией с графическим
+    // редактором") - та же семантика, что у перетаскивания ТЕЛА полосы
+    // мышью (attachBarDrag()) - СДВИГ (длительность не меняется) - та
+    // же запись (manualTask.startOffsetDays или taskDates[key]) +
+    // _rebaseDependencyGapsForTarget(), что уже применяет графическое
+    // перетаскивание (Раунд 139/178) - не дублирует логику отдельно.
+    _applyStartDateEdit(task, newStartOffsetDays) {
+        const key = task.taskKey || task.name;
+        const clamped = Math.max(0, newStartOffsetDays);
+        const manualTask = this.manualTasks.find(t => t.key === key);
+        if (manualTask) {
+            manualTask.startOffsetDays = clamped;
+        } else {
+            this.taskDates[key] = clamped;
+        }
+        this._rebaseDependencyGapsForTarget(key, clamped);
+        if (window.nodeManager) window.nodeManager.calculateAll();
+        if (window.renderer) window.renderer.updateAllDisplays();
+    }
 
     // выходные/праздники, см. isNonWorkingDay()/this.holidaySet) внутри
     // календарного диапазона [startOffsetDays, startOffsetDays+durationDays).
@@ -3780,6 +4275,8 @@ export class GanttNode extends BaseNode {
     _labelW() { return this.labelColWidthOverride || LABEL_WIDTH; }
     _hoursW() { return this.hoursColWidthOverride || HOURS_COL_WIDTH; }
     _workdaysW() { return this.workdaysColWidthOverride || WORKDAYS_COL_WIDTH; }
+    _startDateW() { return this.startDateColWidthOverride || DATE_COL_WIDTH; }
+    _endDateW() { return this.endDateColWidthOverride || DATE_COL_WIDTH; }
     _respW() { return this.responsibleColWidthOverride || RESPONSIBLE_COL_WIDTH; }
     // Раунд 135 - "номер раздела повторяется", если ОДИН И ТОТ ЖЕ
     // sectionNumber встречается у задач из РАЗНЫХ Блоков (this.tasks -
@@ -3972,10 +4469,30 @@ export class GanttNode extends BaseNode {
         focusSpacerH.appendChild(addFirstBtn);
         leftGroup.appendChild(focusSpacerH);
 
-        leftGroup.appendChild(makeHeaderCell(numColWidth, '№ п/п', (w) => {
+        const numHeaderCell = makeHeaderCell(numColWidth, '№ п/п', (w) => {
             this.numColWidthOverride = w;
             this._rerenderGanttSlot();
-        }));
+        });
+        // Раунд 187 (по запросу Mr.D: "Кнопка 'Раскрыть всё' в
+        // Диаграмме Ганта - раскрывает все дочерние элементы строк") -
+        // в ту же ячейку, что и подпись "№ п/п" (та уже flex - кнопка
+        // после textContent просто встаёт следующим flex-элементом) -
+        // если групп/подгрупп в диаграмме вообще нет, кнопка ничего не
+        // ломает (_expandAllGroups() просто пройдёт по пустому/
+        // отсутствующему дереву и ничего не изменит).
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.className = 'gantt-small-btn';
+        expandAllBtn.textContent = '⊞';
+        expandAllBtn.title = 'Раскрыть все группы';
+        expandAllBtn.style.cssText = 'position:static; margin-left:4px; flex-shrink:0;';
+        expandAllBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        expandAllBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._expandAllGroups();
+            this._rerenderGanttSlot();
+        });
+        numHeaderCell.appendChild(expandAllBtn);
+        leftGroup.appendChild(numHeaderCell);
         if (this.showSectionColumn) {
             leftGroup.appendChild(makeHeaderCell(this._sectionW(), 'Раздел', (w) => {
                 this.sectionColWidthOverride = w;
@@ -3995,6 +4512,20 @@ export class GanttNode extends BaseNode {
         if (this.showWorkingDaysColumn) {
             leftGroup.appendChild(makeHeaderCell(this._workdaysW(), 'Раб.дн.', (w) => {
                 this.workdaysColWidthOverride = w;
+                this._rerenderGanttSlot();
+            }));
+        }
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта - поля для начала и конца задачи")
+        if (this.showStartDateColumn) {
+            leftGroup.appendChild(makeHeaderCell(this._startDateW(), 'Начало', (w) => {
+                this.startDateColWidthOverride = w;
+                this._rerenderGanttSlot();
+            }));
+        }
+        if (this.showEndDateColumn) {
+            leftGroup.appendChild(makeHeaderCell(this._endDateW(), 'Окончание', (w) => {
+                this.endDateColWidthOverride = w;
                 this._rerenderGanttSlot();
             }));
         }
@@ -4157,6 +4688,44 @@ export class GanttNode extends BaseNode {
             workdaysCell.textContent = `${Helpers.formatNumber(workdaysTotal)}рд`;
             workdaysCell.title = 'Рабочих дней в общем диапазоне проекта';
             leftGroup.appendChild(workdaysCell);
+        }
+
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта") - для строки "Итого" - самая ранняя дата начала/
+        // самая поздняя дата окончания по ВСЕМУ проекту (не
+        // редактируемое поле, тот же принцип, что уже применён к
+        // "Раб.дн." строки "Итого" чуть выше).
+        if (this.showStartDateColumn) {
+            const startDateCell = document.createElement('div');
+            startDateCell.style.cssText = `
+                width: ${this._startDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text);
+                padding: 0 4px;
+                font-variant-numeric: tabular-nums;
+            `;
+            if (this.tasks.length > 0) {
+                const minStart = Math.min(...this.tasks.map(t => t.startOffsetDays));
+                startDateCell.textContent = formatISODate(addDays(anchor, minStart));
+            }
+            leftGroup.appendChild(startDateCell);
+        }
+        if (this.showEndDateColumn) {
+            const endDateCell = document.createElement('div');
+            endDateCell.style.cssText = `
+                width: ${this._endDateW()}px;
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--md-text);
+                padding: 0 4px;
+                font-variant-numeric: tabular-nums;
+            `;
+            if (this.tasks.length > 0) {
+                const maxEnd = Math.max(...this.tasks.map(t => t.startOffsetDays + t.durationDays));
+                endDateCell.textContent = formatISODate(addDays(anchor, maxEnd));
+            }
+            leftGroup.appendChild(endDateCell);
         }
 
         if (this.showResponsibleColumn) {
@@ -5644,6 +6213,25 @@ export class GanttNode extends BaseNode {
             type: 'checkbox',
             get: () => this.showSectionColumn,
             set: (v) => { this.showSectionColumn = !!v; }
+        });
+
+        // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме
+        // Ганта - поля для начала и конца задачи с синхронизацией с
+        // графическим редактором") - тот же подраздел "Колонки", что и
+        // остальные необязательные столбцы выше.
+        fields.push({
+            key: 'showStartDateColumn',
+            label: '"Начало"',
+            type: 'checkbox',
+            get: () => this.showStartDateColumn,
+            set: (v) => { this.showStartDateColumn = !!v; }
+        });
+        fields.push({
+            key: 'showEndDateColumn',
+            label: '"Окончание"',
+            type: 'checkbox',
+            get: () => this.showEndDateColumn,
+            set: (v) => { this.showEndDateColumn = !!v; }
         });
 
         // Строки многоуровневой шапки видны и настраиваются только в

@@ -6,7 +6,7 @@
  * @file    columnFormatting.js
  * @brief   Общая логика оформления столбцов (палитры, применение стилей, поля инспектора) - единая для всех нод с tableData
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

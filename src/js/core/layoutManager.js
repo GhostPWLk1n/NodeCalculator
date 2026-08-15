@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -338,10 +338,15 @@ export class LayoutManager {
                     labelColWidthOverride: n.type === 'gantt' ? n.labelColWidthOverride : undefined,
                     hoursColWidthOverride: n.type === 'gantt' ? n.hoursColWidthOverride : undefined,
                     workdaysColWidthOverride: n.type === 'gantt' ? n.workdaysColWidthOverride : undefined,
+                    startDateColWidthOverride: n.type === 'gantt' ? n.startDateColWidthOverride : undefined,
+                    endDateColWidthOverride: n.type === 'gantt' ? n.endDateColWidthOverride : undefined,
                     responsibleColWidthOverride: n.type === 'gantt' ? n.responsibleColWidthOverride : undefined,
                     calDaysColWidthOverride: n.type === 'gantt' ? n.calDaysColWidthOverride : undefined,
                     // Раунд 133 - колонка "Раздел"
                     showSectionColumn: n.type === 'gantt' ? n.showSectionColumn : undefined,
+                    // Раунд 187 - колонки ручного ввода дат начала/окончания
+                    showStartDateColumn: n.type === 'gantt' ? n.showStartDateColumn : undefined,
+                    showEndDateColumn: n.type === 'gantt' ? n.showEndDateColumn : undefined,
                     sectionColWidthOverride: n.type === 'gantt' ? n.sectionColWidthOverride : undefined,
                     // Раунд 109 - пользовательские цвета ответственных/групп
                     responsibleColors: n.type === 'gantt' && n.responsibleColors ? { ...n.responsibleColors } : undefined,

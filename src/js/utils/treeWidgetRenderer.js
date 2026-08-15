@@ -6,7 +6,7 @@
  * @file    treeWidgetRenderer.js
  * @brief   Общий код виджета Доски "дерево" - используется TreeNode/TreeFormatNode
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

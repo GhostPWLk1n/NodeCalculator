@@ -6,7 +6,7 @@
  * @file    inspectorManager.js
  * @brief   Боковая панель настроек выбранной ноды (цвет, формат значения и т.п.)
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

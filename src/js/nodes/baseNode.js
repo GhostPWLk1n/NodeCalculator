@@ -6,7 +6,7 @@
  * @file    baseNode.js
  * @brief   Базовый класс, от которого наследуются все ноды
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -189,6 +189,30 @@ export class BaseNode {
         editIcon.textContent = '✏️';
         titleContainer.appendChild(editIcon);
 
+        // Раунд 190 (по запросу Mr.D: "разворачивание нод на весь
+        // экран - начинаем с Диаграммы Ганта, потом обобщаем на все
+        // типы") - кнопка показывается ТОЛЬКО если сама нода объявляет
+        // поддержку через supportsFullscreen() (по умолчанию false
+        // здесь, в BaseNode - см. её докстринг) - генерализация на
+        // остальные типы нод позже сводится к переопределению ЭТОГО
+        // ОДНОГО метода в конкретном классе ноды, без изменений в
+        // BaseNode/nodeManager - вся остальная механика (перемещение
+        // живого DOM-узла в полноэкранный оверлей и обратно, см.
+        // window.expandNodeFullscreen() в main.js) уже полностью
+        // общая, ни для одного типа ноды не специфична.
+        if (this.supportsFullscreen()) {
+            const fullscreenIcon = document.createElement('span');
+            fullscreenIcon.className = 'fullscreen-icon';
+            fullscreenIcon.textContent = '⛶';
+            fullscreenIcon.title = 'Развернуть на весь экран';
+            fullscreenIcon.addEventListener('mousedown', (e) => e.stopPropagation());
+            fullscreenIcon.addEventListener('click', (e) => {
+                e.stopPropagation();
+                window.expandNodeFullscreen?.(this.id);
+            });
+            titleContainer.appendChild(fullscreenIcon);
+        }
+
         // Прокси-сокет для выходов (справа)
         if (this.outputs > 0) {
             const titleOutputSocket = document.createElement('div');
@@ -257,6 +281,17 @@ export class BaseNode {
         });
         
         return titleContainer;
+    }
+
+    // Раунд 190 (по запросу Mr.D: "разворачивание нод на весь экран -
+    // начинаем с Диаграммы Ганта, потом обобщаем на все типы") - по
+    // умолчанию НЕТ поддержки (кнопка в заголовке не показывается,
+    // см. createTitle() выше) - конкретные типы нод переопределяют
+    // ЭТИМ ОДНИМ методом, возвращая true, когда готовы - вся
+    // остальная механика полноэкранного режима (window.expandNodeFullscreen()
+    // в main.js) уже общая для ЛЮБОГО типа ноды.
+    supportsFullscreen() {
+        return false;
     }
 
     // Сворачивает/разворачивает ноду до заголовка

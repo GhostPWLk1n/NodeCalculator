@@ -571,6 +571,22 @@
                 </div>
                 <div class="welcome-tip-dots" id="welcomeTipDots"></div>
 
+                <!-- Раунд 186 (по запросу Mr.D: "надо поместить в
+                     приветственный баннер последние проекты. скажем 10
+                     последних в два столбика по 5. сразу после
+                     советов") - наполняется JS (main.js,
+                     renderWelcomeRecentProjects()) при каждом открытии
+                     окна - тот же источник данных, что уже использует
+                     вкладка "Проекты" в настройках (Раунд 184,
+                     window.electron.getRecentProjects()) - сам список
+                     скрывается целиком, если недавних проектов пока
+                     нет (пустое приветствие ничем не хуже показа
+                     пустого блока). -->
+                <div class="welcome-recent-projects" id="welcomeRecentProjects" style="display:none;">
+                    <div class="welcome-recent-projects-heading">📁 Последние проекты</div>
+                    <div class="welcome-recent-projects-grid" id="welcomeRecentProjectsGrid"></div>
+                </div>
+
                 <details class="welcome-licenses">
                     <summary>📜 Лицензии</summary>
                     <div class="welcome-licenses-body">
@@ -587,6 +603,23 @@
                 </label>
                 <button class="welcome-start-btn" id="welcomeStartBtn" type="button">Начать работу</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Раунд 190 (по запросу Mr.D: "разворачивание нод на весь
+         экран") - живой DOM-узел ноды ПЕРЕМЕЩАЕТСЯ сюда целиком
+         (не пересобирается заново, см. window.expandNodeFullscreen()
+         в main.js) - все обработчики событий/состояние/скролл
+         сохраняются как есть, находится обратно по data-node-id при
+         возврате на Лист. -->
+    <div class="node-fullscreen-modal" id="nodeFullscreenModal" style="display:none;">
+        <div class="node-fullscreen-backdrop" id="nodeFullscreenBackdrop"></div>
+        <div class="node-fullscreen-panel">
+            <div class="node-fullscreen-toolbar">
+                <span class="node-fullscreen-hint">Esc - вернуться на Лист</span>
+                <button class="node-fullscreen-close-btn" id="nodeFullscreenCloseBtn" type="button" title="Свернуть (Esc)">✕</button>
+            </div>
+            <div class="node-fullscreen-content" id="nodeFullscreenContent"></div>
         </div>
     </div>
 

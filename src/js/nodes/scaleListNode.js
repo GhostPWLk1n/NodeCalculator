@@ -6,7 +6,7 @@
  * @file    scaleListNode.js
  * @brief   Нода умножения списка на число (LIST → LIST)
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

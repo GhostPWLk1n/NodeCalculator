@@ -6,7 +6,7 @@
  * @file    nodeManager.js
  * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
  * @author  Pavel Fomin
- * @version 1.8.64
+ * @version 1.8.69
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -240,7 +240,19 @@ export class NodeManager {
             if (e.target.closest('.collapse-icon')) return;
             if (e.target.closest('.title-text')) return;
             if (e.target.closest('.edit-icon')) return;
+            if (e.target.closest('.fullscreen-icon')) return;
             if (e.target.closest('.title-input')) return;
+            // Раунд 190 (по запросу Mr.D: "разворачивание нод на весь
+            // экран") - обработчик навешен ПРЯМО на сам DOM-элемент
+            // (не делегирован через #nodesContainer) - остаётся
+            // физически привязан к узлу, даже когда тот временно
+            // перемещён в полноэкранный оверлей (см.
+            // window.expandNodeFullscreen() в main.js) - без этой
+            // проверки startDragNode() считал бы координаты
+            // относительно холста, которого узел сейчас физически не
+            // касается, что дало бы бессмысленный "прыжок" при
+            // возврате на Лист.
+            if (e.target.closest('.node-fullscreen-content')) return;
             this.startDragNode(e, node.id);
         });
         
