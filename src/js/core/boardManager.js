@@ -6,7 +6,7 @@
  * @file    boardManager.js
  * @brief   Доски (вкладки) для визуализации расчётных данных - виджеты от нод "Дашборд"
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

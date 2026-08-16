@@ -6,7 +6,7 @@
  * @file    calendarNode.js
  * @brief   Визуальный календарь (сетка месяца) для ручной разметки праздников/дней - источник для сокета "Праздники" у GanttNode
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

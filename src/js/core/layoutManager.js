@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -363,6 +363,8 @@ export class LayoutManager {
                     taskSectionOverrides: n.type === 'gantt' && n.taskSectionOverrides && Object.keys(n.taskSectionOverrides).length ? { ...n.taskSectionOverrides } : undefined,
                     // Раунд 180 - порядок строк, изменённый перетаскиванием за ручку
                     taskOrderOverrides: n.type === 'gantt' && n.taskOrderOverrides && Object.keys(n.taskOrderOverrides).length ? { ...n.taskOrderOverrides } : undefined,
+                    // Раунд 191 - явная, хранимая принадлежность задач группам
+                    taskGroupMembership: n.type === 'gantt' && n.taskGroupMembership && Object.keys(n.taskGroupMembership).length ? { ...n.taskGroupMembership } : undefined,
                     // Раунд 137 - связи между задачами
                     dependencies: n.type === 'gantt' && n.dependencies?.length ? n.dependencies.map(d => ({ ...d })) : undefined,
                     collapsedGroups: n.type === 'gantt' && n.collapsedGroups ? { ...n.collapsedGroups } : undefined,

@@ -6,7 +6,7 @@
  * @file    textNode.js
  * @brief   Узел "Текст" - принимает данные любого типа, преобразует в строку, поддерживает Markdown
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

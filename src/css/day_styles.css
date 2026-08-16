@@ -3639,10 +3639,6 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 .gantt-small-btn:hover { background: var(--md-secondary); color: var(--md-surface); }
 
 .gantt-row-handle {
-    position: absolute;
-    left: -14px;
-    top: 50%;
-    transform: translateY(-50%);
     font-size: 12px;
     line-height: 1;
     color: var(--md-text-secondary);
@@ -4186,6 +4182,8 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     flex: 1;
     overflow: auto;
     padding: 16px;
+    display: flex;
+    flex-direction: column;
 }
 .node-fullscreen-content .node {
     position: static !important;
@@ -4196,4 +4194,41 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     cursor: default;
     box-shadow: none;
     border: none;
+    display: flex !important;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+.node-fullscreen-content .node .node-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+.node-fullscreen-content .node .node-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.node-fullscreen-content .node .gantt-container-slot {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.node-fullscreen-content .node .gantt-outer-scroll {
+    flex: 1;
+    min-height: 0;
+}
+.node-fullscreen-content .node .gantt-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.node-fullscreen-content .node .gantt-rows-scroll {
+    flex: 1;
+    min-height: 0;
+    max-height: none !important;
+    height: auto !important;
 }

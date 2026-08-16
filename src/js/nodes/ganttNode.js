@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -390,6 +390,22 @@ export class GanttNode extends BaseNode {
         // this.tasks, но ДО группировки по разделам (см.
         // _applyTaskOrderOverrides() дальше по файлу).
         this.taskOrderOverrides = config.taskOrderOverrides ? { ...config.taskOrderOverrides } : {};
+        // Раунд 191 (по запросу Mr.D: "закроем гештальт по структуре
+        // вложений строк... пересоберём сам движок, отвечающий за
+        // вложение - на данной стадии разработки мы ещё можем себе
+        // это позволить") - {[taskKey]: originKey группы | '__root__'} -
+        // ЯВНАЯ, ХРАНИМАЯ принадлежность ОБЫЧНОЙ (не заголовочной)
+        // задачи конкретной группе - когда задана, ПОБЕЖДАЕТ позиционный
+        // вывод (см. _applyPromotedSections()). Устраняет саму ПРИЧИНУ
+        // архитектурной проблемы Раунда 189 - раньше принадлежность
+        // определялась ИСКЛЮЧИТЕЛЬНО близостью в плоском списке задач,
+        // и любое перетаскивание группы МИМО обычной задачи меняло её
+        // "видимую" позицию, а значит и группу, в которую та попадала,
+        // даже если пользователь этого не хотел. Отсутствие записи для
+        // конкретного ключа = "явного членства ещё нет" - обратная
+        // совместимость со старыми/нетронутыми задачами, для них
+        // работает прежний позиционный вывод без изменений.
+        this.taskGroupMembership = config.taskGroupMembership ? { ...config.taskGroupMembership } : {};
         // Переименование задачи ПРЯМО на диаграмме - тот же принцип, что
         // taskDurationOverrides/taskDates (переопределение поверх
         // значения из источника, по taskKey - стабильному идентификатору,
@@ -1692,9 +1708,21 @@ export class GanttNode extends BaseNode {
                         insertBeforeEl.classList.add('gantt-row-drop-before');
                         lastMarkedEl = insertBeforeEl;
                     } else {
-                        const lastEl = siblingRows[siblingRows.length - 1];
-                        dropTargetKey = (lastEl && lastEl !== row) ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
-                        if (lastEl && lastEl !== row) {
+                        // Раунд 191 (багфикс, найден при тестировании) -
+                        // siblingRows МОЖЕТ включать саму перетаскиваемую
+                        // строку ПОСЛЕДНИМ элементом массива (если та
+                        // физически стоит в конце списка) - искать нужно
+                        // ПОСЛЕДНИЙ элемент, который НЕ является самой
+                        // перетаскиваемой строкой, а не просто "последний
+                        // элемент массива" - иначе перетаскивание
+                        // ПОСЛЕДНЕЙ в списке строки/группы дальше вниз
+                        // молча ничего не делало (dropTargetKey=null,
+                        // никакого индикатора точки вставки тоже не
+                        // показывалось).
+                        const others = siblingRows.filter(el => el !== row);
+                        const lastEl = others[others.length - 1];
+                        dropTargetKey = lastEl ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
+                        if (lastEl) {
                             lastEl.classList.add('gantt-row-drop-after');
                             lastMarkedEl = lastEl;
                         }
@@ -1706,6 +1734,14 @@ export class GanttNode extends BaseNode {
                     row.classList.remove('gantt-row-dragging');
                     clearMark();
                     if (dropTargetKey !== null && dropTargetKey !== taskKey) {
+                        // Раунд 191 (по запросу Mr.D: "закроем гештальт
+                        // по структуре вложений строк") - фиксируем
+                        // ТЕКУЩЕЕ (до этого перетаскивания) членство
+                        // ВСЕХ задач ПЕРЕД тем, как порядок изменится -
+                        // "случайные соседи" не должны поменять группу
+                        // просто из-за того, что рядом с ними что-то
+                        // передвинули.
+                        this._snapshotCurrentGroupMembership();
                         // Раунд 187 (по запросу Mr.D: "Перетаскивание
                         // группы строк в Диаграмме Ганта - возможность
                         // перетаскивать несколько выделенных строк
@@ -2596,9 +2632,21 @@ export class GanttNode extends BaseNode {
                         insertBeforeEl.classList.add('gantt-row-drop-before');
                         lastMarkedEl = insertBeforeEl;
                     } else {
-                        const lastEl = siblingRows[siblingRows.length - 1];
-                        dropTargetKey = (lastEl && lastEl !== row) ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
-                        if (lastEl && lastEl !== row) {
+                        // Раунд 191 (багфикс, найден при тестировании) -
+                        // siblingRows МОЖЕТ включать саму перетаскиваемую
+                        // строку ПОСЛЕДНИМ элементом массива (если та
+                        // физически стоит в конце списка) - искать нужно
+                        // ПОСЛЕДНИЙ элемент, который НЕ является самой
+                        // перетаскиваемой строкой, а не просто "последний
+                        // элемент массива" - иначе перетаскивание
+                        // ПОСЛЕДНЕЙ в списке строки/группы дальше вниз
+                        // молча ничего не делало (dropTargetKey=null,
+                        // никакого индикатора точки вставки тоже не
+                        // показывалось).
+                        const others = siblingRows.filter(el => el !== row);
+                        const lastEl = others[others.length - 1];
+                        dropTargetKey = lastEl ? this._resolveDropTargetKey(lastEl.dataset.taskKey) : null;
+                        if (lastEl) {
                             lastEl.classList.add('gantt-row-drop-after');
                             lastMarkedEl = lastEl;
                         }
@@ -2614,20 +2662,36 @@ export class GanttNode extends BaseNode {
                         // Ключи ВСЕЙ группы (заголовок + вложенные
                         // задачи рекурсивно) - точка вставки ВНУТРИ
                         // ЭТОЙ ЖЕ группы (сброс "внутрь себя") -
-                        // защита той же формы, что уже применена к
-                        // мультивыбору (Раунд 187) - откат без действия,
-                        // не пытаемся угадать поведение для этого
-                        // случая.
+                        // единственная ОСТАВШАЯСЯ защита (не пытаемся
+                        // угадать поведение для этого случая) - Раунд
+                        // 189's _wouldGroupDropAbsorb() убрана целиком
+                        // (см. Раунд 191 ниже - причина, по которой она
+                        // вообще понадобилась, устранена архитектурно).
                         const nestedKeys = this._allTasksRecursive(group).map(t => t.taskKey || t.name);
                         const groupKeys = [originKey, ...nestedKeys];
-                        // Раунд 189 (по жалобе Mr.D: "перетаскивание
-                        // группы не хватает вложенные в группу строки") -
-                        // вторая защита - точка вставки НЕ должна
-                        // "поглотить" соседнюю обычную задачу или
-                        // расщепить ЧУЖУЮ группу (см. докстринг
-                        // _wouldGroupDropAbsorb()) - тот же откат без
-                        // действия, что и при вставке внутрь себя.
-                        if (!groupKeys.includes(dropTargetKey) && !this._wouldGroupDropAbsorb(dropTargetKey, groupKeys)) {
+                        if (!groupKeys.includes(dropTargetKey)) {
+                            // Раунд 191 (по запросу Mr.D: "закроем
+                            // гештальт по структуре вложений строк...
+                            // пересоберём сам движок - на данной стадии
+                            // разработки мы ещё можем себе это
+                            // позволить") - НАСТОЯЩЕЕ архитектурное
+                            // решение вместо патча Раунда 189
+                            // (_wouldGroupDropAbsorb(), БЛОКИРОВАЛА
+                            // перенос при малейшем риске поглощения,
+                            // вместо того чтобы сделать перенос
+                            // БЕЗОПАСНЫМ). Фиксируем ТЕКУЩЕЕ (до этого
+                            // перетаскивания) членство ВСЕХ задач - у
+                            // "случайных соседей" (не входящих в
+                            // groupKeys) появляется ЯВНАЯ, ХРАНИМАЯ
+                            // принадлежность К ИХ ТЕКУЩЕЙ группе - какой
+                            // бы ни оказалась их НОВАЯ позиция в списке
+                            // после переноса, _applyPromotedSections()
+                            // теперь читает ЭТУ явную запись вместо
+                            // вывода по соседству - поглощение/
+                            // расщепление физически больше не может
+                            // произойти, перенос группы теперь БЕЗОПАСЕН
+                            // в ЛЮБУЮ позицию (кроме "внутрь себя" самой).
+                            this._snapshotCurrentGroupMembership();
                             let afterKey = dropTargetKey;
                             groupKeys.forEach(k => {
                                 this.taskOrderOverrides[k] = afterKey;
@@ -2702,7 +2766,14 @@ export class GanttNode extends BaseNode {
             removeGroupBtn.className = 'gantt-small-btn';
             removeGroupBtn.textContent = '−';
             removeGroupBtn.title = 'Удалить группу целиком';
-            removeGroupBtn.style.cssText = 'display:none; left:-13px; top:1px;';
+            // Раунд 193 (та же причина, что у .gantt-row-handle -
+            // "Ручки не появились") - left:-13px выводил кнопку ЗА
+            // границы своей 20px-колонки (toggleWrap) - обрезалась тем
+            // же overflow-x:clip у .gantt-rows-scroll. Центрируем
+            // (left:50%/top:50% + translate(-50%,-50%)) - накладывается
+            // ПОВЕРХ иконки переключателя (▾/▸) на hover, полностью
+            // внутри уже выделенной для неё колонки, без overflow.
+            removeGroupBtn.style.cssText = 'display:none; left:50%; top:50%; transform:translate(-50%,-50%);';
             removeGroupBtn.addEventListener('mousedown', (e) => e.stopPropagation());
             removeGroupBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -3561,40 +3632,6 @@ export class GanttNode extends BaseNode {
         return rawKey;
     }
 
-    // Раунд 189 (по жалобе Mr.D: "перетаскивание группы не хватает
-    // вложенные в группу строки") - НАЙДЕНА причина при тестировании:
-    // раздел в этой системе "открыт" (поглощает ВСЕ последующие задачи),
-    // пока не встретит СЛЕДУЮЩИЙ маркер раздела - явной "границы конца"
-    // не существует (см. докстринг _applyPromotedSections()). Если
-    // после переноса группы прямо ЗА её последней вложенной задачей
-    // оказывается ОБЫЧНАЯ задача (не заголовок ДРУГОГО раздела) - та
-    // задача молча становится частью перенесённой группы, хотя
-    // должна была остаться отдельной строкой. ТА ЖЕ проблема грозит и
-    // при попытке бросить группу ПОСРЕДИ списка задач ДРУГОЙ группы -
-    // это "расщепило" бы чужую группу, а хвост её задач так же молча
-    // поглотился бы перенесённой. Обе ситуации сводятся к ОДНОЙ
-    // проверке: что идёт СРАЗУ ПОСЛЕ точки вставки, если пропустить
-    // ключи САМОЙ перемещаемой группы (та физически ещё стоит на
-    // старом месте, могла случайно оказаться "соседом" точки вставки) -
-    // если это ОБЫЧНАЯ задача (не сама точка входа в другой раздел) -
-    // вставка небезопасна.
-    _wouldGroupDropAbsorb(dropTargetKey, groupKeys) {
-        let startIdx;
-        if (dropTargetKey === '__start__') {
-            startIdx = 0;
-        } else {
-            const idx = this.tasks.findIndex(t => (t.taskKey || t.name) === dropTargetKey);
-            if (idx === -1) return false; // цель не найдена - решать нечего, пусть остальная логика сама разберётся
-            startIdx = idx + 1;
-        }
-        for (let i = startIdx; i < this.tasks.length; i++) {
-            const key = this.tasks[i].taskKey || this.tasks[i].name;
-            if (groupKeys.includes(key)) continue; // сама перемещаемая группа - не считается "соседом"
-            return !this.promotedSectionKeys.has(key);
-        }
-        return false; // дальше по списку ничего нет - конец, безопасно
-    }
-
     // Раунд 187 (по запросу Mr.D: "Кнопка 'Раскрыть всё' в Диаграмме
     // Ганта - раскрывает все дочерние элементы строк") - обходит
     // дерево групп/подгрупп РЕКУРСИВНО (та же структура, что уже
@@ -3849,46 +3886,83 @@ export class GanttNode extends BaseNode {
     // (который сам - уровень 2), автоматически становится уровнем 3
     // ("ПодПодраздел") - вложенность определяется НЕ явным числом,
     // выбираемым пользователем, а СТРУКТУРОЙ (что было открыто последним).
+    // Раунд 191 (по запросу Mr.D: "закроем гештальт по структуре
+    // вложений строк... пересоберём сам движок") - вызывается ПЕРЕД
+    // ЛЮБЫМ перетаскиванием (см. все три обработчика onUp ниже), ДО
+    // применения taskOrderOverrides - фиксирует ЯВНОЕ членство
+    // (taskGroupMembership) для ВСЕХ задач, у которых его ЕЩЁ НЕТ,
+    // основываясь на ТЕКУЩЕЙ (до этого перетаскивания) структуре
+    // taskGroups. Это и есть ключевой момент фикса: "случайные соседи"
+    // задачи (не участвующие в самом перетаскивании) получают свою
+    // ТЕКУЩУЮ принадлежность зафиксированной ДО того, как порядок
+    // изменится - последующий _applyPromotedSections() уже не сможет
+    // случайно "поглотить" их в чужую группу или "расщепить" их
+    // собственную, какой бы ни оказалась их новая позиция в списке.
+    _snapshotCurrentGroupMembership() {
+        const walk = (groups) => {
+            (groups || []).forEach(g => {
+                (g.tasks || []).forEach(t => {
+                    const key = t.taskKey || t.name;
+                    if (this.taskGroupMembership[key] === undefined) {
+                        this.taskGroupMembership[key] = g.originKey || '__root__';
+                    }
+                });
+                walk(g.subgroups);
+            });
+        };
+        walk(this.taskGroups);
+    }
+
+    // Раунд 191 - восстанавливает полную цепочку ИМЁН предков группы
+    // (от корня до неё самой) через parentGroup - в отличие от
+    // stack.map(g => g.name) (который отражает только "текущее"
+    // состояние прохода), работает для ЛЮБОЙ группы дерева в любой
+    // момент - нужно для задач с явным membership (taskGroupMembership),
+    // указывающих на группу, которая уже может быть НЕ на вершине стека.
+    _groupChainNames(group) {
+        const chain = [];
+        let cur = group;
+        while (cur) {
+            chain.unshift(cur.name);
+            cur = cur.parentGroup;
+        }
+        return chain;
+    }
+
     _applyPromotedSections() {
         this.promotedNameToKey = new Map();
         if (!this.promotedSectionKeys || this.promotedSectionKeys.size === 0) return;
 
-        // stack[i] - раздел, ОТКРЫТЫЙ на уровне i+1, в который сейчас
-        // попадают и задачи, и следующие "Подраздел"-строки (пока не
-        // встретится либо новый "Раздел" уровня 1, либо конец списка).
+        // stack[i] - раздел, ОТКРЫТЫЙ на уровне i+1 (позиционный вывод -
+        // fallback для задач БЕЗ явного membership, см. ниже).
         const stack = [];
         const rootGroups = [];
         const ungroupedBefore = [];
+        // Раунд 191 - индекс originKey -> объект группы, построенный ПО
+        // ХОДУ этого же прохода - нужен для задач с ЯВНЫМ членством
+        // (taskGroupMembership), указывающих на группу, которая может НЕ
+        // быть "текущей открытой" на стеке в момент обработки именно
+        // ЭТОЙ задачи (в этом и был весь смысл фикса - группа-цель
+        // может быть где угодно в уже построенной части дерева).
+        const groupByOriginKey = new Map();
+
         this.tasks.forEach(t => {
             const key = t.taskKey || t.name;
             if (this.promotedSectionKeys.has(key)) {
-                // Раунд 150 (уточнение по итогам обсуждения с Mr.D) -
-                // this.sectionLevels теперь хранит ЯВНОЕ число (не
-                // относительный маркер 'sub') - "Раздел" всегда пишет 1,
-                // "Подраздел" на СВЕЖЕЙ строке пишет 2 (сосед ближайшего
-                // "Раздела"), повторный клик "Подраздел" на УЖЕ
-                // существующем разделе/подразделе - increment (+1) -
-                // см. promoteToSubsection() ниже. Здесь просто читаем
-                // готовое число - никакой стековой арифметики на этом
-                // шаге больше не нужно, только truncation (закрытие
-                // более глубоких разделов) ниже.
                 const newLevel = this.sectionLevels.get(key) ?? 1;
-                // "Раздел" (level=1) закрывает ВСЕ текущие открытые
-                // разделы (stack становится пустым). "Подраздел"
-                // закрывает только те, что ГЛУБЖЕ нового уровня (стек
-                // обрезается до newLevel-1 элементов) - те, что
-                // МЕЛЬЧЕ/РАВНЫ, остаются открытыми как родители.
                 stack.length = Math.min(stack.length, newLevel - 1);
-                // Раунд 151 (по жалобе Mr.D: "строки с одинаковым
-                // именем иногда вызывают непредвиденное поведение") -
-                // originKey хранится НАПРЯМУЮ на объекте группы (не
-                // только в promotedNameToKey - та карта индексирована по
-                // ИМЕНИ и ломается, если два раздела совпадают по имени,
-                // вторая запись тихо перезаписывает первую) - все места,
-                // которым нужен originKey группы, теперь читают
-                // group.originKey напрямую, без поиска.
-                const newGroup = { name: t.name, level: newLevel, tasks: [], subgroups: [], originKey: key };
+                // Раунд 191 - parentGroup - ЯВНАЯ ссылка на родителя
+                // ЭТОЙ группы (не только позиция в stack на момент
+                // создания) - позволяет восстановить полную цепочку
+                // предков (_groupChainNames()) для ЛЮБОЙ группы в дереве
+                // в любой момент, а не только пока она "на вершине
+                // стека" - нужно, чтобы задачи с явным membership,
+                // указывающие на УЖЕ ЗАКРЫТУЮ (не текущую) группу, всё
+                // равно получали корректный groupChain для наследования
+                // цвета.
+                const newGroup = { name: t.name, level: newLevel, tasks: [], subgroups: [], originKey: key, parentGroup: stack.length > 0 ? stack[stack.length - 1] : null };
                 this.promotedNameToKey.set(t.name, key);
+                groupByOriginKey.set(key, newGroup);
                 if (stack.length === 0) {
                     rootGroups.push(newGroup);
                 } else {
@@ -3897,19 +3971,47 @@ export class GanttNode extends BaseNode {
                 stack.push(newGroup);
                 return; // строка-раздел сама не остаётся задачей
             }
-            if (stack.length > 0) {
+
+            // Раунд 191 (по запросу Mr.D: "закроем гештальт по структуре
+            // вложений строк... пересоберём сам движок") - ЯВНОЕ
+            // членство ПОБЕЖДАЕТ позиционный вывод, когда задано.
+            const explicitParent = this.taskGroupMembership[key];
+            let targetGroup = null;
+            let isExplicitRoot = false;
+            if (explicitParent === '__root__') {
+                isExplicitRoot = true;
+            } else if (explicitParent !== undefined) {
+                targetGroup = groupByOriginKey.get(explicitParent) || null;
+                // targetGroup остаётся null, если explicitParent
+                // указывает на группу, которой в ЭТОМ проходе не
+                // существует (была удалена/переименована в обычную
+                // строку, или её раздел ещё "не дошла очередь"
+                // построиться дальше по списку - крайне маловероятно
+                // при нормальной работе, но не должно приводить к
+                // потере задачи) - в этом случае откатываемся на
+                // позиционный вывод ниже, как будто явного membership
+                // не было вовсе.
+            }
+
+            if (targetGroup) {
+                t.groupName = targetGroup.name;
+                t.groupChain = this._groupChainNames(targetGroup);
+                targetGroup.tasks.push(t);
+            } else if (isExplicitRoot) {
+                t.groupName = null;
+                t.groupChain = [];
+                ungroupedBefore.push(t);
+            } else if (stack.length > 0) {
+                // Позиционный вывод (как раньше) - для задач БЕЗ явного
+                // membership (обратная совместимость).
                 const deepest = stack[stack.length - 1];
                 t.groupName = deepest.name;
                 // Раунд 153 (по запросу Mr.D: "строки с задачами должны
                 // окрашиваться в цвет раздела... разделы меняют цвет, а
-                // задачи остаются по умолчанию") - причина: цвет искался
-                // ТОЛЬКО по имени САМОГО ГЛУБОКОГО раздела (t.groupName) -
-                // если пользователь покрасил ВЕРХНИЙ "Раздел 1", а
-                // задача лежит во вложенном "Подраздел 1" (у которого
-                // своего цвета нет), цвет не находился вообще. groupChain -
-                // ПОЛНАЯ цепочка предков (от корня до самого глубокого) -
-                // позволяет искать цвет СНИЗУ ВВЕРХ, наследуя от
-                // ближайшего ПОКРАШЕННОГО предка (см. _colorForTask()
+                // задачи остаются по умолчанию") - groupChain - полная
+                // цепочка предков (от корня до самого глубокого) -
+                // позволяет искать цвет снизу вверх, наследуя от
+                // ближайшего покрашенного предка (см. _colorForTask()
                 // ниже и ganttCalendarExport.js).
                 t.groupChain = stack.map(g => g.name);
                 deepest.tasks.push(t);
@@ -3970,6 +4072,26 @@ export class GanttNode extends BaseNode {
     }
 
     demoteFromSection(taskKey) {
+        // Раунд 191 (по запросу Mr.D: "закроем гештальт по структуре
+        // вложений строк... пересоберём сам движок") - ДО удаления из
+        // promotedSectionKeys - находим, чьим родителем БЫЛ этот раздел
+        // (через this.taskGroups, ещё отражающий ПРЕЖНЮЮ структуру) -
+        // демоутнутая строка получает ЯВНОЕ членство В ЭТОМ РОДИТЕЛЕ
+        // (или '__root__', если раздел был верхнего уровня) - без этого
+        // она "выпала" бы обратно в позиционный вывод, теряя ту же
+        // гарантию устойчивости, что уже есть у остальных обычных строк.
+        const findGroup = (groups) => {
+            for (const g of groups || []) {
+                if (g.originKey === taskKey) return g;
+                const found = findGroup(g.subgroups);
+                if (found) return found;
+            }
+            return null;
+        };
+        const group = findGroup(this.taskGroups);
+        if (group) {
+            this.taskGroupMembership[taskKey] = group.parentGroup?.originKey || '__root__';
+        }
         this.promotedSectionKeys.delete(taskKey);
         this.sectionLevels.delete(taskKey);
         if (window.nodeManager) window.nodeManager.calculateAll();

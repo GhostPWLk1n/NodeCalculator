@@ -3906,17 +3906,26 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
    Раунд 115/146) - тот же визуальный символ (⠿), что уже используют
    ручки виджетов Досок (.board-widget-drag-handle). */
 .gantt-row-handle {
-    position: absolute;
-    left: -14px;
-    top: 50%;
-    transform: translateY(-50%);
+    /* Раунд 193 (по жалобе Mr.D, найдено при тестировании
+       полноэкранного режима: "Ручки не появились") - НАЙДЕНА причина:
+       position:absolute; left:-14px; выводил ручку ЗА границы своей
+       16px-колонки (.gantt-row-focus-col) - .gantt-rows-scroll,
+       содержащий строку, намеренно имеет overflow-x: clip (единственный
+       вертикальный скролл строк, без второго горизонтального, см.
+       докстринг rowsWrap.style.cssText) - что угодно, торчащее НАРУЖУ
+       за левый край этого контейнера, обрезается им, вне зависимости
+       от padding каких-либо более дальних предков (.node и т.п.).
+       Судя по всему, ручка была невидима визуально ещё с Раунда 147/180 -
+       вся проверка перетаскивания проводилась через изолированные
+       JS-тесты (Node.js без настоящего рендеринга не может отследить
+       визуальное обрезание) - баг обнаружился только сейчас, когда
+       Mr.D впервые проверил вживую в браузере. Убрано абсолютное
+       позиционирование - ручка теперь просто центрируется в СВОЕЙ
+       колонке (.gantt-row-focus-col уже flex/center) - никакого
+       overflow, обрезать больше нечего. */
     font-size: 12px;
     line-height: 1;
     color: var(--md-text-secondary);
-    /* Раунд 180 (по запросу Mr.D: "задействовать ручку, чтобы строку
-       можно было перетащить схватившись за ручку") - grab/grabbing
-       вместо default - визуальная подсказка "это можно тащить",
-       которой не было, пока ручка только "глотала" клики. */
     cursor: grab;
     user-select: none;
     z-index: 10;
@@ -4514,6 +4523,19 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     flex: 1;
     overflow: auto;
     padding: 16px;
+    /* Раунд 192 (по жалобе Mr.D: "если диаграмму перевести в
+       полноэкранный режим, то она не занимает всю высоту, а только
+       часть - видимо где-то не зацепили этот хук") - НЕ ХВАТАЛО именно
+       flex-раскладки здесь и ниже по цепочке - .node ПРОСТО ЛЕЖАЛ
+       внутри как обычный блочный элемент, со своей "естественной"
+       высотой контента (та, в свою очередь, у Диаграммы Ганта
+       определяется ФИКСИРОВАННЫМ px-ограничением, заданным ИНЛАЙН-
+       стилем из JS при обычном канвасном рендере, см.
+       .gantt-rows-scroll ниже) - высота полноэкранной панели вообще
+       ни на что не влияла. display:flex здесь - НАЧАЛО цепочки,
+       которая тянется вплоть до самой прокручиваемой области строк. */
+    display: flex;
+    flex-direction: column;
 }
 /* .node в норме position:absolute с left/top в инлайн-style (координаты
    на холсте) - здесь эта позиция полностью гасится, чтобы узел вписался
@@ -4528,4 +4550,64 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
     cursor: default;
     box-shadow: none;
     border: none;
+    /* Раунд 192 - .node сам становится flex-контейнером (растягивается
+       на всю высоту .node-fullscreen-content через flex:1 у родителя
+       выше) и flex-column для СВОЕГО содержимого (.node-container) -
+       продолжение цепочки. */
+    display: flex !important;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+.node-fullscreen-content .node .node-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+.node-fullscreen-content .node .node-content {
+    flex: 1;
+    /* min-height:0 - КЛЮЧЕВОЕ свойство в ЛЮБОМ звене этой цепочки -
+       без него flex-элемент по умолчанию не может СЖАТЬСЯ меньше
+       высоты своего содержимого, что на практике означает "просто
+       игнорирует flex:1 и растягивает родителя ПОД СЕБЯ" - именно
+       ЭТО и было первопричиной жалобы (какое-то из промежуточных
+       звеньев цепочки эту растяжку "проглатывало"). */
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.node-fullscreen-content .node .gantt-container-slot {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.node-fullscreen-content .node .gantt-outer-scroll {
+    flex: 1;
+    min-height: 0;
+}
+/* .gantt-inner в норме - НЕ flex-контейнер, обычный блочный поток
+   (шапка дат + строка заголовков колонок + rowsWrap друг под другом) -
+   здесь становится flex-column ДОПОЛНИТЕЛЬНО к своей обычной ширине
+   (та задаётся инлайн-стилем из JS, `width: ${leftWidth+timelineWidth}px`,
+   не трогается) - высота во весь рост .gantt-outer-scroll позволяет
+   ПОСЛЕДНЕМУ в потоке rowsWrap (flex:1) вытянуться на всё оставшееся
+   место под уже отрисованной шапкой/строкой заголовков колонок.*/
+.node-fullscreen-content .node .gantt-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.node-fullscreen-content .node .gantt-rows-scroll {
+    flex: 1;
+    min-height: 0;
+    /* !important - здесь ОБЯЗАТЕЛЕН: rowsWrap.style.height/maxHeight
+       выставлены ИНЛАЙН-стилем из JS (createGanttArea(), под обычный
+       канвасный/виджетный рендер, фиксированным числом строк или
+       this.wrapHeight) - инлайн-стиль всегда побеждает обычное
+       правило таблицы стилей по специфичности, обойти это можно
+       только явным !important. */
+    max-height: none !important;
+    height: auto !important;
 }

@@ -6,7 +6,7 @@
  * @file    listConvertNode.js
  * @brief   "Преобразование списка" - контейнер преобразования Таблица/Список -> редактируемый Список
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 

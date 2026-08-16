@@ -6,7 +6,7 @@
  * @file    tableWidgetRenderer.js
  * @brief   Общий код виджета Доски "таблица" - используется всеми нодами, отдающими Data-таблицу
  * @author  Pavel Fomin
- * @version 1.8.69
+ * @version 1.8.72
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
