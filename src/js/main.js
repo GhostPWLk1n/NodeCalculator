@@ -6,7 +6,7 @@
  * @file    main.js
  * @brief   Точка входа рендерера: регистрация типов нод, глобальные window.*-функции, интеграция с Electron
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -20,6 +20,7 @@ import { Renderer } from './core/renderer.js';
 import { LayoutManager } from './core/layoutManager.js';
 import { BoardManager } from './core/boardManager.js';
 import { InspectorManager } from './core/inspectorManager.js';
+import { HistoryManager } from './core/historyManager.js';
 import { SidebarSettings } from './utils/sidebarSettings.js';
 import { NumberNode } from './nodes/numberNode.js';
 import { BooleanNode } from './nodes/booleanNode.js';
@@ -51,6 +52,8 @@ import { ProxyNode } from './nodes/proxyNode.js';
 import { TreeNode } from './nodes/treeNode.js';
 import { TreeFormatNode } from './nodes/treeFormatNode.js';
 import { TreeToTableNode } from './nodes/treeToTableNode.js';
+import { BuildingSectionNode } from './nodes/buildingSectionNode.js';
+import { QuarterAggregatorNode } from './nodes/quarterAggregatorNode.js';
 import { TreeViewerNode } from './nodes/treeViewerNode.js';
 import { TableInjectNode } from './nodes/tableInjectNode.js';
 import { TableRemoveNode } from './nodes/tableRemoveNode.js';
@@ -352,6 +355,18 @@ nodeManager.registerNodeType('proxy', ProxyNode);
 nodeManager.registerNodeType('tree', TreeNode);
 nodeManager.registerNodeType('treeFormat', TreeFormatNode);
 nodeManager.registerNodeType('treeToTable', TreeToTableNode);
+// Раунд 198 (по запросу Mr.D: "распознавание табличных данных...
+// распознать как блок секцию здания") - принимает две уже
+// импортированные таблицы (XlsxImportNode) - "Этажи" (детально по
+// помещениям) и "Общая площадь" (сводно) - см. докстринг
+// buildingSectionNode.js про то, как код секции определяется
+// автоматически по данным этажей.
+nodeManager.registerNodeType('buildingSection', BuildingSectionNode);
+// Раунд 199 (по запросу Mr.D: "узел, который все эти секции сможет
+// собрать в кварталы") - собирает НЕСКОЛЬКО выходов buildingSection в
+// одну сводную таблицу ТЭП - см. её докстринг про то, что считается
+// автоматически, а что честно остаётся пустым для ручного заполнения.
+nodeManager.registerNodeType('quarterAggregator', QuarterAggregatorNode);
 nodeManager.registerNodeType('treeViewer', TreeViewerNode);
 nodeManager.registerNodeType('tableInject', TableInjectNode);
 nodeManager.registerNodeType('tableRemove', TableRemoveNode);
@@ -589,6 +604,17 @@ window.addNode = (type, x, y, config = {}) => {
     const node = window.nodeManager.addNode(type, x, y, config);
     if (node && window.renderer) {
         window.renderer.drawAllConnections(window.connectionManager?.getConnections() || []);
+    }
+    // Раунд 197 (по жалобе Mr.D: "создание узла не всегда попадает в
+    // дельта-журнал") - НАЙДЕНА причина: этот путь создания ноды
+    // никогда не вызывал calculateAll() вовсе - ни dirty-флаг (Раунд
+    // 184), ни контрольная точка истории (Раунд 196) не срабатывали,
+    // они ОБА хукнуты именно в nodeManager.calculateAll(). "Не всегда"
+    // (а не "никогда") объясняется тем, что новая нода МОГЛА попасть
+    // в диф случайно, как побочный эффект СЛЕДУЮЩЕГО действия, которое
+    // calculateAll() всё-таки вызывало.
+    if (node && window.nodeManager) {
+        window.nodeManager.calculateAll();
     }
     // Обновляем счетчики
     if (window.updateCounters) {
@@ -1189,6 +1215,118 @@ window.markProjectDirty = () => {
     window.electron?.markDirty();
 };
 
+// Раунд 196 (по запросу Mr.D: "давай начнём делать дельта-журнал,
+// сложно, но нужно... хотелось как раз подойти к undo/redo") -
+// HistoryManager хранит diff между последовательными полными
+// снимками состояния (не журнал отдельных операций - см. докстринг
+// stateDiff.js про архитектурное решение, обсуждённое с Mr.D перед
+// реализацией) - getCurrentState() ТА ЖЕ сборка данных, что уже
+// используют сохранение/автосохранение (onGetProjectData выше) -
+// единая точка правды, не дублирует сериализацию.
+const historyManager = new HistoryManager();
+window.historyManager = historyManager;
+
+function getCurrentProjectState() {
+    const layoutData = window.layoutManager?.serialize() || { layouts: [] };
+    const boardData = window.boardManager?.serialize() || { boards: [] };
+    return { ...layoutData, ...boardData };
+}
+
+// Раунд 196 - вызывается из nodeManager.calculateAll() (тот же хук,
+// что уже держит dirty-флаг) - само планирование дебаунсится ВНУТРИ
+// scheduleCheckpoint() (historyManager.js) - непрерывное
+// перетаскивание не должно порождать десятки отдельных шагов Undo.
+window.scheduleHistoryCheckpoint = () => {
+    historyManager.scheduleCheckpoint(getCurrentProjectState);
+    updateHistoryButtons();
+};
+
+// Раунд 196 - кнопки/пункты меню Undo/Redo блокируются, когда в
+// соответствующем стеке нечего откатывать/повторять - вызывается
+// после ЛЮБОГО изменения стека (checkpoint/undo/redo).
+function updateHistoryButtons() {
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if (undoBtn) undoBtn.disabled = !historyManager.canUndo();
+    if (redoBtn) redoBtn.disabled = !historyManager.canRedo();
+}
+
+// Раунд 196 - применяет ВОССТАНОВЛЕННОЕ (после undo/redo) состояние
+// обратно в живое приложение - переиспользует ТЕ ЖЕ функции загрузки,
+// что уже обрабатывают обычное открытие файла проекта
+// (window.electron.onLoadProject выше) - не новый, отдельно
+// протестированный путь, а уже рабочий код.
+function applyRestoredState(data) {
+    if (!data) return;
+    // Раунд 197 (по жалобам Mr.D: "кол-во действий в журнале... не
+    // больше 1-го действия" и "после Undo ни разу не получилось
+    // сделать Redo") - НАЙДЕНА причина: loadFromData() ниже сама,
+    // ВНУТРИ СЕБЯ, вызывает nodeManager.calculateAll() (перестраивает
+    // ноды) - а тот сам пытается запланировать ЕЩЁ ОДНУ, "фоновую"
+    // контрольную точку истории через 500мс - если пересборка ноды
+    // через конструктор при загрузке не даёт побайтово идентичную
+    // повторную сериализацию исходному состоянию, эта фоновая точка
+    // создавала ложную запись И стирала redoStack (та же логика "новое
+    // изменение стирает будущий redo") - именно поэтому Redo не
+    // срабатывал после Undo. suspend()/resume() полностью блокируют
+    // историю на время самой перезагрузки, resume() пересинхронизирует
+    // lastSnapshot с ФАКТИЧЕСКИМ состоянием ПОСЛЕ перезагрузки.
+    historyManager.suspend();
+    try {
+        window.layoutManager?.loadFromData(data);
+        window.boardManager?.loadFromData(data);
+        if (window.updateCounters) window.updateCounters();
+    } catch (err) {
+        console.error('❌ Ошибка применения состояния Undo/Redo:', err);
+    } finally {
+        historyManager.resume(getCurrentProjectState());
+    }
+}
+
+window.undoAction = () => {
+    const restored = historyManager.undo(getCurrentProjectState);
+    if (restored) {
+        applyRestoredState(restored);
+        if (window.markProjectDirty) window.markProjectDirty();
+    }
+    updateHistoryButtons();
+};
+
+window.redoAction = () => {
+    const restored = historyManager.redo(getCurrentProjectState);
+    if (restored) {
+        applyRestoredState(restored);
+        if (window.markProjectDirty) window.markProjectDirty();
+    }
+    updateHistoryButtons();
+};
+
+// Раунд 196 - стандартные сочетания клавиш (Ctrl+Z / Ctrl+Y и
+// Ctrl+Shift+Z как альтернатива Redo, привычная по другим редакторам).
+// ВАЖНО: НЕ перехватываем, пока фокус находится в текстовом поле ввода
+// (input/textarea/contenteditable, например правка названия задачи в
+// Диаграмме Ганта или строка поиска в сайдбаре) - иначе нативная
+// отмена ОДНОГО символа/опечатки в этом конкретном поле заменялась бы
+// откатом ВСЕГО ПРОЕКТА, что крайне неожиданно и разрушительно -
+// пользователь ожидает обычное поведение текстового поля браузера.
+function isEditableFocused() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+}
+document.addEventListener('keydown', (e) => {
+    if (isEditableFocused()) return;
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'z') {
+        e.preventDefault();
+        window.undoAction();
+    } else if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))) {
+        e.preventDefault();
+        window.redoAction();
+    }
+});
+
 window.saveProject = () => {
     if (window.electron) {
         window.electron.saveProject();
@@ -1280,6 +1418,14 @@ if (window.electron) {
             // внутри пометили бы его грязным - явный сброс ПОСЛЕ всей
             // цепочки загрузки побеждает.
             projectDirty = false;
+            // Раунд 196 (по запросу Mr.D: "хотелось как раз подойти к
+            // undo/redo") - история Undo НЕ должна переживать переход
+            // на ДРУГОЙ проект (иначе "отменить" могло бы откатить к
+            // состоянию СОВСЕМ ДРУГОГО, уже закрытого файла) - точка
+            // отсчёта переустанавливается на ТОЛЬКО ЧТО загруженное
+            // состояние.
+            historyManager.reset(getCurrentProjectState());
+            updateHistoryButtons();
         } catch (err) {
             console.error('❌ Ошибка загрузки проекта:', err);
             alert('Не удалось загрузить проект: ' + err.message);

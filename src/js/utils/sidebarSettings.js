@@ -6,7 +6,7 @@
  * @file    sidebarSettings.js
  * @brief   Настройки сайдбара - показ/скрытие нод, конфигурации, экспорт/импорт
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -227,6 +227,19 @@ export const SidebarSettings = {
         document.getElementById('settingsNewProjectBtn')?.addEventListener('click', () => {
             if (window.clearWorkspace) window.clearWorkspace();
             window.electron?.resetCurrentProject?.();
+            // Раунд 196 (по запросу Mr.D: "хотелось как раз подойти к
+            // undo/redo") - "Новый проект" - это НАЧАЛО отдельного
+            // проекта, история ПРЕЖНЕГО здесь неуместна (в отличие от
+            // обычной "Очистить", clearWorkspace() САМА по себе НЕ
+            // трогает историю - ту саму пользователь может захотеть
+            // отменить, если кликнул по ошибке).
+            if (window.historyManager) {
+                window.historyManager.reset(window.layoutManager && window.boardManager
+                    ? { ...window.layoutManager.serialize(), ...window.boardManager.serialize() }
+                    : null);
+                document.getElementById('undoBtn')?.setAttribute('disabled', '');
+                document.getElementById('redoBtn')?.setAttribute('disabled', '');
+            }
             document.getElementById('sidebarSettingsModal').style.display = 'none';
         });
         document.getElementById('settingsOpenProjectBtn')?.addEventListener('click', () => {

@@ -6,7 +6,7 @@
  * @file    markdown.js
  * @brief   Лёгкий markdown->HTML рендерер без внешних библиотек - для узла "Текст" (TextNode)
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -67,6 +67,21 @@ function renderInline(text) {
     return html;
 }
 
+// Раунд 205 (по запросу Mr.D: "если я выделяю элемент в просмотре,
+// нужно чтобы хотя бы этот элемент выделился в редакторе, и фокус был
+// на нём") - вставляет data-line-start/data-line-end (номера строк
+// ИСХОДНОГО текста, 0-индексация) в САМЫЙ ПЕРВЫЙ открывающий тег HTML-
+// строки блока (та ВСЕГДА представляет ОДИН цельный блок - <p>/<hN>/
+// <table>/<ul>/<ol>/<blockquote>/<pre>/<hr>, см. каждую ветку
+// renderMarkdown() ниже) - клик по любому месту ВНУТРИ отрендеренного
+// блока (например, по ЛЮБОЙ ячейке таблицы) находит через closest()
+// БЛИЖАЙШИЙ элемент с этим атрибутом (см. TextNode - обработчик клика
+// по превью) - переводит выделение/фокус в textarea на СООТВЕТСТВУЮЩИЙ
+// диапазон исходных строк.
+function withLineAttrs(html, startLine, endLine) {
+    return html.replace(/^<(\w+)/, `<$1 data-line-start="${startLine}" data-line-end="${endLine}"`);
+}
+
 // Раунд 127 - построчный разбор блочных элементов (заголовки/списки/
 // цитаты/таблицы/код-блоки/горизонтальные линии/параграфы) - тот же
 // общий подход, что у большинства лёгких markdown-парсеров: сначала
@@ -80,6 +95,7 @@ export function renderMarkdown(source) {
 
     while (i < lines.length) {
         const line = lines[i];
+        const blockStart = i;
 
         // Блок кода ```...```
         if (/^```/.test(line.trim())) {
@@ -90,13 +106,13 @@ export function renderMarkdown(source) {
                 i++;
             }
             i++; // пропустить закрывающую ```
-            out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+            out.push(withLineAttrs(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`, blockStart, i - 1));
             continue;
         }
 
         // Горизонтальная линия --- (три и более дефиса/звёздочки/подчёркивания, одни на строке)
         if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim())) {
-            out.push('<hr>');
+            out.push(withLineAttrs('<hr>', blockStart, i));
             i++;
             continue;
         }
@@ -105,7 +121,7 @@ export function renderMarkdown(source) {
         const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
         if (headingMatch) {
             const level = headingMatch[1].length;
-            out.push(`<h${level}>${renderInline(headingMatch[2].trim())}</h${level}>`);
+            out.push(withLineAttrs(`<h${level}>${renderInline(headingMatch[2].trim())}</h${level}>`, blockStart, blockStart));
             i++;
             continue;
         }
@@ -117,7 +133,7 @@ export function renderMarkdown(source) {
                 quoteLines.push(lines[i].replace(/^>\s?/, ''));
                 i++;
             }
-            out.push(`<blockquote>${renderInline(quoteLines.join(' '))}</blockquote>`);
+            out.push(withLineAttrs(`<blockquote>${renderInline(quoteLines.join(' '))}</blockquote>`, blockStart, i - 1));
             continue;
         }
 
@@ -127,16 +143,25 @@ export function renderMarkdown(source) {
             const headerCells = line.split('|').map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === '') && !(idx === arr.length - 1 && c === ''));
             i += 2; // пропустить строку заголовка и строку-разделитель
             const bodyRows = [];
+            const bodyRowLines = [];
             while (i < lines.length && lines[i].includes('|')) {
                 const cells = lines[i].split('|').map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === '') && !(idx === arr.length - 1 && c === ''));
                 bodyRows.push(cells);
+                bodyRowLines.push(i);
                 i++;
             }
-            let tableHtml = '<table><thead><tr>' +
+            // Раунд 205 - у ТАБЛИЦЫ, в отличие от остальных блоков,
+            // ДОПОЛНИТЕЛЬНО размечена КАЖДАЯ строка данных СВОИМ
+            // data-line-start/end (не только таблица целиком) - таблицы
+            // часто самые длинные блоки в шаблоне (Раунд 201, автогенерация
+            // из подключённых данных) - клик по ОДНОЙ конкретной строке
+            // таблицы должен вести именно к НЕЙ, не к первой строке всей
+            // таблицы.
+            let tableHtml = withLineAttrs('<table><thead><tr>' +
                 headerCells.map(c => `<th>${renderInline(c)}</th>`).join('') +
                 '</tr></thead><tbody>' +
-                bodyRows.map(row => '<tr>' + row.map(c => `<td>${renderInline(c)}</td>`).join('') + '</tr>').join('') +
-                '</tbody></table>';
+                bodyRows.map((row, idx) => withLineAttrs('<tr>' + row.map(c => `<td>${renderInline(c)}</td>`).join('') + '</tr>', bodyRowLines[idx], bodyRowLines[idx])).join('') +
+                '</tbody></table>', blockStart, i - 1);
             out.push(tableHtml);
             continue;
         }
@@ -153,10 +178,13 @@ export function renderMarkdown(source) {
             while (i < lines.length) {
                 const m = lines[i].match(itemRe);
                 if (!m) break;
-                items.push(`<li>${renderInline(m[1])}</li>`);
+                // Раунд 205 - как и у строк таблицы, КАЖДЫЙ <li> размечен
+                // своей строкой - клик по ОДНОМУ пункту списка ведёт
+                // именно к НЕМУ, не к первому пункту всего списка.
+                items.push(withLineAttrs(`<li>${renderInline(m[1])}</li>`, i, i));
                 i++;
             }
-            out.push(`<${tag}>${items.join('')}</${tag}>`);
+            out.push(withLineAttrs(`<${tag}>${items.join('')}</${tag}>`, blockStart, i - 1));
             continue;
         }
 
@@ -177,7 +205,7 @@ export function renderMarkdown(source) {
             paraLines.push(lines[i]);
             i++;
         }
-        out.push(`<p>${renderInline(paraLines.join(' '))}</p>`);
+        out.push(withLineAttrs(`<p>${renderInline(paraLines.join(' '))}</p>`, blockStart, i - 1));
     }
 
     return out.join('\n');

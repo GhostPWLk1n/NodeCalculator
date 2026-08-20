@@ -6,7 +6,7 @@
  * @file    nodeManager.js
  * @brief   Создание, рендер, удаление, перетаскивание и изменение размера нод
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -569,6 +569,15 @@ export class NodeManager {
         // всему проекту. window.markProjectDirty() (main.js) сама
         // решает, спамить ли IPC дальше (не спамит, если уже грязный).
         if (window.markProjectDirty) window.markProjectDirty();
+        // Раунд 196 (по запросу Mr.D: "дельта-журнал... хотелось как
+        // раз подойти к undo/redo") - тот же хук, что уже держит
+        // dirty-флаг (Раунд 184) - calculateAll() практически
+        // единственная точка, через которую проходит любая
+        // содержательная правка проекта. Само планирование
+        // ДЕБАУНСИТСЯ внутри scheduleCheckpoint() (см. historyManager.js) -
+        // непрерывное перетаскивание не должно порождать десятки
+        // отдельных шагов Undo.
+        if (window.scheduleHistoryCheckpoint) window.scheduleHistoryCheckpoint();
 
         // Сначала вычисляем числовые ноды
         this.nodes.forEach(n => {

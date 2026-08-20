@@ -6,7 +6,7 @@
  * @file    ganttNode.js
  * @brief   Обработчик: список задач (имя+длительность) -> календарный план с диаграммой Ганта (выход Data)
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -686,9 +686,29 @@ export class GanttNode extends BaseNode {
         // leftWidth - суммарный отступ ДО начала временной шкалы (номер +
         // имя задачи) - используется везде, где раньше стоял голый LABEL_WIDTH.
         const numColWidth = this.numColWidthOverride || Math.max(20, String(Math.max(this.tasks.length, 1)).length * 7 + 12);
+        // Раунд 210 (по жалобе Mr.D: "линии слетают влево, при этом
+        // держат правильную форму") - НАЙДЕНА РЕАЛЬНАЯ причина: leftWidth
+        // используется для АБСОЛЮТНОГО позиционирования ВСЕГО, что
+        // рисуется ПОВЕРХ строк (SVG-линии связей/сетка/линейка/линия
+        // дедлайна) - ОБЛАСТЬ ЖЕ САМОЙ ПОЛОСЫ задачи (track) НЕ
+        // использует leftWidth вовсе - она просто ИДЁТ ПОСЛЕ leftGroup
+        // во flex-строке, естественно занимая ровно ТУ ширину, которую
+        // реально построил leftGroup (сумма ВСЕХ колонок, которые он
+        // РЕАЛЬНО отрисовал). Колонки "Дата начала"/"Дата окончания"
+        // (Раунд 187) добавлялись в leftGroup БЕЗ добавления их ширины
+        // сюда - при включённой хотя бы одной из них leftWidth
+        // ЗАНИЖАЛ реальную ширину левой части - SVG-слой (и вся сетка/
+        // линейка) рисовались на leftWidth пикселей ЛЕВЕЕ, чем
+        // РЕАЛЬНОЕ начало временной шкалы - геометрия ВНУТРИ SVG
+        // (кривая между x1,y1 и x2,y2) оставалась ВЕРНОЙ (оба конца
+        // считаются одной и той же - просто смещённой - системой
+        // координат), а весь слой целиком визуально "уезжал" влево на
+        // разницу.
         const leftWidth = FOCUS_COL_WIDTH + numColWidth + (this.showSectionColumn ? this._sectionW() : 0) + this._labelW()
             + (this.showDurationColumn ? this._hoursW() : 0)
             + (this.showWorkingDaysColumn ? this._workdaysW() : 0)
+            + (this.showStartDateColumn ? this._startDateW() : 0)
+            + (this.showEndDateColumn ? this._endDateW() : 0)
             + (this.showResponsibleColumn ? this._respW() : 0)
             + (this.showCalDaysColumn ? this._calDaysW() : 0)
             + (this.showSumWorkingDaysColumn ? this._sumWorkdaysW() : 0)
@@ -937,7 +957,7 @@ export class GanttNode extends BaseNode {
             // когда ВСЕ строки (любой из веток выше - иерархия/группы/
             // плоский список) уже реально в rowsInner - позиции строк
             // читаются из уже готового DOM (см. buildDependencyLines()).
-            const depSvg = this.buildDependencyLines(leftWidth, dayWidth, rowsInner);
+            const depSvg = this.buildDependencyLines(leftWidth, dayWidth, rowsInner, timelineWidth);
             if (depSvg) rowsInner.appendChild(depSvg);
 
             rowsWrap.appendChild(rowsInner);
@@ -1400,16 +1420,51 @@ export class GanttNode extends BaseNode {
     // линия). "Цвет линии соответствует цвету диаграммы" -
     // this.color (акцентный цвет самой ноды, BaseNode) - тот же цвет,
     // что пользователь уже видит в заголовке ноды на графе.
-    buildDependencyLines(leftWidth, dayWidth, rowsInner) {
+    // Раунд 209 (по жалобе Mr.D: "линии которые связывают gantt-connect-
+    // handle они могут слетать. нужно улучшить их рендер, защитить от
+    // слетаний при деформациях узла, или изменений его отображения") -
+    // НАЙДЕНА РЕАЛЬНАЯ причина - rowsInner В ЭТОТ МОМЕНТ ЕЩЁ НЕ
+    // подключён к живому DOM (строится ПОЛНОСТЬЮ в памяти, см. вызов
+    // ниже, ДО rowsWrap.appendChild(rowsInner)) - offsetWidth
+    // ОТСОЕДИНЁННОГО от документа элемента браузер ВСЕГДА возвращает 0
+    // (layout ещё не посчитан, элемент нигде не рендерится) - код
+    // раньше молча попадал в резервное "|| 2000" КАЖДЫЙ РАЗ, вне
+    // зависимости от РЕАЛЬНОЙ ширины таймлайна. Для длинных диаграмм
+    // (много месяцев вперёд, высокий zoom) РЕАЛЬНАЯ ширина легко
+    // превышает 2000px - линии за этой границей рисовались ЗА
+    // пределами области видимости SVG, визуально "отваливаясь" при
+    // любом изменении, из-за которого пользователь мог их там увидеть
+    // (растягивание ноды, переключение периода, зум). timelineWidth
+    // передаётся ЯВНЫМ параметром - тот же, УЖЕ КОРРЕКТНО вычисленный
+    // (totalDays * dayWidth), что используется ДЛЯ ПОСТРОЕНИЯ САМИХ
+    // строк (значит гарантированно совпадает с их реальной шириной).
+    buildDependencyLines(leftWidth, dayWidth, rowsInner, timelineWidth) {
         if (!this.dependencies || this.dependencies.length === 0) return null;
 
         // Индекс строки каждой задачи - по порядку появления в уже
         // построенном DOM (rowsInner.children), не все children несут
         // taskKey (строки-заголовки Блока/Стадии/"Итого" - нет) - это
         // ОЖИДАЕМО, просто занимают место в стеке, как и должны.
+        // Раунд 212 (по жалобе Mr.D: "перетаскивая группу связанная с
+        // ней группа остаётся на месте") - НАЙДЕНА РЕАЛЬНАЯ причина:
+        // связи (dep.from/dep.to) для РАЗДЕЛА хранятся как
+        // "group:ORIGIN_KEY" (Раунд 209), а data-task-key строки
+        // раздела ВСЕГДА "group:Имя" (Раунд 188/189/191, отдельный
+        // механизм перетаскивания строк - трогать нельзя, см. докстринг
+        // в buildGroupHeaderRow()) - форматы разошлись, поиск СТРОГО
+        // ПО data-task-key никогда не находил originKey-связь - линия
+        // раздела не рисовалась ВООБЩЕ (даже не "смещённо" - падала на
+        // самом раннем return, до вычисления любых координат).
+        // Регистрируем ОБА варианта ключа для строк-разделов (те несут
+        // ДОПОЛНИТЕЛЬНЫЙ dataset.groupOriginKey, см. buildGroupHeaderRow()) -
+        // указывают на ОДИН И ТОТ ЖЕ индекс строки, dep.from/dep.to
+        // находит СВОЙ формат вне зависимости от того, каким именно
+        // создавалась связь (новым или старым, при загрузке проекта
+        // старого формата).
         const rowIndexByKey = new Map();
         [...rowsInner.children].forEach((child, idx) => {
             if (child.dataset && child.dataset.taskKey) rowIndexByKey.set(child.dataset.taskKey, idx);
+            if (child.dataset && child.dataset.groupOriginKey) rowIndexByKey.set(`group:${child.dataset.groupOriginKey}`, idx);
         });
 
         const totalHeight = rowsInner.children.length * ROW_HEIGHT;
@@ -1418,7 +1473,7 @@ export class GanttNode extends BaseNode {
         const svgNS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(svgNS, 'svg');
         svg.setAttribute('class', 'gantt-dependency-lines');
-        svg.style.cssText = `position:absolute; left:${leftWidth}px; top:0; width:${rowsInner.offsetWidth || 2000}px; height:${totalHeight}px; pointer-events:none; overflow:visible; z-index:3;`;
+        svg.style.cssText = `position:absolute; left:${leftWidth}px; top:0; width:${timelineWidth || rowsInner.offsetWidth || 2000}px; height:${totalHeight}px; pointer-events:none; overflow:visible; z-index:3;`;
 
         // Стрелка на конце линии - тот же цвет, что сама линия (marker
         // не наследует currentColor автоматически для fill - красим явно).
@@ -2190,8 +2245,10 @@ export class GanttNode extends BaseNode {
             workdaysInput.addEventListener('click', (e) => e.stopPropagation());
             workdaysInput.addEventListener('change', (e) => {
                 const newWorkDays = Math.max(0, parseInt(e.target.value, 10) || 0);
-                this._applyWorkDaysEdit(task, newWorkDays, anchor);
-                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor));
+                this._applyWorkDaysEdit(task, newWorkDays, anchor, true);
+                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor, true));
+                if (window.nodeManager) window.nodeManager.calculateAll();
+                if (window.renderer) window.renderer.updateAllDisplays();
             });
             this._attachFieldNavigation(workdaysInput, taskKey, 'workdays');
             leftGroup.appendChild(workdaysInput);
@@ -2227,13 +2284,27 @@ export class GanttNode extends BaseNode {
                 const newOffset = Math.round((picked - anchor) / 86400000);
                 if (newOffset === task.startOffsetDays) return;
                 const deltaDays = newOffset - task.startOffsetDays;
-                this._applyStartDateEdit(task, newOffset);
                 // Та же дельта-логика мультивыбора, что уже применена
                 // к графическому перетаскиванию (Раунд 178) - сохраняет
                 // относительные расстояния между выделенными задачами.
+                // Раунд 208 (по жалобе Mr.D: "забыли передать свойство
+                // для одновременного редактирования при групповом
+                // выделении") - НАЙДЕНА реальная причина исполняемым
+                // тестом: без skipRecalc КАЖДЫЙ вызов _applyStartDateEdit()
+                // внутри цикла распространения сам вызывал calculateAll(),
+                // "загрязняя" otherTask.startOffsetDays СОСЕДНИХ задач ДО
+                // того, как до них доходила очередь применения дельты -
+                // сдвиг НАКАПЛИВАЛСЯ (наблюдалось 5,10,15 вместо
+                // ожидаемых 5,5,5 при выделении 3 строк). skipRecalc=true
+                // - мутации без промежуточного пересчёта, ОДИН
+                // calculateAll() в самом конце - та же схема, что уже
+                // верно применяет attachBarDrag() (Раунд 178, мышь).
+                this._applyStartDateEdit(task, newOffset, true);
                 this._propagateToMultiSelection(taskKey, (otherTask) => {
-                    this._applyStartDateEdit(otherTask, Math.max(0, otherTask.startOffsetDays + deltaDays));
+                    this._applyStartDateEdit(otherTask, Math.max(0, otherTask.startOffsetDays + deltaDays), true);
                 });
+                if (window.nodeManager) window.nodeManager.calculateAll();
+                if (window.renderer) window.renderer.updateAllDisplays();
             });
             this._attachFieldNavigation(startDateInput, taskKey, 'startDate');
             leftGroup.appendChild(startDateInput);
@@ -2268,8 +2339,15 @@ export class GanttNode extends BaseNode {
                 const newCalendarSpan = Math.round((picked - taskStart) / 86400000);
                 if (newCalendarSpan <= 0) return; // конец раньше начала - бессмысленно, игнорируем
                 const newWorkDays = this._countWorkingDaysInRange(anchor, task.startOffsetDays, newCalendarSpan);
-                this._applyWorkDaysEdit(task, newWorkDays, anchor);
-                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor));
+                // Раунд 208 - skipRecalc (см. докстринг у "Дата начала"
+                // выше) - здесь newWorkDays уже АБСОЛЮТНОЕ число, одно и
+                // то же для всех выделенных строк, накопления как у
+                // дельты не было бы и без фикса - но лишние N-1
+                // пересчётов подряд всё равно устранены для единообразия.
+                this._applyWorkDaysEdit(task, newWorkDays, anchor, true);
+                this._propagateToMultiSelection(taskKey, (otherTask) => this._applyWorkDaysEdit(otherTask, newWorkDays, anchor, true));
+                if (window.nodeManager) window.nodeManager.calculateAll();
+                if (window.renderer) window.renderer.updateAllDisplays();
             });
             this._attachFieldNavigation(endDateInput, taskKey, 'endDate');
             leftGroup.appendChild(endDateInput);
@@ -2397,6 +2475,49 @@ export class GanttNode extends BaseNode {
         bar.title = `${task.name}: ${task.durationDays} дн. (${Helpers.formatNumber(task.durationDays * HOURS_PER_WORKDAY)} ч.) - потяните за края, чтобы растянуть`;
         this.attachBarDrag(bar, task, dayWidth);
 
+        // Раунд 214 (по запросу Mr.D: "добавить ручку для перемещения
+        // задач с нулевой длиной. Если задача имеет продолжительность
+        // 0, сейчас мы не можем её зацепить графически. Для этого у
+        // задач с маленькой длиной нужно делать ручку помощник для
+        // перемещения") - НАЙДЕНА причина: сама полоса физически
+        // ограничена минимумом 4px (см. width выше), а ОБЕ ручки
+        // изменения размера - по 6px КАЖДАЯ, у краёв - на такой узкой
+        // полосе они ПОЛНОСТЬЮ ПЕРЕКРЫВАЮТ друг друга и саму полосу,
+        // не оставляя места для захвата ИМЕННО перемещения (не
+        // растягивания). Порог - ПИКСЕЛЬНАЯ ширина отрисованной полосы
+        // (не число дней напрямую) - при НИЗКОМ zoom даже "нормальная"
+        // 1-2-дневная задача рендерится узкой полосой с той же
+        // проблемой, порог должен реагировать на ЭТО, а не на голое
+        // число дней в отрыве от масштаба.
+        const barWidthPx = task.durationDays * dayWidth;
+        if (barWidthPx < 16) {
+            const moveHelper = document.createElement('div');
+            moveHelper.className = 'gantt-bar-move-helper';
+            moveHelper.title = 'Перетащите, чтобы переместить задачу (полоса слишком узкая для прямого захвата)';
+            // Раунд 214 - top:-6px (не больше) - высота строки всего
+            // 26px (bar сам занимает y=4..22, оставляя ТОЛЬКО 4px
+            // "зазора" сверху до границы строки) - более глубокий уход
+            // вверх визуально "заезжал" бы на СОСЕДНЮЮ строку выше
+            // (строки - обычный блочный поток, НЕ общий канвас с единой
+            // системой координат - "залезание" туда выглядело бы
+            // сломанным). z-index - тот же, что у ручки связи (Раунд
+            // 137) - согласованный уровень для ВСЕХ мелких
+            // интерактивных элементов НАД полосой.
+            moveHelper.style.cssText = `
+                position: absolute;
+                left: ${task.startOffsetDays * dayWidth + Math.max(4, task.durationDays * dayWidth) / 2}px;
+                top: -6px;
+                z-index: 4;
+            `;
+            // Раунд 214 - triggerEl (НОВЫЙ, необязательный 4-й параметр
+            // attachBarDrag(), см. её докстринг) - mousedown ловит ЭТА
+            // ручка, но ВИЗУАЛЬНО во время перетаскивания двигается
+            // САМА полоса (bar) - пользователь видит РЕАЛЬНОЕ положение
+            // задачи, а не оторванную от неё ручку где-то сбоку.
+            this.attachBarDrag(bar, task, dayWidth, moveHelper);
+            track.appendChild(moveHelper);
+        }
+
         // Раунд 144 (чек-лист "Недельный вид" - "подписи дат на
         // полосах") - особенно нужно в масштабах "Недели"/"Месяцы" (там
         // сама ширина полосы не даёт прочитать длительность на глаз) -
@@ -2510,15 +2631,41 @@ export class GanttNode extends BaseNode {
     // новых функциях) - без hierarchyOpts поведение ПОЛНОСТЬЮ прежнее
     // (обычная одноуровневая группа, как было). Форма hierarchyOpts:
     // { getCollapsed, setCollapsed, indentPx, levelLabel, background,
-    //   fontWeight, allowRemove }.
+    //   fontWeight }.
     buildGroupHeaderRow(group, groupIndex, numColWidth, timelineWidth, dayWidth, collapsed, anchor, hierarchyOpts = null) {
         const row = document.createElement('div');
         row.className = 'gantt-group-header-row';
         // Раунд 138 (связи между разделами) - тот же приём, что у
-        // buildTaskRow() (Раунд 137) - buildDependencyLines() читает
-        // ЭТОТ атрибут, чтобы найти вертикальную позицию раздела в уже
-        // отрисованном DOM.
+        // buildTaskRow() (Раунд 137) - раньше buildDependencyLines()
+        // читала ИМЕННО ЭТОТ атрибут, чтобы найти вертикальную позицию
+        // раздела в уже отрисованном DOM. Раунд 209 (по жалобе Mr.D:
+        // "проблема при связывании диаграмм групп") переключил САМИ
+        // связи (dep.from/dep.to) на group:ORIGIN_KEY (стабильный,
+        // уникальный - решает коллизию одноимённых разделов) - но
+        // ЭТОТ атрибут (data-task-key) НАМЕРЕННО остался по ИМЕНИ (его
+        // читает СОВСЕМ ДРУГОЙ, отдельный механизм - перетаскивание
+        // строк, _resolveDropTargetKey(), Раунд 188/189/191 - трогать
+        // нельзя). Раунд 212 (по жалобе Mr.D: "перетаскивая группу
+        // связанная с ней группа остаётся на месте") - НАЙДЕНА РЕАЛЬНАЯ
+        // причина: buildDependencyLines() искала строку по dep.from/
+        // dep.to (ТЕПЕРЬ group:originKey) В КАРТЕ, построенной ИЗ ЭТОГО
+        // атрибута (ВСЁ ЕЩЁ group:Имя) - форматы разошлись, линия
+        // связи для РАЗДЕЛА физически НИКОГДА не находила свою строку -
+        // не рисовалась ВООБЩЕ (не просто смещалась - там даже не
+        // доходило до вычисления координат, ранний return по
+        // "fromIdx === undefined"). Добавлен ВТОРОЙ, ОТДЕЛЬНЫЙ атрибут
+        // ИМЕННО под originKey - buildDependencyLines() ниже читает
+        // ОБА варианта, не заменяя старый (тот всё ещё нужен
+        // перетаскиванию строк).
         row.dataset.taskKey = `group:${group.name}`;
+        // Раунд 213 (по наблюдению Mr.D: "если пользуюсь импортом через
+        // обработчик таблиц Ганта, то связи групп не работают") -
+        // _groupStableKey() (не group.originKey напрямую) - группы,
+        // построенные из ИМПОРТА (treeData/#-маркеры), НЕ имеют
+        // originKey вовсе - только collapseKey - см. докстринг
+        // _groupStableKey() выше про полный список форматов групп в
+        // этом движке.
+        row.dataset.groupOriginKey = this._groupStableKey(group);
         row.style.cssText = `
             display: flex;
             align-items: center;
@@ -2723,11 +2870,14 @@ export class GanttNode extends BaseNode {
         }
 
         // Стрелка сворачивания - делит место со столбцом номера строки.
-        // Раунд 115 (чек-лист, раздел 4) - обёрнута в toggleWrap: при
-        // наведении показывает значок удаления ВСЕЙ группы (с
-        // подтверждением - см. removeGroup()) - добавления для групп
-        // нет (новые группы создаются иначе - переносом задачи в
-        // существующую/новую через groupName, не отдельной кнопкой).
+        // Раунд 194 (по запросу Mr.D: "в строке остались кнопки которые
+        // теперь не нужны") - кнопка удаления группы по наведению убрана
+        // целиком (была здесь с Раунда 115/130) - функциональность
+        // полностью покрыта пунктом "Удалить раздел со всеми вложениями"
+        // в контекстном меню (Раунд 188), причём тот делает это
+        // ПРАВИЛЬНЕЕ - рекурсивно через ВСЕ вложенные подгруппы (не
+        // только прямые задачи), и убирает сам заголовок раздела (не
+        // оставляет пустого сироту, как старый removeGroup()).
         const toggleWrap = document.createElement('div');
         toggleWrap.style.cssText = `position: relative; width: ${numColWidth}px; flex-shrink: 0; height: 100%; display: flex; align-items: center;`;
 
@@ -2754,35 +2904,6 @@ export class GanttNode extends BaseNode {
             this._rerenderGanttSlot();
         });
         toggleWrap.appendChild(toggle);
-
-        // Раунд 130 - удаление ЦЕЛИКОМ (кнопка "-") для строк Блока/
-        // Стадии пока не предлагаем (allowRemove===false) - семантика
-        // "удалить целый Блок с вложенными Стадиями" требует отдельного
-        // продумывания (чек-лист явно про это не просил) - не
-        // усложняем раньше времени, обычные группы это по-прежнему
-        // умеют без изменений.
-        if (hierarchyOpts?.allowRemove !== false) {
-            const removeGroupBtn = document.createElement('button');
-            removeGroupBtn.className = 'gantt-small-btn';
-            removeGroupBtn.textContent = '−';
-            removeGroupBtn.title = 'Удалить группу целиком';
-            // Раунд 193 (та же причина, что у .gantt-row-handle -
-            // "Ручки не появились") - left:-13px выводил кнопку ЗА
-            // границы своей 20px-колонки (toggleWrap) - обрезалась тем
-            // же overflow-x:clip у .gantt-rows-scroll. Центрируем
-            // (left:50%/top:50% + translate(-50%,-50%)) - накладывается
-            // ПОВЕРХ иконки переключателя (▾/▸) на hover, полностью
-            // внутри уже выделенной для неё колонки, без overflow.
-            removeGroupBtn.style.cssText = 'display:none; left:50%; top:50%; transform:translate(-50%,-50%);';
-            removeGroupBtn.addEventListener('mousedown', (e) => e.stopPropagation());
-            removeGroupBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.removeGroup(group);
-            });
-            toggleWrap.appendChild(removeGroupBtn);
-            toggleWrap.addEventListener('mouseenter', () => { removeGroupBtn.style.display = 'flex'; });
-            toggleWrap.addEventListener('mouseleave', () => { removeGroupBtn.style.display = 'none'; });
-        }
 
         leftGroup.appendChild(toggleWrap);
 
@@ -3093,11 +3214,22 @@ export class GanttNode extends BaseNode {
 
             // Раунд 138 (по запросу Mr.D: "связи должны работать и
             // между разделами") - тот же приём, что у полосы отдельной
-            // задачи (Раунд 137) - "groupKey" (`group:` + имя) как
-            // стабильный идентификатор ЦЕЛОЙ группы/Блока/Стадии для
-            // связи - см. _resolveEndpointTask() (умеет разворачивать
-            // такой ключ обратно в список задач-участников).
-            const groupKey = `group:${group.name}`;
+            // задачи (Раунд 137) - "groupKey" как стабильный
+            // идентификатор ЦЕЛОЙ группы/Блока/Стадии для связи - см.
+            // _resolveEndpointTask() (умеет разворачивать такой ключ
+            // обратно в список задач-участников). Раунд 209 (по жалобе
+            // Mr.D: "проблема при связывании диаграмм групп") -
+            // стабильный, ГАРАНТИРОВАННО уникальный идентификатор, НЕ
+            // имя группы (то может повторяться у ДВУХ разных разделов -
+            // раньше связь с ОДИНАКОВЫМ именем находила и смешивала
+            // помещения из ОБЕИХ). Раунд 213 (по наблюдению Mr.D:
+            // "через обработчик таблиц Ганта связи групп не работают") -
+            // _groupStableKey() (не group.originKey напрямую) -
+            // originKey существует ТОЛЬКО у групп, созданных вручную
+            // через "Раздел"/"Подраздел" - группы из ИМПОРТА
+            // (treeData/#-маркеры) originKey не имеют вовсе, только
+            // collapseKey - см. докстринг _groupStableKey() выше.
+            const groupKey = `group:${this._groupStableKey(group)}`;
             const groupConnectHandle = document.createElement('div');
             groupConnectHandle.className = 'gantt-connect-handle';
             groupConnectHandle.title = 'Перетащите на другую задачу/раздел, чтобы создать связь';
@@ -3187,13 +3319,49 @@ export class GanttNode extends BaseNode {
                         }
                     });
                     // Раунд 139 - тот же принцип, что у attachBarDrag() -
-                    // если ЭТОТ раздел ("group:Имя") - цель какой-то
-                    // связи, пересчитываем её gap под новую позицию,
-                    // вместо того чтобы _applyDependencyConstraints()
-                    // тут же вернул раздел на старое место.
+                    // если ЭТОТ раздел - цель какой-то связи,
+                    // пересчитываем её gap под новую позицию, вместо
+                    // того чтобы _applyDependencyConstraints() тут же
+                    // вернул раздел на старое место. Раунд 209 -
+                    // вызываем ДЛЯ ОБОИХ возможных форматов ключа
+                    // (новый, по originKey, И старый, по имени - см.
+                    // докстринг _resolveEndpointTask()) - существующая
+                    // связь, нацеленная на ЭТОТ раздел, может быть
+                    // сохранена в ЛЮБОМ из двух форматов, в зависимости
+                    // от того, когда она была создана - вызов с
+                    // "чужим" (не совпадающим ни с одной связью) ключом
+                    // просто ничего не находит и не делает, безопасно.
+                    // Раунд 213 - ДОБАВЛЕН третий вызов по
+                    // _groupStableKey() - охватывает группы из ИМПОРТА
+                    // (treeData/#-маркеры), у которых originKey нет
+                    // вовсе (только collapseKey, см. её докстринг).
+                    // Раунд 216 (по жалобе Mr.D: "не могу редактировать
+                    // дочерний контейнер" - последовательность: создать
+                    // контейнер -> связать контейнеры -> попытаться
+                    // подвинуть дочерний целиком) - НАЙДЕНА РЕАЛЬНАЯ
+                    // причина: newMinStart читал ТОЛЬКО this.taskDates -
+                    // но ЗАПИСЬ новой позиции (см. блок ВЫШЕ, строки
+                    // this._allTasksRecursive(group).forEach(...)) для
+                    // ВРУЧНУЮ созданных задач (manualTasks) пишет в
+                    // manualTask.startOffsetDays, НЕ в this.taskDates -
+                    // для контейнера, СОСТОЯЩЕГО из вручную созданных
+                    // задач (типичный случай - контейнер создан прямо
+                    // на диаграмме, не подключён к источнику), эта
+                    // асимметрия ВСЕГДА давала СТАРОЕ значение - gap
+                    // связи пересчитывался под "как будто ничего не
+                    // сдвинулось", следующий calculateAll() откатывал
+                    // ВЕСЬ контейнер назад - перетаскивание визуально
+                    // "не работало" вовсе.
+                    const effectiveTaskStart = (t) => {
+                        const mt = this.manualTasks.find(mtx => mtx.key === t.taskKey);
+                        if (mt) return mt.startOffsetDays;
+                        return this.taskDates[t.taskKey] ?? t.startOffsetDays;
+                    };
                     const groupAllTasksForDrag = this._allTasksRecursive(group);
-                    const newMinStart = Math.min(...groupAllTasksForDrag.map(t => this.taskDates[t.taskKey] ?? t.startOffsetDays));
+                    const newMinStart = Math.min(...groupAllTasksForDrag.map(effectiveTaskStart));
+                    this._rebaseDependencyGapsForTarget(`group:${group.originKey}`, newMinStart);
                     this._rebaseDependencyGapsForTarget(`group:${group.name}`, newMinStart);
+                    this._rebaseDependencyGapsForTarget(`group:${this._groupStableKey(group)}`, newMinStart);
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }
@@ -3447,18 +3615,44 @@ export class GanttNode extends BaseNode {
     // здесь на случай будущих других вызывающих мест).
     // Раунд 138 (по запросу Mr.D: "связи должны работать и между
     // разделами") - разворачивает ЛЮБОЙ ключ конца связи (обычный
-    // taskKey ОДНОЙ задачи, ИЛИ "group:ИмяРаздела" - ЦЕЛОГО раздела) в
-    // единый вид: {startOffsetDays, durationDays, memberTasks} -
-    // memberTasks - массив ССЫЛОК на реальные объекты задач (для
-    // одиночной задачи - массив из одного элемента, для раздела - ВСЕ
-    // задачи внутри него, включая вложенные Стадии - см.
-    // _tasksInSection()) - и для отрисовки линии (нужны только даты),
-    // и для распространения сдвига (нужны сами объекты, чтобы сдвинуть
-    // ВЕСЬ раздел разом).
+    // taskKey ОДНОЙ задачи, ИЛИ "group:X" - ЦЕЛОГО раздела) в единый
+    // вид: {startOffsetDays, durationDays, memberTasks} - memberTasks -
+    // массив ССЫЛОК на реальные объекты задач (для одиночной задачи -
+    // массив из одного элемента, для раздела - ВСЕ задачи внутри него,
+    // включая вложенные подразделы) - и для отрисовки линии (нужны
+    // только даты), и для распространения сдвига (нужны сами объекты,
+    // чтобы сдвинуть ВЕСЬ раздел разом).
+    //
+    // Раунд 209 (по жалобе Mr.D: "проблема при связывании диаграмм
+    // групп... нужен качественный рефактор этого механизма") - НАЙДЕНА
+    // РЕАЛЬНАЯ причина: "X" в "group:X" раньше ВСЕГДА было ИМЕНЕМ
+    // раздела (см. groupKey = `group:${group.name}` в
+    // buildGroupHeaderRow()), а разрешалось СРАВНЕНИЕМ СТРОК через
+    // _tasksInSection() - если ДВА раздела в диаграмме совпадают по
+    // имени (ничем не запрещено - в отличие от, например, названий
+    // задач, см. _uniqueTaskName()) - связь находила и СМЕШИВАЛА
+    // помещения из ОБЕИХ групп разом. Та же категория бага, что уже
+    // чинилась для ДРУГИХ частей механики групп (Раунд 151:
+    // "originKey хранится НАПРЯМУЮ на объекте группы... вторая запись
+    // тихо перезаписывает первую") - но ДО этого раунда связи (Раунд
+    // 137/138) остались НЕТРОНУТЫМИ той правкой, продолжая использовать
+    // старый, ненадёжный способ.
+    //
+    // ИСПРАВЛЕНО: buildGroupHeaderRow() теперь кладёт "group:ORIGIN_KEY"
+    // (стабильный, гарантированно уникальный идентификатор группы, не
+    // её ИЗМЕНЯЕМОЕ И ПОВТОРЯЕМОЕ имя) - здесь СНАЧАЛА пробуем разрешить
+    // ИМЕННО так (_findGroupByOriginKey() + _allTasksRecursive()) - и
+    // ТОЛЬКО если группа с таким originKey не нашлась (обратная
+    // совместимость - связь, СОХРАНЁННАЯ в .ncp ДО этого фикса, хранит
+    // СТАРЫЙ формат "group:Имя") - откатываемся на прежний, ПОИСК ПО
+    // ИМЕНИ (_tasksInSection()) - старые проекты не ломаются молча,
+    // просто продолжают использовать менее надёжный (но привычный) путь,
+    // пока связь не будет пересоздана заново вручную.
     _resolveEndpointTask(key) {
         if (key.startsWith('group:')) {
-            const sectionName = key.slice('group:'.length);
-            const members = this._tasksInSection(sectionName);
+            const ref = key.slice('group:'.length);
+            const group = this._findGroupByOriginKey(ref);
+            const members = group ? this._allTasksRecursive(group) : this._tasksInSection(ref);
             if (members.length === 0) return null;
             const minStart = Math.min(...members.map(t => t.startOffsetDays));
             const maxEnd = Math.max(...members.map(t => t.startOffsetDays + t.durationDays));
@@ -3473,6 +3667,9 @@ export class GanttNode extends BaseNode {
     // совпадает с sectionName (покрывает И обычную одноуровневую
     // группировку - Раунд 78, И иерархию Блок/Стадия - Раунд 130/132 -
     // единая функция вместо трёх похожих проверок в разных местах).
+    // Раунд 209 - ОСТАВЛЕНА как есть, для ОБРАТНОЙ СОВМЕСТИМОСТИ со
+    // связями старого формата (см. докстринг _resolveEndpointTask()
+    // выше) - НЕ используется НИГДЕ БОЛЬШЕ для НОВЫХ связей.
     _tasksInSection(sectionName) {
         return (this.tasks || []).filter(t =>
             t.groupName === sectionName || t.blockName === sectionName || t.stageName === sectionName
@@ -3505,6 +3702,104 @@ export class GanttNode extends BaseNode {
             const from = this._resolveEndpointTask(dep.from);
             if (!from) return;
             dep.gap = newStartOffset - (from.startOffsetDays + from.durationDays);
+        });
+    }
+
+    // Раунд 215 (по подозрению Mr.D: "при перемещении задач в
+    // подчинённом связью контейнере, они неправильно позиционируются
+    // по датам. Есть подозрение, что к дате задачи в подчинённом
+    // контейнере добавляется дельта от родительской задачи") -
+    // рекурсивный поиск ВСЕХ групп (на любом уровне вложенности),
+    // СОДЕРЖАЩИХ данную задачу - на любом уровне, не только прямую
+    // родительскую (задача может быть внутри Стадии внутри Блока -
+    // ОБА уровня могут независимо быть целью СВОИХ связей).
+    _findGroupsContainingTask(taskKey) {
+        const result = [];
+        const walk = (groups) => {
+            for (const g of groups || []) {
+                if ((g.tasks || []).some(t => (t.taskKey || t.name) === taskKey)) {
+                    result.push(g);
+                }
+                walk(g.subgroups);
+            }
+        };
+        walk(this.taskGroups);
+        return result;
+    }
+
+    // Раунд 215 (по подозрению Mr.D: "при перемещении задач в
+    // подчинённом связью контейнере, они неправильно позиционируются
+    // по датам. Есть подозрение, что к дате задачи в подчинённом
+    // контейнере добавляется дельта от родительской задачи") -
+    // НАЙДЕНА РЕАЛЬНАЯ причина исполняемым тестом (и она ОКАЗАЛАСЬ
+    // сложнее первого предположения): _rebaseDependencyGapsForTarget()
+    // (выше) пересчитывает gap ТОЛЬКО при ТОЧНОМ совпадении dep.to ===
+    // targetKey - если задача РУЧНОЙ правкой перемещена ВНУТРИ группы,
+    // которая САМА является целью связи (dep.to === "group:X"), это
+    // прямое совпадение НЕ находится - gap для ЭТОЙ связи оставался
+    // старым - на следующем calculateAll() _applyDependencyConstraints()
+    // жёстко возвращал ГРУППУ (и отредактированную задачу вместе с ней)
+    // на старое место.
+    //
+    // ПЕРВАЯ попытка фикса (предсказать "новую эффективную позицию"
+    // ДРУГИХ задач группы ДО calculateAll(), читая manualTask.startOffsetDays/
+    // taskDates напрямую) ОКАЗАЛАСЬ НЕНАДЁЖНОЙ: у задач БЕЗ собственной
+    // явной позиции есть ОТДЕЛЬНЫЙ, никак не связанный с зависимостями
+    // механизм - "наследование" позиции своей anchor-задачи (см.
+    // _applyManualRowEdits() - `mt.startOffsetDays ?? anchorTask.startOffsetDays`,
+    // Раунд 115) - если РЕДАКТИРУЕМАЯ задача ЯВЛЯЕТСЯ чьим-то anchor'ом,
+    // ДРУГИЕ задачи "утаскиваются" ЗА ней КАСКАДОМ.
+    //
+    // ВТОРАЯ попытка (два прохода calculateAll() - первый "даёт устояться"
+    // каскаду, затем rebase читает РЕАЛЬНЫЕ значения) ТОЖЕ ОКАЗАЛАСЬ
+    // НЕНАДЁЖНОЙ - обнаружено ТЕМ ЖЕ исполняемым тестом: САМ первый
+    // проход calculateAll() использует ЕЩЁ СТАРЫЙ (не пересчитанный)
+    // gap связи - _applyDependencyConstraints() ВНУТРИ ЭТОГО первого
+    // прохода уже откатывает группу (и только что отредактированную
+    // задачу вместе с ней) НАЗАД, ДО того, как rebase успевает
+    // прочитать "правильное" значение - предсказание оказывается
+    // испорченным ТЕМ ЖЕ механизмом, который должно было исправить.
+    //
+    // ИСПРАВЛЕНО (третья, финальная версия): _effectiveTaskStart() НЕ
+    // ждёт calculateAll() вовсе - НАПРЯМУЮ воспроизводит ТУ ЖЕ цепочку
+    // auto-follow (insertAfterKey), что использует _applyManualRowEdits(),
+    // РЕКУРСИВНО поднимаясь по ней (для задач без собственной позиции),
+    // пока не найдёт задачу С позицией - или саму отредактированную
+    // задачу (та ПОЛУЧАЕТ newStartOffset немедленно - это и есть
+    // источник каскада, дальше он распространяется вверх по цепочке
+    // БЕЗ участия calculateAll()/_applyDependencyConstraints() вовсе.
+    _effectiveTaskStart(t, editedTaskKey, editedNewOffset, visited = new Set()) {
+        const key = t.taskKey || t.name;
+        if (key === editedTaskKey) return editedNewOffset;
+        if (visited.has(key)) return t.startOffsetDays; // защита от циклов в insertAfterKey
+        visited.add(key);
+
+        const manualTask = this.manualTasks.find(mt => mt.key === key);
+        if (manualTask && typeof manualTask.startOffsetDays === 'number' && !Number.isNaN(manualTask.startOffsetDays)) {
+            return manualTask.startOffsetDays;
+        }
+        if (this.taskDates[key] !== undefined) return this.taskDates[key];
+        if (manualTask && manualTask.insertAfterKey) {
+            const anchorTask = this.tasks.find(tt => (tt.taskKey || tt.name) === manualTask.insertAfterKey);
+            if (anchorTask) return this._effectiveTaskStart(anchorTask, editedTaskKey, editedNewOffset, visited);
+        }
+        return t.startOffsetDays;
+    }
+
+    _rebaseDependencyGapsForTaskEdit(taskKey, newStartOffset) {
+        this._rebaseDependencyGapsForTarget(taskKey, newStartOffset);
+
+        this._findGroupsContainingTask(taskKey).forEach(group => {
+            const members = this._allTasksRecursive(group);
+            if (members.length === 0) return;
+            const newMinStart = Math.min(...members.map(t => this._effectiveTaskStart(t, taskKey, newStartOffset)));
+            const stableKey = this._groupStableKey(group);
+            this._rebaseDependencyGapsForTarget(`group:${stableKey}`, newMinStart);
+            // Обратная совместимость - существующая связь на ЭТУ
+            // группу могла быть создана/сохранена в ЛЮБОМ из
+            // исторических форматов ключа (см. _groupStableKey()).
+            if (group.originKey) this._rebaseDependencyGapsForTarget(`group:${group.originKey}`, newMinStart);
+            this._rebaseDependencyGapsForTarget(`group:${group.name}`, newMinStart);
         });
     }
 
@@ -3580,22 +3875,6 @@ export class GanttNode extends BaseNode {
         const idx = this.dependencies.findIndex(d => d.from === fromKey && d.to === toKey);
         if (idx === -1) return;
         this.dependencies.splice(idx, 1);
-        if (window.nodeManager) window.nodeManager.calculateAll();
-        if (window.renderer) window.renderer.updateAllDisplays();
-    }
-
-    removeGroup(group) {
-        const count = group.tasks.length;
-        if (count > 0 && !confirm(`Удалить группу "${group.name}" вместе со всеми задачами (${count} шт.)?`)) return;
-        group.tasks.forEach(t => {
-            const key = t.taskKey || t.name;
-            const manualIdx = this.manualTasks.findIndex(m => m.key === key);
-            if (manualIdx >= 0) {
-                this.manualTasks.splice(manualIdx, 1);
-            } else if (!this.deletedTaskKeys.includes(key)) {
-                this.deletedTaskKeys.push(key);
-            }
-        });
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
@@ -3699,17 +3978,73 @@ export class GanttNode extends BaseNode {
     // (просто визуально изъятая из this.tasks через promotedSectionKeys,
     // физически всё ещё существует как строка) - удаляется той же
     // логикой + выходит из promotedSectionKeys/sectionLevels.
-    _deleteGroupWithContents(groupKey) {
-        const findGroup = (groups) => {
+    // Раунд 213 (по наблюдению Mr.D: "проблема оказалась скалируемой,
+    // если я создаю новую диаграмму и создаю вручную в ней разделы, то
+    // всё работает, а если пользуюсь импортом через обработчик таблиц
+    // Ганта, то связи групп не работают") - НАЙДЕНА РЕАЛЬНАЯ причина:
+    // групп в этом движке СТРОИТСЯ ПЯТЬЮ РАЗНЫМИ СПОСОБАМИ в
+    // зависимости от ИСТОЧНИКА данных (ручное создание через
+    // "Раздел"/"Подраздел" - _applyPromotedSections(); импорт дерева от
+    // GanttTableProcessorNode - _groupsFromTreeData(); маркеры "#"/"##"
+    // в названиях задач плоской таблицы - _groupsFromNameMarkers(); и
+    // ещё два более простых, name-only способа) - ТОЛЬКО ПЕРВЫЙ
+    // (_applyPromotedSections()) кладёt originKey на объект группы (тот
+    // самый, на который опирались фиксы Раунда 209-212) - ОСТАЛЬНЫЕ
+    // ЧЕТЫРЕ формата ГРУППЫ НЕ ИМЕЮТ originKey ВООБЩЕ - только
+    // collapseKey (свой, УЖЕ существующий с Раунда 152/158 стабильный
+    // идентификатор, используемый для сохранения состояния свёрнуто/
+    // развёрнуто) - для этих групп group.originKey был просто undefined,
+    // ВСЕ фиксы Раунда 209-212 (построенные вокруг originKey) молча не
+    // срабатывали. _groupStableKey() - единая точка получения "какого-
+    // то стабильного идентификатора" для ЛЮБОГО формата группы -
+    // originKey в приоритете (там, где он есть), collapseKey как
+    // резерв (везде, где его нет) - ни одна из существующих функций
+    // Раунда 209-212 больше не обращается к group.originKey НАПРЯМУЮ.
+    _groupStableKey(group) {
+        return group.originKey || group.collapseKey || `name:${group.name}`;
+    }
+
+    // Раунд 209 (по жалобе Mr.D: "нужен качественный рефактор... возможно
+    // остался мёртвый код") - рекурсивный поиск группы по её стабильному
+    // originKey - тот же паттерн БЫЛ продублирован как минимум ДВАЖДЫ
+    // (_deleteGroupWithContents, demoteFromSection) - консолидирован в
+    // ОДИН общий метод, оба места теперь используют его напрямую. Раунд
+    // 213 - переключён на _groupStableKey() (см. её докстринг выше) -
+    // теперь корректно находит ЛЮБОЙ формат группы (не только
+    // построенные через "Раздел"/"Подраздел" вручную).
+    _findGroupByOriginKey(originKey) {
+        const walk = (groups) => {
             for (const g of groups || []) {
-                if (g.originKey === groupKey) return g;
-                const found = findGroup(g.subgroups);
+                if (this._groupStableKey(g) === originKey) return g;
+                const found = walk(g.subgroups);
                 if (found) return found;
             }
             return null;
         };
-        const group = findGroup(this.taskGroups);
+        return walk(this.taskGroups);
+    }
+
+    _deleteGroupWithContents(groupKey) {
+        const group = this._findGroupByOriginKey(groupKey);
         if (!group) return;
+
+        // Раунд 195 (по вопросу Mr.D: "чем плох новый пункт меню") -
+        // у СТАРОЙ кнопки (removeGroup(), Раунд 115/130, убрана в
+        // Раунде 194) был confirm() ПЕРЕД удалением - при переносе
+        // функциональности в контекстное меню (Раунд 188) эта защита
+        // потерялась. Учитывая, что Undo/Redo в приложении НЕ
+        // подключены (кнопки есть, но disabled) - это единственная
+        // сеть безопасности против случайного клика по пункту меню
+        // (те легко промахнуться, особенно если пункт стоит рядом с
+        // другими). Считаем через _allTasksRecursive() (уже вызывается
+        // ниже повторно для самого удаления) - в отличие от старого
+        // removeGroup(), которая считала ТОЛЬКО group.tasks.length (не
+        // учитывая вложенные подразделы), здесь число сразу отражает
+        // ПОЛНЫЙ масштаб удаления, включая всю глубину вложенности.
+        const allTasks = this._allTasksRecursive(group);
+        if (allTasks.length > 0 && !confirm(`Удалить раздел "${group.name}" вместе со всеми вложенными задачами (${allTasks.length} шт.)? Отменить это действие будет нельзя.`)) {
+            return;
+        }
 
         const removeByKey = (key) => {
             const manualIdx = this.manualTasks.findIndex(t => t.key === key);
@@ -3720,7 +4055,7 @@ export class GanttNode extends BaseNode {
             }
         };
 
-        this._allTasksRecursive(group).forEach(t => removeByKey(t.taskKey || t.name));
+        allTasks.forEach(t => removeByKey(t.taskKey || t.name));
         removeByKey(groupKey);
         this.promotedSectionKeys.delete(groupKey);
         this.sectionLevels.delete(groupKey);
@@ -4080,15 +4415,7 @@ export class GanttNode extends BaseNode {
         // (или '__root__', если раздел был верхнего уровня) - без этого
         // она "выпала" бы обратно в позиционный вывод, теряя ту же
         // гарантию устойчивости, что уже есть у остальных обычных строк.
-        const findGroup = (groups) => {
-            for (const g of groups || []) {
-                if (g.originKey === taskKey) return g;
-                const found = findGroup(g.subgroups);
-                if (found) return found;
-            }
-            return null;
-        };
-        const group = findGroup(this.taskGroups);
+        const group = this._findGroupByOriginKey(taskKey);
         if (group) {
             this.taskGroupMembership[taskKey] = group.parentGroup?.originKey || '__root__';
         }
@@ -4341,7 +4668,22 @@ export class GanttNode extends BaseNode {
         });
     }
 
-    _applyWorkDaysEdit(task, newWorkDays, anchor) {
+    // Раунд 208 (по жалобе Mr.D: "забыли передать свойство для
+    // одновременного редактирования при групповом выделении") -
+    // НАЙДЕНА РЕАЛЬНАЯ причина исполняемым тестом (не проверкой "на
+    // глаз" - код _propagateToMultiSelection() формально УЖЕ
+    // вызывался): calculateAll() ВНУТРИ этой функции - при
+    // мультивыборе _propagateToMultiSelection() вызывает её ПОВТОРНО в
+    // цикле (по разу на КАЖДУЮ выделенную задачу) - для полей с
+    // ОТНОСИТЕЛЬНОЙ дельтой (см. _applyStartDateEdit() ниже) каждый
+    // внутренний calculateAll() "загрязнял" startOffsetDays СОСЕДНИХ
+    // задач ДО того, как до них доходила очередь применения дельты -
+    // сдвиг НАКАПЛИВАЛСЯ (наблюдалось 5,10,15 вместо ожидаемых 5,5,5).
+    // skipRecalc - та же схема, что УЖЕ верно применяет attachBarDrag()
+    // (Раунд 178, мышь) - мутации БЕЗ пересчёта внутри цикла
+    // распространения, один calculateAll() в самом конце - см. вызовы
+    // из buildTaskRow() ниже.
+    _applyWorkDaysEdit(task, newWorkDays, anchor, skipRecalc = false) {
         const key = task.taskKey || task.name;
         // Раунд 145 (по жалобе Mr.D: "пытаюсь добавить дни элементу,
         // созданному в диаграмме, но не могу, они всегда 0") - для
@@ -4361,8 +4703,37 @@ export class GanttNode extends BaseNode {
         } else {
             this.taskDurationOverrides[key] = Math.max(0.5, newWorkDays);
         }
+        if (skipRecalc) return;
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
+    }
+
+    // Раунд 216 (по жалобе Mr.D: "при перемещении задач с 0 рд. за
+    // специальные ручки, могут происходить непредвиденные изменения в
+    // контейнере") - НАЙДЕНА причина: у задач БЕЗ собственной явной
+    // позиции есть "auto-follow" за своей anchor-задачей (см.
+    // _applyManualRowEdits() - `mt.startOffsetDays ?? anchorTask.startOffsetDays`,
+    // Раунд 115) - при явном перемещении ОДНОЙ задачи (через ручку-
+    // помощник, Раунд 214, или обычное перетаскивание) ДРУГИЕ задачи,
+    // которые её просто СЛЕДУЮТ в списке (никак НЕ связаны явным
+    // выбором пользователя - НЕ мультивыделение, а просто "создана
+    // следующей"), "утаскивались" вместе с ней - визуально выглядело
+    // как непредсказуемое изменение контейнера. ФИКС - ПЕРЕД тем, как
+    // задача получает НОВУЮ позицию, "замораживаем" позицию ЕЁ ПРЯМЫХ
+    // последователей (тех, чей insertAfterKey указывает именно на неё)
+    // НА ИХ ТЕКУЩЕМ месте (даём им явную startOffsetDays, равную тому,
+    // что они ПОКАЗЫВАЛИ до этого момента) - дальше по цепочке (если
+    // за последователем следует ЕЩЁ кто-то) специально ничего делать
+    // не нужно - раз последователь ПОЛУЧИЛ явную позицию, ЕГО
+    // собственные последователи естественно перестают каскадно менять
+    // позицию (auto-follow берёт её у НЕГО, теперь застывшей).
+    _freezeAutoFollowersOf(taskKey) {
+        this.manualTasks.forEach(mt => {
+            if (mt.insertAfterKey !== taskKey) return;
+            if (typeof mt.startOffsetDays === 'number' && !Number.isNaN(mt.startOffsetDays)) return; // уже своя позиция - замораживать нечего
+            const t = this.tasks.find(tt => (tt.taskKey || tt.name) === mt.key);
+            if (t) mt.startOffsetDays = t.startOffsetDays;
+        });
     }
 
     // Раунд 187 (по запросу Mr.D: "Ручной ввод дат в Диаграмме Ганта -
@@ -4372,16 +4743,38 @@ export class GanttNode extends BaseNode {
     // же запись (manualTask.startOffsetDays или taskDates[key]) +
     // _rebaseDependencyGapsForTarget(), что уже применяет графическое
     // перетаскивание (Раунд 139/178) - не дублирует логику отдельно.
-    _applyStartDateEdit(task, newStartOffsetDays) {
+    // Раунд 208 - skipRecalc, см. докстринг _applyWorkDaysEdit() выше -
+    // ЗДЕСЬ он критичен особенно (в отличие от Раб.дни, где правка
+    // ВСЕГДА абсолютное число) - startOffsetDays ЧИТАЕТСЯ "текущим" при
+    // вычислении дельты мультивыбора (см. buildTaskRow()), а
+    // промежуточный calculateAll() как раз и МЕНЯЕТ это "текущее"
+    // значение раньше времени.
+    _applyStartDateEdit(task, newStartOffsetDays, skipRecalc = false) {
         const key = task.taskKey || task.name;
         const clamped = Math.max(0, newStartOffsetDays);
+        // Раунд 216 - замораживаем ПРЯМЫХ последователей ДО того, как
+        // сама задача получит новую позицию (см. докстринг
+        // _freezeAutoFollowersOf() выше).
+        this._freezeAutoFollowersOf(key);
         const manualTask = this.manualTasks.find(t => t.key === key);
         if (manualTask) {
             manualTask.startOffsetDays = clamped;
         } else {
             this.taskDates[key] = clamped;
         }
-        this._rebaseDependencyGapsForTarget(key, clamped);
+        // Раунд 215 (по подозрению Mr.D: "при перемещении задач в
+        // подчинённом связью контейнере, они неправильно позиционируются
+        // по датам") - см. полный докстринг _rebaseDependencyGapsForTaskEdit()/
+        // _effectiveTaskStart() выше про НАЙДЕННУЮ причину и ФИНАЛЬНОЕ
+        // решение (третья попытка - две предыдущие, "предсказать ДО"
+        // и "два прохода calculateAll()", не сработали) -
+        // _effectiveTaskStart() НЕ зависит от calculateAll() вовсе
+        // (напрямую воспроизводит цепочку auto-follow), поэтому rebase
+        // можно звать СРАЗУ, ДО единственного calculateAll() - тот же
+        // единый путь для skipRecalc=true (мультивыбор) И false
+        // (обычная одиночная правка) - развилка больше не нужна.
+        this._rebaseDependencyGapsForTaskEdit(key, clamped);
+        if (skipRecalc) return;
         if (window.nodeManager) window.nodeManager.calculateAll();
         if (window.renderer) window.renderer.updateAllDisplays();
     }
@@ -4924,8 +5317,16 @@ export class GanttNode extends BaseNode {
     // dayWidth - актуальный масштаб линейки на момент начала драга (см.
     // RULER_SCALES) - без него перетаскивание "убегало" бы от курсора
     // после переключения масштаба в панели.
-    attachBarDrag(barEl, task, dayWidth) {
-        barEl.addEventListener('mousedown', (e) => {
+    // Раунд 214 (по запросу Mr.D: "добавить ручку для перемещения задач
+    // с нулевой длиной... у задач с маленькой длиной нужно делать ручку
+    // помощник для перемещения") - triggerEl (по умолчанию - САМА barEl,
+    // ничего не меняется для ОБЫЧНОГО вызова) - РАЗДЕЛЯЕТ "элемент,
+    // ловящий mousedown" (может быть ОТДЕЛЬНОЙ, более крупной ручкой
+    // рядом) от "элемент, который ВИЗУАЛЬНО двигается во время
+    // перетаскивания" (ВСЕГДА barEl - реальная полоса задачи, вне
+    // зависимости от того, ЧТО именно пользователь схватил мышью).
+    attachBarDrag(barEl, task, dayWidth, triggerEl = barEl) {
+        triggerEl.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             e.preventDefault();
             const zoom = window.getZoomLevel ? window.getZoomLevel() : 1;
@@ -4957,6 +5358,14 @@ export class GanttNode extends BaseNode {
                     // this.taskDates, который _applyManualRowEdits() для
                     // вручную добавленных задач ВООБЩЕ НЕ ЧИТАЕТ (строит
                     // startOffsetDays только из mt.startOffsetDays).
+                    // Раунд 216 (по жалобе Mr.D: "при перемещении задач
+                    // с 0 рд. за специальные ручки, могут происходить
+                    // непредвиденные изменения в контейнере") - см.
+                    // докстринг _freezeAutoFollowersOf() - замораживаем
+                    // ПРЯМЫХ последователей ЭТОЙ задачи (auto-follow,
+                    // Раунд 115) ДО того, как она сама получит новую
+                    // позицию, иначе они "утаскивались" бы вместе с ней.
+                    this._freezeAutoFollowersOf(taskKey);
                     const manualTask = this.manualTasks.find(t => t.key === taskKey);
                     if (manualTask) {
                         manualTask.startOffsetDays = newOffset;
@@ -4985,7 +5394,7 @@ export class GanttNode extends BaseNode {
                         } else {
                             this.taskDates[otherKey] = otherNewOffset;
                         }
-                        this._rebaseDependencyGapsForTarget(otherKey, otherNewOffset);
+                        this._rebaseDependencyGapsForTaskEdit(otherKey, otherNewOffset);
                     });
                     // Раунд 139 (по уточнению Mr.D: "зависимость в одну
                     // сторону, по направлению стрелки - перемещение
@@ -4995,11 +5404,19 @@ export class GanttNode extends BaseNode {
                     // пересчёте иначе тут же вернул бы её на старое
                     // место (жёстко удерживая СТАРЫЙ gap) - вместо этого
                     // ПЕРЕСЧИТЫВАЕМ gap под НОВУЮ позицию, куда только
-                    // что перетащил пользователь - связь остаётся
-                    // односторонней (источник по-прежнему двигает цель),
-                    // но цель свободно перемещаема вручную, а не
-                    // "заблокирована" старым зазором.
-                    this._rebaseDependencyGapsForTarget(taskKey, newOffset);
+                    // что перетащил пользователь. Раунд 215 (по
+                    // подозрению Mr.D: "к дате задачи в подчинённом
+                    // контейнере добавляется дельта от родительской
+                    // задачи") - _rebaseDependencyGapsForTaskEdit() (см.
+                    // её полный докстринг про НАЙДЕННУЮ причину и
+                    // финальное решение - _effectiveTaskStart(),
+                    // напрямую воспроизводящий цепочку auto-follow, без
+                    // зависимости от calculateAll()) - ДОПОЛНИТЕЛЬНО
+                    // пересчитывает gap связи и для ЛЮБОЙ ГРУППЫ,
+                    // СОДЕРЖАЩЕЙ эту задачу (если такая связь есть) -
+                    // без этого перетаскивание ОДНОЙ задачи ВНУТРИ
+                    // группы-цели связи откатывалось назад.
+                    this._rebaseDependencyGapsForTaskEdit(taskKey, newOffset);
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }
@@ -5099,7 +5516,7 @@ export class GanttNode extends BaseNode {
                     // _applyWorkDaysEdit(), ТУ ЖЕ логику, что уже
                     // применена к текстовому полю "Раб.дни" (единая
                     // точка правды, не дублирование).
-                    this._propagateToMultiSelection(key, (otherTask) => this._applyWorkDaysEdit(otherTask, workDays, anchor));
+                    this._propagateToMultiSelection(key, (otherTask) => this._applyWorkDaysEdit(otherTask, workDays, anchor, true));
                     if (window.nodeManager) window.nodeManager.calculateAll();
                     if (window.renderer) window.renderer.updateAllDisplays();
                 }

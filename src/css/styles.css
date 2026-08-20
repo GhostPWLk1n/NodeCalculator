@@ -4212,7 +4212,24 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
 .gantt-group-indicator:hover .gantt-connect-handle {
     opacity: 1;
 }
-.gantt-bar.gantt-bar-drop-target {
+/* Раунд 211 (по жалобе Mr.D: "связать две группы не получилось, есть
+   хендлеры, но связи не строятся") - НАЙДЕНА РЕАЛЬНАЯ причина по
+   присланному дампу DOM: правило ниже раньше задавало подсветку "сюда
+   можно бросить" ТОЛЬКО для .gantt-bar.gantt-bar-drop-target -
+   индикатор группы (buildGroupHeaderRow()) имеет класс
+   .gantt-group-indicator (НЕ .gantt-bar) - JS-логика ПРАВИЛЬНО
+   добавляла класс gantt-bar-drop-target ПРИ наведении (dragover) на
+   индикатор группы, но КОМБИНИРОВАННЫЙ CSS-селектор НИКОГДА не
+   срабатывал для него - при перетаскивании связи НАД индикатором
+   группы пользователь НЕ получал НИКАКОГО визуального подтверждения,
+   что сюда можно бросить (в отличие от обычной задачи, где пунктирная
+   рамка появлялась исправно) - технически drop СРАБОТАЛ БЫ, но
+   пользователь, не видя подтверждения, либо промахивался мимо
+   маленькой (10×10px) ручки при отпускании, либо решал, что "сюда
+   нельзя", и прекращал попытку - именно это выглядело как "хендлеры
+   есть, но связи не строятся". */
+.gantt-bar.gantt-bar-drop-target,
+.gantt-group-indicator.gantt-bar-drop-target {
     outline: 2px dashed var(--md-primary);
     outline-offset: 2px;
 }
@@ -4610,4 +4627,200 @@ table.board-widget-table.board-widget-table-col-lines td:last-child {
        только явным !important. */
     max-height: none !important;
     height: auto !important;
+}
+/* Раунд 200 (по запросу Mr.D: "для просмотра таблиц сделать такую же
+   кнопку как у диаграммы Ганта") - .table-viewer-body-scroll УЖЕ
+   правильно flex-устроен (flex:1 1 auto; min-height:0 - задано в JS
+   изначально, не нужно !important) - не хватало только растяжки её
+   НЕПОСРЕДСТВЕННОГО родителя (.table-viewer-wrap), который в обычном
+   канвасном режиме сам определяет высоту по контенту. */
+.node-fullscreen-content .node .table-viewer-wrap {
+    flex: 1;
+    min-height: 0;
+}
+/* Раунд 205 (по жалобе Mr.D: "у текстовой ноды ресайз в полноэкранном
+   режиме не работает") - НАЙДЕНА причина: правило Раунда 201 (flex:1 +
+   resize:none) прямо противоречит РЕШЕНИЮ Раунда 204 - сделать
+   персистентный ресайз ОСНОВНЫМ механизмом распределения места между
+   панелями. flex:1 (flex-grow) пересчитывает высоту элемента при
+   КАЖДОЙ раскладке контейнера, "перебивая" любую высоту, которую
+   пользователь только что задал через resize - визуально это
+   выглядело как "потянул мышкой, но ничего не изменилось". Заменено
+   на min-height БЕЗ flex-grow - больший стартовый размер конкретно в
+   полноэкранном режиме (иначе там осталось бы маленькое поле
+   посреди пустоты), но сам ресайз работает ИДЕНТИЧНО обычному режиму
+   (тот же нативный resize:vertical + персистентная высота, что уже
+   есть в базовом правиле .text-node-template/.text-node-preview -
+   здесь ничего не переопределяется). */
+/* Раунд 207 (по запросу Mr.D: "нужно разрешить минимальную высоту, до
+   пары строк") - НАЙДЕНА причина: min-height:300px (Раунд 205, задан
+   как "разумный стартовый размер в полноэкранном режиме") ПОБЕЖДАЛ по
+   CSS-спецификации любую МЕНЬШУЮ высоту, которую пользователь пытался
+   задать через собственную ручку ресайза (Раунд 206) - та сама
+   разрешает сжатие до 60px (Math.max(60, ...) в _makeResizeHandle()),
+   но CSS min-height всегда побеждает МЕНЬШИЙ height, независимо от
+   того, откуда тот взялся. Значение синхронизировано с ТЕМ ЖЕ
+   минимумом, что уже заложен в саму ручку - никакого расхождения
+   между "что позволяет CSS" и "что позволяет drag-логика" больше нет. */
+.node-fullscreen-content .node .text-node-template {
+    min-height: 60px;
+}
+.node-fullscreen-content .node .text-node-preview {
+    min-height: 60px;
+}
+
+/* Раунд 200 (по запросу Mr.D: "меню: стандартный оформительский
+   набор") - панель форматирования Markdown узла "Текст" - компактные
+   кнопки, тот же принцип дизайн-токенов, что и у остальных мелких
+   элементов управления по проекту (см. NODE_API.md раздел 10). */
+.text-node-tool-btn {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 1;
+    border: 1px solid var(--md-divider);
+    border-radius: 3px;
+    background: var(--md-surface-2);
+    color: var(--md-text);
+    cursor: pointer;
+}
+.text-node-tool-btn:hover {
+    background: var(--md-secondary);
+    color: var(--md-surface);
+}
+.text-node-tag-select {
+    background: var(--md-surface-2);
+    color: var(--md-text-secondary);
+    border: 1px solid var(--md-divider);
+    border-radius: var(--md-radius);
+    padding: 3px 4px;
+    /* Раунд 201 (по жалобе Mr.D: "селектор тегов выпадает за пределы
+       контейнера") - НАЙДЕНА причина: у flex-элемента по умолчанию
+       min-width:auto - он НЕ может сжаться меньше ширины своего
+       содержимого, а нативный select берёт эту ширину от САМОГО
+       ДЛИННОГО пункта <option> (некоторые названия строк отчёта -
+       "Пожарно-техническая высота (от уровня...)" - очень длинные) -
+       выталкивал сам select (а с ним и всю ноду) за пределы
+       контейнера. min-width:0 - стандартное решение для "flex-элемент
+       не сжимается до ширины родителя". */
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Раунд 202 (по жалобе Mr.D: "табличная разметка в тексте появилась,
+   но она не обрабатывается узлом") - НАЙДЕНА причина: renderMarkdown()
+   (Раунд 127) УЖЕ корректно разбирает GFM-таблицы в валидный HTML
+   <table> - но для НЕГО не было ни единого правила стилей нигде в
+   проекте (существующие table.board-widget-* - совсем другие,
+   специфичные виджеты) - таблица рендерилась БЕЗ границ/сетки,
+   визуально неотличимо от обычного текста, хотя технически являлась
+   корректным <table>. Область действия - ТОЛЬКО превью Текстового узла
+   (сам холст/canvas И виджет Доски - _updatePreview()/getDashboardWidget()
+   используют один и тот же HTML) - не затрагивает другие table-виды
+   в проекте. */
+.text-node-preview table,
+.board-widget-text-preview table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11px;
+    margin: 4px 0;
+}
+.text-node-preview th,
+.text-node-preview td,
+.board-widget-text-preview th,
+.board-widget-text-preview td {
+    border: 1px solid var(--md-divider);
+    padding: 4px 6px;
+    text-align: left;
+}
+.text-node-preview th,
+.board-widget-text-preview th {
+    background: var(--md-surface-3);
+    color: var(--md-text);
+    font-weight: 600;
+}
+/* Раунд 206 (по жалобе Mr.D: "применить правило зебры для таблиц") -
+   НАЙДЕНА причина: полоса --md-surface-2 БУКВАЛЬНО совпадала с фоном
+   САМОГО КОНТЕЙНЕРА .text-node-preview (тот же токен) - зебра была
+   физически невидима с момента появления стилей таблиц (Раунд 201) -
+   заменено на --md-surface-3, реально отличающийся цвет. Раунд 207
+   (по жалобе Mr.D: "строки зебры сейчас слишком контрастные, нужно
+   сделать их 2 раза менее различимыми по тону") - вместо ПОЛНОГО
+   --md-surface-3 - color-mix() ВЫЧИСЛЯЕТ цвет РОВНО ПОСЕРЕДИНЕ между
+   --md-surface-2 (фон контейнера) и --md-surface-3 (Раунд 206) - ровно
+   вдвое меньший контраст, БЕЗ хардкода нового цвета - формула
+   работает прямо на СУЩЕСТВУЮЩИХ токенах, не заводит третий. Первая
+   строка (hex, до color-mix()) - фолбэк для случая, если бы среда
+   выполнения НЕ поддерживала color-mix() - CSS-каскад просто
+   проигнорирует непонятное значение и останется на предыдущем
+   объявлении. */
+.text-node-preview tbody tr:nth-child(even),
+.board-widget-text-preview tbody tr:nth-child(even) {
+    background: #353535;
+    background: color-mix(in srgb, var(--md-surface-2), var(--md-surface-3) 50%);
+}
+
+/* Раунд 206 (по запросу Mr.D: "хотелось бы, чтобы выделенный элемент
+   в просмотре тоже был подсвечен") - визуальный маркер того, какой
+   именно блок в превью соответствует ТЕКУЩЕМУ выделению в textarea
+   (см. TextNode._handlePreviewClick()) - рамка + лёгкая заливка
+   акцентным цветом, чтобы отличаться и от обычного фона, и от полосы
+   зебры (Раунд 206, тот же файл выше). */
+.text-node-preview-highlight {
+    outline: 2px solid var(--md-primary);
+    outline-offset: -1px;
+    background: rgba(144, 202, 249, 0.15) !important;
+}
+
+/* Раунд 206 (по запросу Mr.D: "нужны более удобные ручка, на всю
+   ширину, чтобы не искать её в углу") - полноширинная ручка ресайза
+   textarea "Разметка"/панели "Просмотр" - заменяет нативный
+   resize:vertical (маленький захват ТОЛЬКО в углу элемента). */
+.text-node-resize-handle {
+    height: 10px;
+    margin: -2px 0;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+}
+.text-node-resize-handle::before {
+    content: '';
+    width: 36px;
+    height: 3px;
+    background: var(--md-text-disabled);
+    border-radius: 2px;
+    transition: background-color 0.15s ease;
+}
+.text-node-resize-handle:hover::before {
+    background: var(--md-primary);
+}
+
+/* Раунд 214 (по запросу Mr.D: "добавить ручку для перемещения задач с
+   нулевой длиной. Если задача имеет продолжительность 0, сейчас мы не
+   можем её зацепить графически. Для этого у задач с маленькой длиной
+   нужно делать ручку помощник для перемещения") - ромб над полосой,
+   показывается ТОЛЬКО для задач, чья полоса физически слишком узкая
+   для надёжного захвата (обе ручки изменения размера, по 6px каждая,
+   на такой ширине полностью перекрывают друг друга и саму полосу).
+   ВСЕГДА видимая (не по hover, как у ручки связи) - сама суть проблемы
+   в том, что полосу и так сложно НАЙТИ мышью, скрывать ЕЩЁ и подсказку
+   об этом было бы контрпродуктивно. */
+.gantt-bar-move-helper {
+    width: 9px;
+    height: 9px;
+    background: var(--md-primary);
+    border: 1px solid var(--md-surface);
+    transform: translateX(-50%) rotate(45deg);
+    cursor: grab;
+    box-shadow: 0 0 0 1px var(--md-primary);
+}
+.gantt-bar-move-helper:hover {
+    background: var(--md-accent);
+    box-shadow: 0 0 0 1px var(--md-accent);
+}
+.gantt-bar-move-helper:active {
+    cursor: grabbing;
 }

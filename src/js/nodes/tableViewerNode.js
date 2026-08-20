@@ -6,7 +6,7 @@
  * @file    tableViewerNode.js
  * @brief   Нода просмотра таблицы (Data), без выходов
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -107,6 +107,15 @@ export class TableViewerNode extends BaseNode {
         // начинает зависать") - см. подробный комментарий у updateDisplay()
         // ниже про причину и решение (кеш по дешёвой сигнатуре содержимого).
         this._lastRenderedSignature = null;
+    }
+
+    // Раунд 200 (по запросу Mr.D: "для просмотра таблиц сделать такую
+    // же кнопку как у диаграммы Ганта. развернуть на экран") -
+    // механизм уже полностью общий (BaseNode.supportsFullscreen()/
+    // window.expandNodeFullscreen(), Раунд 190) - здесь только
+    // "включаем" кнопку для этого типа ноды.
+    supportsFullscreen() {
+        return true;
     }
 
     getDisplayName() {

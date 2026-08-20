@@ -339,6 +339,16 @@
                         <span class="node-name">Обработка таблиц Ганта</span>
                         <span class="node-badge">Анализ</span>
                     </div>
+                    <div class="node-item" data-type="buildingSection" onclick="window.addNode('buildingSection', 400, 300)">
+                        <span class="node-icon">🏢</span>
+                        <span class="node-name">Блок-Секция (ТЭП)</span>
+                        <span class="node-badge">Анализ</span>
+                    </div>
+                    <div class="node-item" data-type="quarterAggregator" onclick="window.addNode('quarterAggregator', 400, 300)">
+                        <span class="node-icon">🏙️</span>
+                        <span class="node-name">Квартал. Сводный ТЭП</span>
+                        <span class="node-badge">Анализ</span>
+                    </div>
                 </div>
             </div>
 
@@ -410,11 +420,14 @@
         </div>
 
         <div class="topbar-history">
-            <!-- Undo/Redo (план 1.6.0, п.4) - кнопки на месте, но пока
-                 намеренно не подключены (disabled) - см. комментарий в
-                 styles.css, .topbar-btn:disabled -->
-            <button class="topbar-btn icon-only" title="Отменить - появится в одной из следующих версий" disabled>↶</button>
-            <button class="topbar-btn icon-only" title="Повторить - появится в одной из следующих версий" disabled>↷</button>
+            <!-- Раунд 196 (по запросу Mr.D: "давай начнём делать
+                 дельта-журнал... хотелось как раз подойти к undo/redo") -
+                 кнопки были заготовлены ещё в плане 1.6.0, п.4, но
+                 намеренно отключены - теперь активны, id для
+                 window.undoAction()/window.redoAction() (main.js)
+                 включать/выключать disabled по состоянию стека. -->
+            <button class="topbar-btn icon-only" id="undoBtn" title="Отменить (Ctrl+Z)" onclick="window.undoAction?.()" disabled>↶</button>
+            <button class="topbar-btn icon-only" id="redoBtn" title="Повторить (Ctrl+Y)" onclick="window.redoAction?.()" disabled>↷</button>
         </div>
 
         <div class="topbar-zoom">

@@ -6,7 +6,7 @@
  * @file    layoutManager.js
  * @brief   Листы (вкладки) проекта, сериализация и загрузка .ncp
  * @author  Pavel Fomin
- * @version 1.8.72
+ * @version 1.8.94
  * @see     https://github.com/GhostPWLk1n/NodeCalculator.git
  */
 
@@ -347,6 +347,11 @@ export class LayoutManager {
                     // Раунд 187 - колонки ручного ввода дат начала/окончания
                     showStartDateColumn: n.type === 'gantt' ? n.showStartDateColumn : undefined,
                     showEndDateColumn: n.type === 'gantt' ? n.showEndDateColumn : undefined,
+                    // Раунд 200 - ручной ввод запасных значений площади/объёма
+                    manualAreaAbove: n.type === 'buildingSection' ? n.manualAreaAbove : undefined,
+                    manualAreaBelow: n.type === 'buildingSection' ? n.manualAreaBelow : undefined,
+                    manualVolumeAbove: n.type === 'buildingSection' ? n.manualVolumeAbove : undefined,
+                    manualVolumeBelow: n.type === 'buildingSection' ? n.manualVolumeBelow : undefined,
                     sectionColWidthOverride: n.type === 'gantt' ? n.sectionColWidthOverride : undefined,
                     // Раунд 109 - пользовательские цвета ответственных/групп
                     responsibleColors: n.type === 'gantt' && n.responsibleColors ? { ...n.responsibleColors } : undefined,
@@ -422,6 +427,16 @@ export class LayoutManager {
                     transformCase: n.type === 'text' ? n.transformCase : undefined,
                     transformReplaceSpecial: n.type === 'text' ? n.transformReplaceSpecial : undefined,
                     fallbackValue: n.type === 'text' ? n.fallbackValue : undefined,
+                    // Раунд 200 - шаблон с тегами + динамические входы
+                    template: n.type === 'text' ? n.template : undefined,
+                    // Раунд 203 - видимость панелей Разметка/Просмотр
+                    // Раунд 204 (откат Раунда 203 - панели видимости
+                    // убраны, дублировали баг, см. textNode.js) - вместо
+                    // видимости сериализуется персистентная высота
+                    // панелей (нативный resize:vertical).
+                    templateHeight: n.type === 'text' ? n.templateHeight : undefined,
+                    previewHeight: n.type === 'text' ? n.previewHeight : undefined,
+                    inputSockets: n.type === 'text' ? n.inputSockets : undefined,
 
                     // TableInjectNode: операция вставки + номер строки
                     operation: ['tableInject', 'tableRemove', 'booleanOp'].includes(n.type) ? n.operation : undefined,
